@@ -1,3 +1,4 @@
+import { getAIConfig } from "@src/config";
 import { Text, useMessage } from "alemonjs";
 export const selects = onSelects(["message.create", "private.message.create"]);
 
@@ -23,6 +24,18 @@ export default onResponse(selects, async (e, next) => {
         Text("/好感度 - 查看当前用户的好感度\n"),
       ),
     );
+
+    const config = await getAIConfig(e.guid);
+    if (
+      config.host.trim() === "" ||
+      config.key.trim() === "" ||
+      config.model.trim() === ""
+    ) {
+      message.send(
+        format(Text("当前配置不完整，请使用 /切换ai 指令切换到可用的配置")),
+      );
+    }
+
     return;
   }
 
