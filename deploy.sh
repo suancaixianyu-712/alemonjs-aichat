@@ -31,5 +31,6 @@ git commit -m "Update README.md, package.json and lib folder"
 # 推送到远程release分支
 echo "推送到远程release分支..."
 git push origin release
+git checkout master
 
 echo "操作完成！"
