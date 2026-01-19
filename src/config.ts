@@ -23,8 +23,6 @@ export const getAIConfig = async (
 }> => {
   let id = guid ?? "global";
 
-  console.log("获取", guid);
-
   const userConfigStr = await redis.get(`ai:config:${id}`);
   if (userConfigStr) {
     const userConfig = JSON.parse(userConfigStr);
@@ -58,10 +56,17 @@ export const switchAI = async (guid: string, name: string) => {
   const aiConfigStr = await redis.get(`ai:list:${name}`);
   if (!aiConfigStr) {
     console.log("切换失败, 无此模型");
+    // 清空当前配置
+    await redis.set(`ai:config:${guid}`, JSON.stringify(defaultAIConfig));
     return null;
   }
   const aiConfig = JSON.parse(aiConfigStr);
-  await redis.set(`ai:config:${guid}`, aiConfigStr);
+
+  // 保留当前系统提示词
+  const currentConfig = await getAIConfig(guid);
+  aiConfig.systemPrompt = currentConfig.systemPrompt;
+
+  await redis.set(`ai:config:${guid}`, JSON.stringify(aiConfig));
   return aiConfig;
 };
 
@@ -204,4 +209,21 @@ export const getBotID = async () => {
 
 export const setBotID = async (id: string) => {
   return await redis.set("bot:id", id);
+};
+
+export const deleteAI = async (name: string) => {
+  const aiConfigStr = await redis.get(`ai:list:${name}`);
+  if (!aiConfigStr) {
+    console.log("删除失败, 无此模型");
+    return false;
+  }
+  await redis.del(`ai:list:${name}`);
+  return true;
+};
+
+/**
+ *  设置好感度开关
+ */
+export const affectionSwitch = async (guid: string, enable: boolean) => {
+  return await redis.set(`ai:affection:switch:${guid}`, enable ? "1" : "0");
 };

@@ -15,38 +15,8 @@ redis:
 
 
 onebot:
-  url: 'ws://192.168.28.97:3001' # 正向url
-  token: '' # access_token
-  reverse_enable: true # 启用后正向连接配置失效，地址：ws://127.0.0.1:17158
-  reverse_port: 17119 # 返向连接服务端口，启用反向连接后生效
-
-
-bubble:
-  # Bot Token（必填）
-  token: '2ffa6bf85c51b68d1f4843ee99a1e24f65f2bef71a64baa14f877ff79bc898d6'
-
-  # WebSocket Gateway URL（可选，默认: wss://bubble.alemonjs.com/api/bot/gateway）
-  GATEWAY_URL: 'wss://bubble.alemonjs.com/api/bot/gateway'
-
-  # API Base URL（可选，默认: https://bubble.alemonjs.com/api/bot/v1）
-  API_URL: 'https://bubble.alemonjs.com/api/bot/v1'
-
-  # CDN Base URL（可选，默认: https://bubble-oss-files.alemonjs.com）
-  CDN_URL: 'https://bubble-oss-files.alemonjs.com'
-
-  # 订阅的事件类型（可选，默认: 所有可用事件）
-  intent:
-    - MESSAGE_CREATE
-    - DM_MESSAGE_CREATE
-    - GUILD_MEMBER_ADD
-
-  # 主人配置（可选）
-  master_key: []
-  master_id: []
-
-  # 代理配置（可选）
-  websocket_proxy: ''
-  request_proxy: ''
-
-  # 客户端名称（可选，默认: alemonjs-bot）
-  clientName: 'alemonjs-bot'
+  url: 'ws://1.95.85.178:3001' # 正向url
+  # url: 'ws://192.168.28.97:3001' # 正向url
+  token: 'xianyu' # access_token
+  reverse_enable: false # 启用后正向连接配置失效，地址：ws://127.0.0.1:17158
+  reverse_port: 17158 # 返向连接服务端口，启用反向连接后生效
