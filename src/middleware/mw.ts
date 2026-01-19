@@ -43,13 +43,15 @@ export default onMiddleware(selects, async (event, next) => {
     });
 
     if (!cachedMembers || !userInCache) {
-      const list = await client.getGroupMemberList({
-        group_id: event.ChannelId!,
-      });
-      const memberNames = list[0].data.map(
-        (item) => item.user_id + ":" + item.nickname,
-      );
-      await redis.set(redisKey, JSON.stringify(memberNames));
+      if (event.ChannelId) {
+        const list = await client.getGroupMemberList({
+          group_id: event.ChannelId!,
+        });
+        const memberNames = list[0].data.map(
+          (item) => item.user_id + ":" + item.nickname,
+        );
+        await redis.set(redisKey, JSON.stringify(memberNames));
+      }
     }
 
     event["self_id"] = event.value.self_id;
