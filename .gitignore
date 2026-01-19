@@ -1,8 +1,0 @@
-node_modules
-/data
-/public
-/logs
-/log
-*.logs
-*.log
-yarn.lock
