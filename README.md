@@ -1,6 +1,13 @@
 
 ## 安装
-- alemongo安装方式
+
+### yarn安装方式(推荐)
+
+```
+yarn add alemonjs-aichat
+```
+
+### alemongo安装方式
 
 地址
 ```
@@ -12,17 +19,8 @@ https://gitee.com/suancaixianyu/alemonjs-aichat.git
 release
 ```
 
-- npm安装方式
-
-```
-# 使用npm
-npm i alemonjs-aichat
-
-# 使用yarn
-yarn add alemonjs-aichat
-```
-
-配置`alemon.config.yaml`
+## 配置`alemon.config.yaml`
+在配置中添加该插件, 使用`ALemonDesk`只需要启用插件即可
 ``` yaml
 app: 
   - 'alemonjs-aichat'
@@ -32,7 +30,7 @@ app:
 `alemon.config.yaml`
 ``` yaml
 redis:
-  host: 'localhost'
+  host: '127.0.0.1'
   port: 6379
   password: ''
 
