@@ -1,6 +1,6 @@
 {
   "name": "alemonjs-aichat",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "alemonjs-aichat",
   "author": "suancaixianyu",
   "license": "MIT",
@@ -68,5 +68,8 @@
         }
       ]
     }
+  },
+  "dependencies": {
+    "openai": "^6.16.0"
   }
 }
