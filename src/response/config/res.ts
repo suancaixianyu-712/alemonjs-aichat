@@ -5,14 +5,22 @@ import {
   getPromptList,
 } from "@src/config";
 import { Text, useMessage } from "alemonjs";
+import { Regular } from "alemonjs/utils";
 export const selects = onSelects(["message.create", "private.message.create"]);
 
-const regular$1 = /(\/|#)ai配置$/i;
+const regular$1 = /(\/|#)(ai配置|当前提示词|查看提示词)?$/i;
 const regular$2 = /(\/|#)ai列表$/i;
 const regular$3 = /(\/|#)提示词列表$/i;
 const regular$4 = /(\/|#)清空对话$/i;
+const regular$5 = /(\/|#)清空(所有|全部)对话$/i;
 
-export const regular = /.*/;
+export const regular = Regular.or(
+  regular$1,
+  regular$2,
+  regular$3,
+  regular$4,
+  regular$5,
+);
 
 export default onResponse(selects, async (e, next) => {
   // 创建
@@ -57,6 +65,12 @@ export default onResponse(selects, async (e, next) => {
   if (regular$4.test(e.msg)) {
     await clearAIChatHistory(e.guid);
     message.send(format(Text("对话已清空")));
+  }
+
+  // 清空所有对话
+  if (regular$5.test(e.msg) && e.IsMaster) {
+    await clearAIChatHistory();
+    message.send(format(Text("所有对话已清空")));
   }
 
   next();

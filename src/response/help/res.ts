@@ -5,32 +5,23 @@ import Help from "@src/image/conponent/help";
 
 export const selects = onSelects(["message.create", "private.message.create"]);
 
-const regular$1 = /(\/|#)(ai)?(指令|帮助|菜单|功能)$/i;
+export const regular = /(\/|#)(ai)?(指令|帮助|菜单|功能)$/i;
 
-export const regular = /.*/;
-
-export default onResponse(selects, async (e, next) => {
+export default onResponse(selects, async (e) => {
   // 创建
   const [message] = useMessage(e);
-
-  // 查看指令帮助
-  if (regular$1.test(e.msg)) {
-    const img = await renderComponentToBuffer("help", Help, {});
-
-    if (img) message.send(format(Image(img)));
-    const config = await getAIConfig(e.guid);
-    if (
-      config.host.trim() === "" ||
-      config.key.trim() === "" ||
-      config.model.trim() === ""
-    ) {
-      message.send(
-        format(Text("当前配置不完整，请使用 /切换ai 指令切换到可用的配置")),
-      );
-    }
-
-    return;
+  const img = await renderComponentToBuffer("help", Help, {});
+  if (img) message.send(format(Image(img)));
+  const config = await getAIConfig(e.guid);
+  if (
+    config.host.trim() === "" ||
+    config.key.trim() === "" ||
+    config.model.trim() === ""
+  ) {
+    message.send(
+      format(Text("当前配置不完整，请使用 /切换ai 指令切换到可用的配置")),
+    );
   }
 
-  next();
+  return;
 });

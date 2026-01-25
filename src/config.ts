@@ -1,4 +1,5 @@
 import { redis } from "@src/redis";
+import { ChatCompletionTool } from "openai/resources";
 
 export const systemPrompt = ``;
 
@@ -110,11 +111,7 @@ export const getAIChatHistory = async (guid: string) => {
   return [];
 };
 
-export const addAIChatHistory = async (
-  guid: string,
-  role: "user" | "assistant" | "system",
-  content: string,
-) => {
+export const addAIChatHistory = async (guid: string, data: any) => {
   const history = await getAIChatHistory(guid);
 
   // 处理messages, 不要超过15条,超过就删除最早的
@@ -122,12 +119,20 @@ export const addAIChatHistory = async (
     history.shift();
   }
 
-  history.push({ role, content });
+  history.push(data);
   await redis.set(`ai:history:${guid}`, JSON.stringify(history));
   return history;
 };
 
-export const clearAIChatHistory = async (guid: string) => {
+export const clearAIChatHistory = async (guid?: string) => {
+  if (!guid) {
+    const keys = await redis.keys(`ai:history:*`);
+    for (const key of keys) {
+      await redis.del(key);
+    }
+    return;
+  }
+
   return await redis.del(`ai:history:${guid}`);
 };
 
@@ -202,11 +207,6 @@ export const resetAllAffectionLevels = async () => {
   }
 };
 
-export const getBotID = async () => {
-  const botid = await redis.get("bot:id");
-  return String(botid) || "794161769";
-};
-
 export const setBotID = async (id: string) => {
   return await redis.set("bot:id", id);
 };
@@ -227,3 +227,55 @@ export const deleteAI = async (name: string) => {
 export const affectionSwitch = async (guid: string, enable: boolean) => {
   return await redis.set(`ai:affection:switch:${guid}`, enable ? "1" : "0");
 };
+
+export const tools: ChatCompletionTool[] = [
+  {
+    type: "function",
+    function: {
+      name: "StableDiffusionGenerateImage",
+      description: "使用 Stable Diffusion 模型生成图像",
+      parameters: {
+        type: "object",
+        properties: {
+          prompt: {
+            type: "string",
+            description:
+              "正向提示词（prompt），越详细越好。建议包含：主体、动作、服装、场景、风格、光线、画质修饰词。\n推荐全英文且使用标签描述,当遇到动漫人物时,使用ta的英文名可以自动触发lora,不用额外lora标签\n括号的使用:[增强效果],(弱化效果), 示例：'[artist:ciloranko],artist:kazutake_hazano,[artist:kedama milk]，smile, short_hair, open_mouth, bangs, multiple_girls, skirt, black_hair, hair_ornament, red_eyes, long_sleeves, 2girls, sitting, school_uniform, :d, grey_hair, multicolored_hair, pleated_skirt, shoes, serafuku, choker, socks, sailor_collar, neckerchief, orange_eyes, petals, siblings, black_choker, brown_footwear, blue sky， pointing, loafers, red_neckerchief, bench, falling_petals'",
+          },
+          bad_prompt: {
+            type: "string",
+            description:
+              "反向提示词（negative prompt），用于排除不想要的元素。\n示例：'lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality, normal quality, jpeg artifacts, signature, watermark, username, blurry, deformed'",
+            default:
+              "(easynegative:1.1), (verybadimagenegative_v1.3:1), (low quality:1.2), (worst quality:1.2)",
+          },
+          direction: {
+            type: "string",
+            description:
+              "图片方向, 横向: landscape, 纵向: portrait, 方形: square",
+            enum: ["landscape", "portrait", "square"],
+            default: "portrait",
+          },
+        },
+        required: ["prompt"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "StableDiffusionImageToPrompt",
+      description: "使用 Stable Diffusion 将图片转换为提示词",
+      parameters: {
+        type: "object",
+        properties: {
+          image_url: {
+            type: "string",
+            description: "图片的URL地址，必须是你所收到的图片地址",
+          },
+        },
+        required: ["image_url"],
+      },
+    },
+  },
+];

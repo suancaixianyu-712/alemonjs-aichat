@@ -4,13 +4,15 @@ import {
   affectionSwitch,
   deleteAI,
   deletePrompt,
+  getAIConfig,
   getAIList,
-  setBotID,
   switchAI,
   switchPrompt,
 } from "@src/config";
+import { redis } from "@src/redis";
+import { uploadImageToR2 } from "@src/s3";
 import { Text, useMessage } from "alemonjs";
-// import { Regular } from "alemonjs/utils";
+import { Regular } from "alemonjs/utils";
 
 const selects = onSelects(["message.create", "private.message.create"]);
 const regular$1 = /(\/|#)添加ai$/i;
@@ -21,18 +23,52 @@ const regular$5 = /(\/|#)添加提示词 (\S+) ([\s\S]+)/i;
 const regular$6 = /(\/|#)(删除)(提示词|提示词列表) ?(.*)/i;
 const regular$7 = /(\/|#)(切换|设置)提示词 ?(.*)$/i;
 const regular$8 = /(\/|#)清空提示词$/i;
-const regular$9 = /(\/|#)设置(机器人)?(id|账号) ?(.*)$/i;
 const regular$10 = /(\/|#)删除ai\s(\S+)$/i;
 const regular$11 = /(\/|#)(开启|启用|关闭|禁用)好感度$/i;
-const regular$12 = /(\/|#)清空提示词$/i;
 const regular$13 = /(\/|#)(开启|关闭)聊天$/i;
+const regular$14 = /(\/|#)(开启|关闭)语音回复$/i;
+const regular$15 = /(\/|#)(开启|关闭)工具$/i;
 
-// export const regular = Regular.or(regular$1, regular$2, regular$3);
-export const regular = /.*/;
+const test = /(\/|#)测试$/i;
+
+export const regular = Regular.or(
+  regular$1,
+  regular$2,
+  regular$3,
+  regular$4,
+  regular$5,
+  regular$6,
+  regular$7,
+  regular$8,
+  regular$10,
+  regular$11,
+  regular$13,
+  regular$14,
+);
 
 export default onResponse(selects, async (e, next) => {
   // 创建
   const [message] = useMessage(e);
+
+  // 测试
+  if (test.test(e.msg)) {
+    uploadImageToR2("./public/image_out/1769259547338.jpg").then((url) => {
+      console.log("上传成功，图片URL：", url);
+    });
+    // message.send(
+    //   format(
+    //     Text("测试消息"),
+    //     ImageFile("./public/image_out/1769257917858.jpg"),
+    //   ),
+    // );
+    // const a = await availableTools.StableDiffusionGenerateImage({
+    //   prompt: "a cat playing with a ball",
+    // });
+    // if (a.length > 0) {
+    //   message.send(format(ImageFile(a[0].url)));
+    // }
+    return;
+  }
 
   // 添加AI配置
   if (regular$1.test(e.msg)) {
@@ -80,7 +116,9 @@ export default onResponse(selects, async (e, next) => {
       message.send(format(Text(`切换失败，未找到 AI ${name} !`)));
       return;
     }
-    message.send(format(Text(`已切换到 AI ${name} !`)));
+    message.send(
+      format(Text(`已切换到 AI ${name} !`), Text(`\n模型: ${ai.model}`)),
+    );
     return;
   }
 
@@ -148,21 +186,6 @@ export default onResponse(selects, async (e, next) => {
     return;
   }
 
-  // 设置机器人ID
-  if (regular$9.test(e.msg)) {
-    const match = e.msg.match(regular$9);
-    if (!match) {
-      message.send(
-        format(Text("格式错误，请按照 格式：/设置机器人id <ID> 进行设置")),
-      );
-      return;
-    }
-    const [, , , , id] = match;
-    await setBotID(id.trim());
-    message.send(format(Text(`已设置机器人ID为 ${id} !`)));
-    return;
-  }
-
   // 删除AI配置
   if (regular$10.test(e.msg)) {
     const match = e.msg.match(regular$10);
@@ -200,13 +223,6 @@ export default onResponse(selects, async (e, next) => {
     return;
   }
 
-  // 清空提示词
-  if (regular$12.test(e.msg)) {
-    await switchPrompt(e.guid, "");
-    message.send(format(Text("已清空提示词 !")));
-    return;
-  }
-
   // 设置聊天开关 ,发送开启聊天时, 获取ai列表的第一个ai配置, 并切换到该配置
   if (regular$13.test(e.msg)) {
     const match = e.msg.match(regular$13);
@@ -225,12 +241,62 @@ export default onResponse(selects, async (e, next) => {
         return;
       }
 
+      const aiInfo = await getAIConfig(e.guid);
+      if (aiInfo.model) {
+        message.send(
+          format(Text(`聊天功能已开启，当前AI为 ${aiInfo.model} !`)),
+        );
+        return;
+      }
+
       await switchAI(e.guid, aiList[0]);
       message.send(format(Text(`已开启聊天功能，当前AI为 ${aiList[0]} !`)));
     } else {
       await switchAI(e.guid, "");
       message.send(format(Text("已关闭聊天功能 !")));
     }
+    return;
+  }
+
+  // 设置语音回复开关
+  if (regular$14.test(e.msg)) {
+    const match = e.msg.match(regular$14);
+    if (!match) {
+      message.send(
+        format(
+          Text(
+            "格式错误，请按照 格式：/开启语音回复 或 /关闭语音回复 进行设置",
+          ),
+        ),
+      );
+      return;
+    }
+    const [, , action] = match;
+    const enable = action === "开启";
+    await redis.set(`chat:tts:response:${e.guid}`, enable ? "1" : "0");
+    message.send(format(Text(`已${enable ? "开启" : "关闭"}语音回复功能 !`)));
+    return;
+  }
+
+  // 设置工具开关
+  if (regular$15.test(e.msg)) {
+    const match = e.msg.match(regular$15);
+    if (!match) {
+      message.send(
+        format(Text("格式错误，请按照 格式：/开启工具 或 /关闭工具 进行设置")),
+      );
+      return;
+    }
+    const [, , action] = match;
+    const enable = action === "开启";
+    await redis.set(`chat:tools:response:${e.guid}`, enable ? "1" : "0");
+    message.send(
+      format(
+        Text(
+          `已${enable ? "开启" : "关闭"}工具功能 !\n请注意当前模型是否支持工具调用。`,
+        ),
+      ),
+    );
     return;
   }
 

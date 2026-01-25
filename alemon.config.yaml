@@ -13,6 +13,8 @@ redis:
   port: 6379
   password: ''
 
+ttsServer:
+  host: "http://1.95.85.178:8005"
 
 onebot:
   url: 'ws://1.95.85.178:3001' # 正向url

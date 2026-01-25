@@ -1,6 +1,6 @@
 {
   "name": "alemonjs-aichat",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "alemonjs-aichat",
   "author": "suancaixianyu",
   "license": "MIT",
@@ -19,7 +19,7 @@
     "@alemonjs/db": "^0.0.13",
     "@alemonjs/onebot": "^2.1.0-alpha.14",
     "@types/node": "^22",
-    "alemonjs": "2.1.14",
+    "alemonjs": "2.1.17",
     "cssnano": "^7",
     "jsxp": "^1.2.3",
     "lvyjs": "^0.2.25",
@@ -70,6 +70,9 @@
     }
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.975.0",
+    "@aws-sdk/s3-request-presigner": "^3.975.0",
+    "mime-types": "^3.0.2",
     "openai": "^6.16.0"
   }
 }
