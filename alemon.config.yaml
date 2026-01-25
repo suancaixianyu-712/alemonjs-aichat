@@ -18,6 +18,9 @@ ttsServer:
 
 login: onebot
 
+apps:
+  - alemonjs-aichat
+
 onebot:
   url: 'ws://1.95.85.178:3001' # 正向url
   # url: 'ws://192.168.28.97:3001' # 正向url
