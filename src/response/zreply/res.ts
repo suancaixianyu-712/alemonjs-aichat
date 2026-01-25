@@ -177,7 +177,7 @@ export default onResponse(selects, async (e, next) => {
     model: config.model,
     tools,
     tool_choice: "auto",
-    reasoning_effort: "low",
+    // reasoning_effort: "low",
     messages: messages,
   });
 
