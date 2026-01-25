@@ -28,6 +28,7 @@ const regular$11 = /(\/|#)(开启|启用|关闭|禁用)好感度$/i;
 const regular$13 = /(\/|#)(开启|关闭)聊天$/i;
 const regular$14 = /(\/|#)(开启|关闭)语音回复$/i;
 const regular$15 = /(\/|#)(开启|关闭)工具$/i;
+const regular$16 = /(\/|#)切换图床(.*)$/i;
 
 const test = /(\/|#)测试$/i;
 
@@ -297,6 +298,28 @@ export default onResponse(selects, async (e, next) => {
         ),
       ),
     );
+    return;
+  }
+
+  // 设置图床
+  if (regular$16.test(e.msg)) {
+    const match = e.msg.match(regular$16);
+    if (!match) {
+      message.send(
+        format(Text("格式错误，请按照 格式：/切换图床 <图床名称> 进行设置")),
+      );
+      return;
+    }
+    const [, , bedName] = match;
+    const validBeds = ["R2", "又拍云"];
+    if (!validBeds.includes(bedName.trim())) {
+      message.send(
+        format(Text(`无效的图床名称！可用图床有：${validBeds.join("、")}。`)),
+      );
+      return;
+    }
+    await redis.set(`chat:image:bed`, bedName.trim());
+    message.send(format(Text(`已切换图床至 ${bedName.trim()} !`)));
     return;
   }
 

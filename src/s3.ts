@@ -2,35 +2,7 @@ import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import fs from "fs/promises";
 import path from "path";
 import mime from "mime-types";
-
-// ======== 配置 ========
-// 请替换成你真实的 R2 API Token 凭证
-// const R2_CONFIG = {
-//   accessKeyId: "f8f0d360d3156a1667c527c5ea4b18d7", // ← 必须替换！从 R2 API Tokens 获取
-//   secretAccessKey:
-//     "365f44cf6079054ad99923dd32966d0aba4e4d2d24726cadcd0102a7c2e7bc08", // ← 确认这是 Secret Access Key
-//   bucket: "images",
-//   publicDomain: "https://r2img.ccxk.top", // ← 改成你的公共域名（推荐）
-//   endpoint: "https://b24a196dc2ee578845bb555d53812508.r2.cloudflarestorage.com", // R2 固定格式
-// };
-
-const R2_CONFIG = {
-  accessKeyId: "pCLV51yDLbntzsfUkgBSjo5fJSor3nr5", // ← 必须替换！从 R2 API Tokens 获取
-  secretAccessKey: "5672e62135be31808f1afbd35862839e", // ← 确认这是 Secret Access Key
-  bucket: "schub-image",
-  publicDomain: "https://s3img.suancaixianyu.cn", // ← 改成你的公共域名（推荐）
-  endpoint: "https://s3.api.upyun.com", // R2 固定格式
-};
-
-const s3Client = new S3Client({
-  region: "auto", // R2 固定用 auto
-  endpoint: R2_CONFIG.endpoint,
-  credentials: {
-    accessKeyId: R2_CONFIG.accessKeyId,
-    secretAccessKey: R2_CONFIG.secretAccessKey,
-  },
-  maxAttempts: 3, // 自动重试
-});
+import { redis } from "./redis";
 
 /**
  * 上传图片到 Cloudflare R2，返回公共访问 URL
@@ -48,6 +20,37 @@ export const uploadImageToR2 = async (
   let buffer;
   let contentType = "image/jpeg"; // 默认
   let fileName;
+
+  const config = (await redis.get(`chat:image:bed`)) || "R2";
+
+  const R2_CONFIG =
+    config == "R2"
+      ? {
+          accessKeyId: "f8f0d360d3156a1667c527c5ea4b18d7", // ← 必须替换！从 R2 API Tokens 获取
+          secretAccessKey:
+            "365f44cf6079054ad99923dd32966d0aba4e4d2d24726cadcd0102a7c2e7bc08", // ← 确认这是 Secret Access Key
+          bucket: "images",
+          publicDomain: "https://r2img.ccxk.top", // ← 改成你的公共域名（推荐）
+          endpoint:
+            "https://b24a196dc2ee578845bb555d53812508.r2.cloudflarestorage.com", // R2 固定格式
+        }
+      : {
+          accessKeyId: "pCLV51yDLbntzsfUkgBSjo5fJSor3nr5", // ← 必须替换！从 R2 API Tokens 获取
+          secretAccessKey: "5672e62135be31808f1afbd35862839e", // ← 确认这是 Secret Access Key
+          bucket: "schub-image",
+          publicDomain: "https://s3img.suancaixianyu.cn", // ← 改成你的公共域名（推荐）
+          endpoint: "https://s3.api.upyun.com", // R2 固定格式
+        };
+
+  const s3Client = new S3Client({
+    region: "auto", // R2 固定用 auto
+    endpoint: R2_CONFIG.endpoint,
+    credentials: {
+      accessKeyId: R2_CONFIG.accessKeyId,
+      secretAccessKey: R2_CONFIG.secretAccessKey,
+    },
+    maxAttempts: 3, // 自动重试
+  });
 
   // 1. 处理不同来源 → 统一得到 Buffer + contentType + fileName
   if (source.startsWith("http://") || source.startsWith("https://")) {
