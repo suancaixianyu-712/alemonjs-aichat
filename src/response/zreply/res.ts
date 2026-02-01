@@ -251,7 +251,6 @@ export default onResponse(selects, async (e, next) => {
       messages: messages,
       tools,
       tool_choice: "auto",
-      reasoning_effort: "low",
     });
 
     // 检查是否还有工具调用需要处理

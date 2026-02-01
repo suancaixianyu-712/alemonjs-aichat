@@ -27,7 +27,7 @@ const regular$10 = /(\/|#)删除ai\s(\S+)$/i;
 const regular$11 = /(\/|#)(开启|启用|关闭|禁用)好感度$/i;
 const regular$13 = /(\/|#)(开启|关闭)聊天$/i;
 const regular$14 = /(\/|#)(开启|关闭)语音回复$/i;
-const regular$15 = /(\/|#)(开启|关闭)工具$/i;
+const regular$15 = /(\/|#)(开启|关闭)(MCP)?工具$/i;
 const regular$16 = /(\/|#)切换图床(.*)$/i;
 
 const test = /(\/|#)测试$/i;
@@ -45,6 +45,8 @@ export const regular = Regular.or(
   regular$11,
   regular$13,
   regular$14,
+  regular$15,
+  regular$16,
 );
 
 export default onResponse(selects, async (e, next) => {
