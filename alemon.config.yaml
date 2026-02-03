@@ -29,9 +29,9 @@ onebot:
   reverse_port: 17158 # 返向连接服务端口，启用反向连接后生效
 
 scbbs:
-  host: 'http://192.168.28.238:3000'
-  serverUrl: 'http://192.168.28.238:3000/api'
-  uploadUrl: 'http://192.168.28.238:3001/upload'
+  host: 'https://m.suancaixianyu.cn'
+  serverUrl: 'https://m.suancaixianyu.cn/api'
+  uploadUrl: 'https://upload.suancaixianyu.cn/upload'
   account: 'luotianyi_bang@163.com'
   password: 'suancaixianyu'
   uid: 815
