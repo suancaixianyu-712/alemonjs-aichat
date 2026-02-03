@@ -1,4 +1,4 @@
-import { getConfigValue, useClient } from "alemonjs";
+import { useClient } from "alemonjs";
 import { API } from "@alemonjs/onebot";
 
 const selects = onSelects(["message.create", "private.message.create"]);
@@ -11,7 +11,8 @@ export default onMiddleware(selects, async (event, next) => {
   event["msg"] = event.MessageText; // 消息内容
   event["guid"] = event.ChannelId ?? event.UserId; // 群号或用户QQ号
   event["uidkey"] = `${event["guid"]}:${event.UserName}(${event.UserId})`; // 唯一标识
-  event["nickname"] = `${event.UserName}(${event.UserId})`; // 昵称(用户名+QQ号)
+  event["nickname"] =
+    `${event.name == "private.message.create" ? "[私信]" : ""}${event.UserName}(${event.UserId})`; // 昵称(用户名+QQ号)
 
   // console.log('event["nickname"]', event["nickname"]);
   // console.log("event.IsMaster", event.UserId, config.master_id, event.IsMaster);
@@ -48,11 +49,10 @@ export default onMiddleware(selects, async (event, next) => {
   }
 
   // onebot平台特有处理 //
-
   if (event.Platform == "onebot") {
     // 获取客户端
     const [client] = useClient(event, API);
-    // 获取群成员存入redis
+
     const botInfo = await client.getLoginInfo();
 
     event["self_id"] = event.value.self_id; // 机器人QQ号
@@ -76,8 +76,6 @@ export default onMiddleware(selects, async (event, next) => {
           };
         }),
     );
-
-    console.log('event["at"]', event["at"]);
 
     // 是否at机器人
     event["atBot"] = event["at"].find((item) => item.data.qq == event.self_id);
@@ -106,6 +104,32 @@ export default onMiddleware(selects, async (event, next) => {
       }
     }
   }
+
+  if (event.Platform == "scbbs") {
+    event["msg"] = `${event["msg"]}`; // 消息内容包含at机器人昵称
+    event["self_id"] = event.value.toUser.id; // 机器人ID
+    event["originalMsg"] = event.value.content; // 原始消息内容
+
+    event["atBot"] =
+      event.name === "private.message.create" && event.Platform == "scbbs";
+
+    // 处理图片消息
+    event["img"] = (event.value.content || [])
+      .filter((item: { type: string }) => item.type === "image")
+      .map((item: { data: { url: string } }) => item.data.url);
+
+    // 判断是否为群管理员
+    event["isAdmin"] =
+      event.value.author.roles?.filter(
+        (role: { id: number }) => role.id == 1 || role.id == 2,
+      ).length > 0;
+    event["bot"] = {
+      nickname: event.value.toUser.nickname,
+      user_id: event.value.toUser.id,
+    }; // 机器人信息
+  }
+
+  console.log("处理后的事件", JSON.stringify(event, null, 2));
 
   // 常用于兼容其他框架或增强event功能
   next();

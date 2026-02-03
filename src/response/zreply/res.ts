@@ -22,8 +22,14 @@ let ttsClient: TTSClient;
 export default onResponse(selects, async (e, next) => {
   console.log("收到消息");
 
+  console.log("e.UserId", e.UserId, e.bot.user_id);
+
   // 如果是命令则跳过
-  if (e.msg.startsWith("/") || e.msg.startsWith("#")) {
+  if (
+    e.msg.startsWith("/") ||
+    e.msg.startsWith("#") ||
+    e.UserId == e.bot.user_id
+  ) {
     next();
     return;
   }
@@ -43,6 +49,7 @@ export default onResponse(selects, async (e, next) => {
     `你正在一个群聊中跟用户聊天,你的聊天昵称是'${botName}'
 关于回复格式:
   用户的发言方式为: [{'用户昵称(用户id)(发送时间)':回复内容}]
+  当聊天场景为私信时, 用户昵称前方会有[私信]前缀, 例如: [{'[私信]用户昵称(用户id)(发送时间)':回复内容}]
   你的回复方式为JSON: [{assistant:回复内容}],你可以在数组中加入多条消息来模拟更真实的聊天
   当然你觉得当前聊的话题确定与你有关是才回复,否则你就回复空数组[]来表示不回复.请尽可能降低回复频率.
 关于图片发送:

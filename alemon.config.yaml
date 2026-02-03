@@ -18,8 +18,8 @@ ttsServer:
 
 login: onebot
 
-apps:
-  - alemonjs-aichat
+# apps:
+#   - alemonjs-aichat
 
 onebot:
   url: 'ws://1.95.85.178:3001' # 正向url
@@ -27,3 +27,11 @@ onebot:
   token: 'xianyu' # access_token
   reverse_enable: false # 启用后正向连接配置失效，地址：ws://127.0.0.1:17158
   reverse_port: 17158 # 返向连接服务端口，启用反向连接后生效
+
+scbbs:
+  host: 'http://192.168.28.238:3000'
+  serverUrl: 'http://192.168.28.238:3000/api'
+  uploadUrl: 'http://192.168.28.238:3001/upload'
+  account: 'luotianyi_bang@163.com'
+  password: 'suancaixianyu'
+  uid: 815

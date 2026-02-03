@@ -11,7 +11,7 @@ import {
 } from "@src/config";
 import { redis } from "@src/redis";
 import { uploadImageToR2 } from "@src/s3";
-import { Text, useMessage } from "alemonjs";
+import { ImageFile, Text, useMessage } from "alemonjs";
 import { Regular } from "alemonjs/utils";
 
 const selects = onSelects(["message.create", "private.message.create"]);
@@ -47,6 +47,7 @@ export const regular = Regular.or(
   regular$14,
   regular$15,
   regular$16,
+  test,
 );
 
 export default onResponse(selects, async (e, next) => {
@@ -55,15 +56,16 @@ export default onResponse(selects, async (e, next) => {
 
   // 测试
   if (test.test(e.msg)) {
-    uploadImageToR2("./public/image_out/1769259547338.jpg").then((url) => {
-      console.log("上传成功，图片URL：", url);
-    });
-    // message.send(
-    //   format(
-    //     Text("测试消息"),
-    //     ImageFile("./public/image_out/1769257917858.jpg"),
-    //   ),
-    // );
+    // uploadImageToR2("./public/image_out/1769259547338.jpg").then((url) => {
+    //   console.log("上传成功，图片URL：", url);
+    // });
+
+    message.send(
+      format(
+        Text("测试消息"),
+        ImageFile("./public/image_out/1769257917858.jpg"),
+      ),
+    );
     // const a = await availableTools.StableDiffusionGenerateImage({
     //   prompt: "a cat playing with a ball",
     // });
