@@ -265,7 +265,8 @@ export const tools: ChatCompletionTool[] = [
     type: "function",
     function: {
       name: "StableDiffusionImageToPrompt",
-      description: "使用 Stable Diffusion 将图片转换为提示词",
+      description:
+        "使用 Stable Diffusion 将图片转换为提示词, 仅供绘图时使用, 其他场景请勿使用",
       parameters: {
         type: "object",
         properties: {

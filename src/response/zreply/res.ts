@@ -40,7 +40,7 @@ export default onResponse(selects, async (e, next) => {
   const historyMessages = await getAIChatHistory(e.guid);
   const affections = await getAffectionLevelAll(e.guid);
   const imgs: string[] = [];
-  let rawMessage = e.value.raw_message || e.msg;
+  let rawMessage = e.value.raw_message || e.raw_message || e.msg;
   // 好感度开关
   const affectionIsOpen =
     (await redis.get(`ai:affection:switch:${e.guid}`)) || "1";
@@ -56,6 +56,7 @@ export default onResponse(selects, async (e, next) => {
   如果你在使用画图工具后需要回复图片, 可在消息中追加image_url, 例如:
   [{'assistant':'画好啦','image_url':'图片地址'}]
   注意:图片地址必须是接口返回的完整地址, 通常是相对路径
+  注意:你的回复中除了json必要的双引号之外, 不要再添加多余的双引号, 否则会导致解析失败, 需要在回复内容中使用单引号来表示字符串, 例如: [{"assistant":"这是一个'引号'的例子"}]
 ` +
     (affectionIsOpen === "1"
       ? `当你认为对方在示好或骂你时,可添加{affections:数字}表示好感度变化,你可以根据好感度来适当改变回复语气.
@@ -268,9 +269,14 @@ export default onResponse(selects, async (e, next) => {
   }
 
   // 如果没有工具调用，处理最终回复
-  const reply =
+  let reply =
     res.choices?.[0]?.message?.content?.trim().replace(/'/g, '"') || "";
   log("AI回复内容:", reply);
+
+  // 修复assistant字段中多余的双引号
+  reply = reply.replace(/(?<="assistant":")(.*?)(?="[,}])/, (match) =>
+    match.replace(/"/g, "'"),
+  );
 
   // 提取好感变化, 使用incrementAffectionLevel更新好感
   if (affectionIsOpen === "1") {

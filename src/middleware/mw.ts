@@ -127,6 +127,19 @@ export default onMiddleware(selects, async (event, next) => {
       nickname: event.value.toUser.nickname,
       user_id: event.value.toUser.id,
     }; // 机器人信息
+    event["raw_message"] = event.value.content
+      .map((item: { type: string; data: any }) => {
+        if (item.type === "text") {
+          return item.data.text;
+        } else if (item.type === "image") {
+          return `[CQ:image,${item.data.url}]`;
+        } else if (item.type === "at") {
+          return `[CQ:at,qq=${item.data.id}]`;
+        } else {
+          return `[${item.type.toUpperCase()}]`;
+        }
+      })
+      .join("");
   }
 
   console.log("处理后的事件", JSON.stringify(event, null, 2));

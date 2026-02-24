@@ -14,12 +14,15 @@ const regular$3 = /(\/|#)提示词列表$/i;
 const regular$4 = /(\/|#)清空对话$/i;
 const regular$5 = /(\/|#)清空(所有|全部)对话$/i;
 
+const get = /(\/|#)get (.+)$/i;
+
 export const regular = Regular.or(
   regular$1,
   regular$2,
   regular$3,
   regular$4,
   regular$5,
+  get,
 );
 
 export default onResponse(selects, async (e, next) => {
@@ -71,6 +74,23 @@ export default onResponse(selects, async (e, next) => {
   if (regular$5.test(e.msg) && e.IsMaster) {
     await clearAIChatHistory();
     message.send(format(Text("所有对话已清空")));
+  }
+
+  // get请求一个地址
+  if (get.test(e.msg)) {
+    const match = e.msg.match(get);
+    if (!match) {
+      message.send(format(Text("格式错误，请按照 格式：/get <url> 进行请求")));
+      return;
+    }
+    const [, , url] = match;
+    try {
+      const res = await fetch(url);
+      const text = await res.text();
+      message.send(format(Text(`GET ${url} 的响应：\n${text}`)));
+    } catch (error) {
+      message.send(format(Text(`请求 ${url} 失败：${error}`)));
+    }
   }
 
   next();

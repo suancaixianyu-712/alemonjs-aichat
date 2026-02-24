@@ -55,7 +55,7 @@ export const uploadImageToR2 = async (
   // 1. 处理不同来源 → 统一得到 Buffer + contentType + fileName
   if (source.startsWith("http://") || source.startsWith("https://")) {
     // 远程 URL
-    const response = await fetch(source);
+    const response = await fetch(source.replace("!/fwfh/368x238", ""));
     if (!response.ok) throw new Error(`下载图片失败: ${response.statusText}`);
 
     buffer = Buffer.from(await response.arrayBuffer());
