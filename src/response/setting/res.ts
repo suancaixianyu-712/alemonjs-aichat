@@ -63,7 +63,7 @@ export default onResponse(selects, async (e, next) => {
     message.send(
       format(
         Text("测试消息"),
-        ImageFile("./public/image_out/1769257917858.jpg"),
+        // ImageFile("./public/image_out/1769257917858.jpg"),
       ),
     );
     // const a = await availableTools.StableDiffusionGenerateImage({

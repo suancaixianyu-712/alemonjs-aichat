@@ -45,11 +45,6 @@
     "type": "gitee",
     "url": "https://gitee.com/suancaixianyu/alemonjs-aichat.git"
   },
-  "files": [
-    "lib/**/*",
-    "public/**/*",
-    "config/**/*"
-  ],
   "keywords": [
     "alemonjs"
   ],
