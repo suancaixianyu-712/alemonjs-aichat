@@ -8,7 +8,7 @@ import { Text, useMessage } from "alemonjs";
 import { Regular } from "alemonjs/utils";
 export const selects = onSelects(["message.create", "private.message.create"]);
 
-const regular$1 = /(\/|#)(ai配置|当前提示词|查看提示词)?$/i;
+const regular$1 = /^(\/|#)(ai配置|当前提示词|查看提示词)$/i;
 const regular$2 = /(\/|#)ai列表$/i;
 const regular$3 = /(\/|#)提示词列表$/i;
 const regular$4 = /(\/|#)清空对话$/i;

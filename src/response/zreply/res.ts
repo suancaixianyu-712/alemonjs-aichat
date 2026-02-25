@@ -314,7 +314,7 @@ export default onResponse(selects, async (e, next) => {
   await addAIChatHistory(e.guid, res.choices?.[0].message);
 
   const isOpenTTSReply =
-    (await redis.get(`ai:tts:reply:switch:${e.guid}`)) || "0";
+    (await redis.get(`chat:tts:response:${e.guid}`)) || "0";
 
   if (isOpenTTSReply === "1") {
     ttsClient = new TTSClient();
@@ -360,6 +360,8 @@ export default onResponse(selects, async (e, next) => {
     }
   } catch (error) {
     console.log("解析AI回复失败，发送原始内容");
+    console.log(error);
+
     const msg = reply
       .replace(/\[CQ:[^\]]+\]/, "")
       .replace(/"}]/, "")
@@ -378,21 +380,25 @@ function sendTTSMessage(message: any, e: any, ttsClient: TTSClient) {
     console.log("audio", audio);
 
     if (audio) {
-      if (e.Platform == "onebot") {
-        const [client] = useClient(e, API);
+      try {
+        if (e.Platform == "onebot") {
+          const [client] = useClient(e, API);
 
-        client.sendMessage({
-          message_type: e.value.message_type,
-          group_id: e.value.group_id ?? undefined,
-          message: [
-            {
-              type: "record",
-              data: {
-                file: audio.audio_url,
+          await client.sendMessage({
+            message_type: e.value.message_type,
+            group_id: e.value.group_id ?? undefined,
+            message: [
+              {
+                type: "record",
+                data: {
+                  file: audio.audio_url,
+                },
               },
-            },
-          ],
-        });
+            ],
+          });
+        }
+      } catch (error) {
+        console.log(error);
       }
     }
   });

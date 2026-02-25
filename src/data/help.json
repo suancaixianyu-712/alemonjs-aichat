@@ -2,7 +2,7 @@
   "title": "IA聊天插件",
   "desc": "",
   "name": "aichat",
-  "version": "v1.0.11",
+  "version": "v1.0.13",
   "by": "AlemonJS",
   "list": [
     {
@@ -28,6 +28,10 @@
           {
             "cmd": "/切换ai [名称]",
             "desc": "切换到指定名称的ai配置。"
+          },
+          {
+            "cmd": "/修改 [AI名称] 模型 [模型名称]",
+            "desc": "修改指定AI配置的模型。"
           }
         ]
       }

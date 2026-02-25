@@ -13,8 +13,12 @@ redis:
   port: 6379
   password: ''
 
+port: 17118
+
 ttsServer:
   host: "http://1.95.85.178:8005"
+
+searchApiKey: '63706fc3e6827a90e8219913297b510ff053d5238b24f64251a066e4ecea7408'
 
 login: onebot
 

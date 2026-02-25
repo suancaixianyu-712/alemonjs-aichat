@@ -29,6 +29,7 @@ const regular$13 = /(\/|#)(开启|关闭)聊天$/i;
 const regular$14 = /(\/|#)(开启|关闭)语音回复$/i;
 const regular$15 = /(\/|#)(开启|关闭)(MCP)?工具$/i;
 const regular$16 = /(\/|#)切换图床(.*)$/i;
+const regular$17 = /(\/|#)修改 ?(.+) ?模型 ?(.+)$/i;
 
 const test = /(\/|#)测试$/i;
 
@@ -47,6 +48,7 @@ export const regular = Regular.or(
   regular$14,
   regular$15,
   regular$16,
+  regular$17,
   test,
 );
 
@@ -324,6 +326,49 @@ export default onResponse(selects, async (e, next) => {
     }
     await redis.set(`chat:image:bed`, bedName.trim());
     message.send(format(Text(`已切换图床至 ${bedName.trim()} !`)));
+    return;
+  }
+
+  // 修改指定ai的模型
+  if (regular$17.test(e.msg)) {
+    const match = e.msg.match(regular$17);
+    if (!match) {
+      message.send(
+        format(
+          Text(
+            "格式错误，请按照 格式：/修改 <AI名称> 模型 <模型名称> 进行设置",
+          ),
+        ),
+      );
+      return;
+    }
+    const [, , aiName, modelName] = match;
+    const aiList = await getAIList();
+    if (!aiList.includes(aiName.trim())) {
+      message.send(format(Text(`未找到 AI ${aiName.trim()} !`)));
+      return;
+    }
+    await switchAI(e.guid, aiName.trim());
+    const aiInfo = await getAIConfig(e.guid);
+    if (!aiInfo.model) {
+      message.send(format(Text(`切换失败，未找到 AI ${aiName.trim()} !`)));
+      return;
+    }
+
+    aiInfo.model = modelName.trim();
+    await addAI(
+      e.guid,
+      aiName.trim(),
+      aiInfo.host,
+      aiInfo.key,
+      modelName.trim(),
+    );
+
+    message.send(
+      format(
+        Text(`已将 AI ${aiName.trim()} 的模型修改为 ${modelName.trim()} !`),
+      ),
+    );
     return;
   }
 

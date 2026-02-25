@@ -265,6 +265,7 @@ export const availableTools = {
     }
   },
 
+  /** 使用 Stable Diffusion 将图片转换为提示词 */
   StableDiffusionImageToPrompt: async ({ image_url }) => {
     // 先查看redis中是否有这张图的缓存
     const cacheKey = `image:caption:${image_url}`;
@@ -321,5 +322,51 @@ export const availableTools = {
     const prompt = data.data[0];
     console.log("图片提示词:", prompt);
     return prompt;
+  },
+
+  /** 搜索survivalcraft(生存战争)论坛的帖子 */
+  SearchScbbsPost: async ({ keyword }) => {
+    const api = `https://m.suancaixianyu.cn/api/post/list?title=${encodeURIComponent(keyword)}`;
+    try {
+      const response = await fetch(api);
+      if (!response.ok) {
+        return [];
+      }
+      const data = await response.json();
+      return data.data.list.map((item) => ({
+        viewUrl: `https://test.suancaixianyu.cn/#/postDetails/${item.id}`,
+        ...item,
+      }));
+    } catch (error) {
+      console.error("Error searching posts:", error);
+      return [];
+    }
+  },
+
+  /** 使用搜索引擎搜索网页 */
+  SearchWeb: async ({
+    keyword,
+    engine = "baidu",
+    cc = "CN",
+    type = "organic_results",
+  }) => {
+    const apikey =
+      value.searchApiKey ||
+      "63706fc3e6827a90e8219913297b510ff053d5238b24f64251a066e4ecea7408";
+    const api = `https://serpapi.com/search.json?engine=${engine}&q=${encodeURIComponent(keyword)}&cc=${cc}&api_key=${apikey}`;
+    try {
+      const response = await fetch(api);
+      if (!response.ok) {
+        return [];
+      }
+      const data = await response.json();
+      console.log("搜索结果", data);
+
+      const results = data[type] || [];
+      return type === "organic_results" ? results.slice(0, 7) : results;
+    } catch (error) {
+      console.error("Error searching web:", error);
+      return [];
+    }
   },
 };

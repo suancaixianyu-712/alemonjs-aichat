@@ -279,4 +279,60 @@ export const tools: ChatCompletionTool[] = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "SearchScbbsPost",
+      description:
+        "搜索《survivalcraft》(译名《生存战争》,也简称sc)论坛的帖子, 搜索时请尽量提供精确的关键词, 关键词最好只有一个. 在这里可以搜索到sc这个游戏相关的各种模组等资源或教程帖子和更新公告等内容, 但请注意不要搜索与游戏无关的内容, 否则可能会得到不相关的结果，若是搜索不到请减少关键词的数量或更换关键词",
+      parameters: {
+        type: "object",
+        properties: {
+          keyword: {
+            type: "string",
+            description: "搜索关键词",
+          },
+        },
+        required: ["keyword"],
+      },
+    },
+  },
+
+  {
+    type: "function",
+    function: {
+      name: "SearchWeb",
+      description:
+        "使用搜索引擎搜索网页内容, 你可以使用这个工具来获取最新的资讯或数据, 但请注意不要搜索敏感或违法的内容, 否则可能会得到不相关的结果, 此外,不推荐使用该工具搜索与sc这个游戏相关的内容, 因为搜索引擎的结果可能不如专门的游戏论坛或社区来的准确和有用, 在搜索时请尽量提供精确的关键词, 关键词最好只有一个. 如果你想搜索与游戏相关的内容, 建议使用SearchScbbsPost工具来搜索survivalcraft(生存战争)论坛的帖子",
+      parameters: {
+        type: "object",
+        properties: {
+          keyword: {
+            type: "string",
+            description: "搜索关键词",
+          },
+          engine: {
+            type: "string",
+            description: "选择搜索引擎",
+            enum: ["bing", "google", "baidu"],
+            default: "baidu",
+          },
+          cc: {
+            type: "string",
+            description:
+              "搜索国家/地区代码, 例如搜索美国就填us, 搜索中国就填cn, 搜索日本就填jp, 这个参数会影响搜索结果的地域性",
+            default: "CN",
+          },
+          type: {
+            type: "string",
+            description:
+              "选择结果类型, 搜索后获取对应结果, 建议使用自然结果organic_results, 其他选项可能不存在",
+            enum: ["organic_results", "related_questions", "related_searches"],
+            default: "organic_results",
+          },
+        },
+        required: ["keyword"],
+      },
+    },
+  },
 ];
