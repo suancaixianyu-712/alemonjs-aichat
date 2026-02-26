@@ -335,7 +335,21 @@ export const availableTools = {
       const data = await response.json();
       return data.data.list.map((item) => ({
         viewUrl: `https://test.suancaixianyu.cn/#/postDetails/${item.id}`,
-        ...item,
+        title: item.title,
+        content: item.content,
+        userName: item.creator.nickname,
+        userPage: `https://test.suancaixianyu.cn/#/user/${item.creatorId}`,
+        createdAt: item.createdAt,
+        plate: item.plate.name,
+        postVersions: item.postVersions.map((version) => ({
+          version: version.version,
+          versionName: version.title,
+          createdAt: version.createdAt,
+          files: version.files.map((file) => ({
+            name: file.name,
+            url: file.url,
+          })),
+        })),
       }));
     } catch (error) {
       console.error("Error searching posts:", error);

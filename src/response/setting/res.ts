@@ -30,6 +30,7 @@ const regular$14 = /(\/|#)(开启|关闭)语音回复$/i;
 const regular$15 = /(\/|#)(开启|关闭)(MCP)?工具$/i;
 const regular$16 = /(\/|#)切换图床(.*)$/i;
 const regular$17 = /(\/|#)修改 ?(.+) ?模型 ?(.+)$/i;
+const regular$18 = /(\/|#)(关闭|开启)复杂(输出|回复)$/i;
 
 const test = /(\/|#)测试$/i;
 
@@ -49,6 +50,7 @@ export const regular = Regular.or(
   regular$15,
   regular$16,
   regular$17,
+  regular$18,
   test,
 );
 
@@ -369,6 +371,26 @@ export default onResponse(selects, async (e, next) => {
         Text(`已将 AI ${aiName.trim()} 的模型修改为 ${modelName.trim()} !`),
       ),
     );
+    return;
+  }
+
+  // 设置复杂输出开关
+  if (regular$18.test(e.msg)) {
+    const match = e.msg.match(regular$18);
+    if (!match) {
+      message.send(
+        format(
+          Text(
+            "格式错误，请按照 格式：/开启复杂输出 或 /关闭复杂输出 进行设置",
+          ),
+        ),
+      );
+      return;
+    }
+    const [, , action] = match;
+    const enable = action === "开启";
+    await redis.set(`chat:complex:response:${e.guid}`, enable ? "1" : "0");
+    message.send(format(Text(`已${enable ? "开启" : "关闭"}复杂输出功能 !`)));
     return;
   }
 

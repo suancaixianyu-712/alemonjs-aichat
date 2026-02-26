@@ -11,7 +11,7 @@ import {
 import { emojiMap } from "@src/emoji";
 import { redis } from "@src/redis";
 import { uploadImageToR2 } from "@src/s3";
-import { ImageFile, Text, useClient, useMessage } from "alemonjs";
+import { ImageFile, Mention, Text, useClient, useMessage } from "alemonjs";
 import { log } from "console";
 import OpenAi from "openai";
 
@@ -34,6 +34,9 @@ export default onResponse(selects, async (e, next) => {
     return;
   }
 
+  const complexOutputIsOpen =
+    (await redis.get(`chat:complex:response:${e.guid}`)) || "1";
+
   // 创建消息
   const [message] = useMessage(e);
   const config = await getAIConfig(e.guid);
@@ -46,7 +49,8 @@ export default onResponse(selects, async (e, next) => {
     (await redis.get(`ai:affection:switch:${e.guid}`)) || "1";
   const botName = e.bot.nickname || "小咸鱼";
   const systemPrompt =
-    `你正在一个群聊中跟用户聊天,你的聊天昵称是'${botName}'
+    complexOutputIsOpen === "1"
+      ? `你正在一个群聊中跟用户聊天,你的聊天昵称是'${botName}'
 关于回复格式:
   用户的发言方式为: [{'用户昵称(用户id)(发送时间)':回复内容}]
   当聊天场景为私信时, 用户昵称前方会有[私信]前缀, 例如: [{'[私信]用户昵称(用户id)(发送时间)':回复内容}]
@@ -57,14 +61,21 @@ export default onResponse(selects, async (e, next) => {
   [{'assistant':'画好啦','image_url':'图片地址'}]
   注意:图片地址必须是接口返回的完整地址, 通常是相对路径
   注意:你的回复中除了json必要的双引号之外, 不要再添加多余的双引号, 否则会导致解析失败, 需要在回复内容中使用单引号来表示字符串, 例如: [{"assistant":"这是一个'引号'的例子"}]
+`
+      : `你正在一个群聊中跟用户聊天,你的聊天昵称是'${botName}'
+关于回复格式:
+  用户的发言方式为: '用户昵称(用户id)(发送时间):聊天内容'
+  当聊天场景为私信时, 用户昵称前方会有[私信]前缀, 例如: '[私信]用户昵称(用户id)(发送时间)':聊天内容'
+  你的回复格式为: '${botName}:回复内容'.
+  当然你觉得当前聊的话题确定与你有关是才回复,否则你就回复空数组[]来表示不回复.请尽可能降低回复频率
 ` +
-    (affectionIsOpen === "1"
-      ? `当你认为对方在示好或骂你时,可添加{affections:数字}表示好感度变化,你可以根据好感度来适当改变回复语气.
+        (affectionIsOpen === "1" && complexOutputIsOpen === "1"
+          ? `当你认为对方在示好或骂你时,可添加{affections:数字}表示好感度变化,你可以根据好感度来适当改变回复语气.
 示例: [{'assistant':'你人真好[好感+2]','affections':2}], 或者 [{'assistant':'我才不理你这个坏人呢[好感-1]','affections':-1}]
 当对方希望和好时提出道歉条件,可以给对方一个恢复的机会.
 当前群时间:${getTimeString()}\n
 当前用户的好感度列表如下:\n` + JSON.stringify(affections)
-      : `当前群时间:${getTimeString()}`);
+          : `当前群时间:${getTimeString()}`);
 
   // 如果没有配置AI,则不处理
   if (
@@ -87,20 +98,24 @@ export default onResponse(selects, async (e, next) => {
   }
   // if (e.UserId != "3501869534") return;
 
+  console.log("系统提示词:", systemPrompt);
+
   // 处理回复图片
-  if (e.reply) {
-    const replyImages = e.reply.message
-      .filter((item) => item.type === "image")
-      .map((item) => item.data.url);
-    imgs.push(...replyImages);
-  }
+  if (complexOutputIsOpen === "1") {
+    if (e.reply) {
+      const replyImages = e.reply.message
+        .filter((item) => item.type === "image")
+        .map((item) => item.data.url);
+      imgs.push(...replyImages);
+    }
 
-  // 处理图片
-  if (e.img && e.img.length > 0) {
-    console.log("有图片");
+    // 处理图片
+    if (e.img && e.img.length > 0) {
+      console.log("有图片");
 
-    for (const imgUrl of e.img) {
-      imgs.push(imgUrl);
+      for (const imgUrl of e.img) {
+        imgs.push(imgUrl);
+      }
     }
   }
 
@@ -152,9 +167,12 @@ export default onResponse(selects, async (e, next) => {
       })),
       {
         type: "text",
-        text: JSON.stringify({
-          [`${e.nickname}(${getTimeString()})`]: rawMessage,
-        }),
+        text:
+          complexOutputIsOpen === "1"
+            ? JSON.stringify({
+                [`${e.nickname}(${getTimeString()})`]: rawMessage,
+              })
+            : `${e.nickname}(${getTimeString()}): ${rawMessage}`,
       },
     ],
   };
@@ -181,13 +199,19 @@ export default onResponse(selects, async (e, next) => {
     { ...usermessage },
   ];
 
-  let res = await openai.chat.completions.create({
+  const isTool = await redis.get(`chat:tools:response:${e.guid}`);
+
+  const createParams = {
     model: config.model,
-    tools,
-    tool_choice: "auto",
-    // reasoning_effort: "low",
     messages: messages,
-  });
+  };
+
+  if (isTool === "1") {
+    createParams["tools"] = tools;
+    createParams["tool_choice"] = "auto";
+  }
+
+  let res = await openai.chat.completions.create(createParams);
 
   if (!res.choices || res.choices.length === 0) {
     log("AI未返回内容");
@@ -270,16 +294,26 @@ export default onResponse(selects, async (e, next) => {
 
   // 如果没有工具调用，处理最终回复
   let reply =
-    res.choices?.[0]?.message?.content?.trim().replace(/'/g, '"') || "";
+    res.choices?.[0]?.message?.content
+      ?.trim()
+      .replace(/'/g, '"')
+      .replace(new RegExp(`^${botName}:`, "i"), "") || "";
   log("AI回复内容:", reply);
+  if (reply === "[]") {
+    log("AI选择不回复");
+    return;
+  }
 
   // 修复assistant字段中多余的双引号
-  reply = reply.replace(/(?<="assistant":")(.*?)(?="[,}])/, (match) =>
-    match.replace(/"/g, "'"),
-  );
+  reply = reply
+    .replace(/(?<="assistant":")(.*?)(?="[,}])/, (match) =>
+      match.replace(/"/g, "'"),
+    )
+    .replace(/\\n/g, "\n")
+    .replace(/}]}$/, "}]");
 
   // 提取好感变化, 使用incrementAffectionLevel更新好感
-  if (affectionIsOpen === "1") {
+  if (affectionIsOpen === "1" && complexOutputIsOpen === "1") {
     let affectionUpdated = false;
 
     try {
@@ -318,7 +352,7 @@ export default onResponse(selects, async (e, next) => {
 
   if (isOpenTTSReply === "1") {
     ttsClient = new TTSClient();
-    await ttsClient.setModel("三月七", "生气");
+    await ttsClient.setModel("派蒙", "默认");
   }
 
   // 解析回复内容
@@ -339,7 +373,7 @@ export default onResponse(selects, async (e, next) => {
 
         if (aiReply.image_url) {
           const replyRes = await message.send(
-            format(Text(msg), ImageFile(aiReply.image_url)),
+            format(Mention(e.UserId), Text(msg), ImageFile(aiReply.image_url)),
           );
           if (replyRes[0].code !== 2000) {
             console.log("发送消息失败:", replyRes);

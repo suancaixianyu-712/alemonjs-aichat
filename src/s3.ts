@@ -3,56 +3,172 @@ import fs from "fs/promises";
 import path from "path";
 import mime from "mime-types";
 import { redis } from "./redis";
+import sharp from "sharp"; // 需要安装: npm install sharp
 
 /**
- * 上传图片到 Cloudflare R2，返回公共访问 URL
- * @param {string} source - 支持三种格式：
- *   1. 本地路径: "/path/to/image.jpg"
- *   2. base64 数据: "data:image/jpeg;base64,xxxx..." 或纯 base64 字符串
- *   3. 远程 URL: "https://example.com/image.png"
- * @param {string} [key] - 可选，自定义文件名（不含路径），默认用时间戳+随机
- * @returns {Promise<string>} 公共 URL
+ * 图片处理选项
  */
-export const uploadImageToR2 = async (
+interface ImageProcessOptions {
+  maxWidth?: number; // 最大宽度，默认 1920
+  maxHeight?: number; // 最大高度，默认 1080
+  quality?: number; // 质量，默认 80 (1-100)
+  format?: "webp" | "png" | "jpeg"; // 输出格式，默认 webp
+  animatedBehavior?: "error" | "first-frame" | "keep"; // 动图处理方式：报错/取第一帧/保持原样（默认取第一帧）
+}
+
+/**
+ * 判断是否为动画图片并获取信息
+ * @param buffer 图片buffer
+ * @returns 动画信息和metadata
+ */
+const getImageAnimationInfo = async (
+  buffer: Buffer,
+): Promise<{
+  isAnimated: boolean;
+  frameCount?: number;
+  metadata: sharp.Metadata;
+}> => {
+  try {
+    const metadata = await sharp(buffer, { animated: true }).metadata();
+    // 对于GIF，pages > 1 表示动画
+    // 对于WebP，pages > 1 表示动画
+    const isAnimated = (metadata.pages && metadata.pages > 1) || false;
+    return {
+      isAnimated,
+      frameCount: metadata.pages,
+      metadata,
+    };
+  } catch {
+    return {
+      isAnimated: false,
+      metadata: {},
+    };
+  }
+};
+
+/**
+ * 预处理图片：转换格式、压缩、处理动图
+ * @param buffer 原始图片buffer
+ * @param contentType 原始内容类型
+ * @param options 处理选项
+ * @returns 处理后的buffer和新的contentType
+ */
+const preprocessImage = async (
+  buffer: Buffer,
+  contentType: string,
+  options: ImageProcessOptions = {},
+): Promise<{
+  buffer: Buffer;
+  contentType: string;
+  format: string;
+  wasAnimated: boolean;
+}> => {
+  const {
+    maxWidth = 1920,
+    maxHeight = 1080,
+    quality = 80,
+    format = "webp",
+    animatedBehavior = "first-frame", // 默认取第一帧
+  } = options;
+
+  // 检查是否为动画
+  const { isAnimated, frameCount } = await getImageAnimationInfo(buffer);
+
+  // 处理动图
+  if (isAnimated) {
+    console.log(
+      `检测到动图，共 ${frameCount} 帧，处理方式: ${animatedBehavior}`,
+    );
+
+    if (animatedBehavior === "error") {
+      throw new Error(`不支持上传动画图片 (共 ${frameCount} 帧)`);
+    }
+
+    if (animatedBehavior === "keep") {
+      // 保持原样，但还是要转换格式
+      console.log("保持动图格式");
+    }
+
+    if (animatedBehavior === "first-frame") {
+      // 取第一帧 - 使用 sharp 的提取功能
+      console.log("提取第一帧作为静态图片");
+
+      // 对于动图，提取第一帧
+      const firstFrameBuffer = await sharp(buffer, {
+        animated: true,
+        pages: 1, // 只取第一页
+      })
+        .resize(maxWidth, maxHeight, {
+          fit: "inside",
+          withoutEnlargement: true,
+        })
+        .toBuffer();
+
+      buffer = firstFrameBuffer;
+    }
+  }
+
+  try {
+    // 使用sharp处理图片
+    let sharpInstance = sharp(buffer).resize(maxWidth, maxHeight, {
+      fit: "inside", // 保持宽高比
+      withoutEnlargement: true, // 不放大图片
+    });
+
+    // 根据目标格式进行处理
+    let processedBuffer: Buffer;
+    let finalContentType: string;
+
+    switch (format) {
+      case "webp":
+        processedBuffer = await sharpInstance.webp({ quality }).toBuffer();
+        finalContentType = "image/webp";
+        break;
+
+      case "png":
+        processedBuffer = await sharpInstance
+          .png({
+            compressionLevel: 9,
+            quality: quality,
+          })
+          .toBuffer();
+        finalContentType = "image/png";
+        break;
+
+      case "jpeg":
+      default:
+        processedBuffer = await sharpInstance
+          .jpeg({ quality, mozjpeg: true })
+          .toBuffer();
+        finalContentType = "image/jpeg";
+    }
+
+    return {
+      buffer: processedBuffer,
+      contentType: finalContentType,
+      format,
+      wasAnimated: isAnimated,
+    };
+  } catch (error) {
+    console.error("图片处理失败:", error);
+    throw new Error("图片格式不支持或处理失败");
+  }
+};
+
+/**
+ * 从各种源获取图片buffer
+ */
+const getImageBuffer = async (
   source: string,
-  key?: string,
-): Promise<string> => {
-  let buffer;
-  let contentType = "image/jpeg"; // 默认
-  let fileName;
+): Promise<{
+  buffer: Buffer;
+  contentType: string;
+  fileName: string;
+}> => {
+  let buffer: Buffer;
+  let contentType: string;
+  let fileName: string;
 
-  const config = (await redis.get(`chat:image:bed`)) || "R2";
-
-  const R2_CONFIG =
-    config == "R2"
-      ? {
-          accessKeyId: "f8f0d360d3156a1667c527c5ea4b18d7", // ← 必须替换！从 R2 API Tokens 获取
-          secretAccessKey:
-            "365f44cf6079054ad99923dd32966d0aba4e4d2d24726cadcd0102a7c2e7bc08", // ← 确认这是 Secret Access Key
-          bucket: "images",
-          publicDomain: "https://r2img.ccxk.top", // ← 改成你的公共域名（推荐）
-          endpoint:
-            "https://b24a196dc2ee578845bb555d53812508.r2.cloudflarestorage.com", // R2 固定格式
-        }
-      : {
-          accessKeyId: "pCLV51yDLbntzsfUkgBSjo5fJSor3nr5", // ← 必须替换！从 R2 API Tokens 获取
-          secretAccessKey: "5672e62135be31808f1afbd35862839e", // ← 确认这是 Secret Access Key
-          bucket: "schub-image",
-          publicDomain: "https://s3img.suancaixianyu.cn", // ← 改成你的公共域名（推荐）
-          endpoint: "https://s3.api.upyun.com", // R2 固定格式
-        };
-
-  const s3Client = new S3Client({
-    region: "auto", // R2 固定用 auto
-    endpoint: R2_CONFIG.endpoint,
-    credentials: {
-      accessKeyId: R2_CONFIG.accessKeyId,
-      secretAccessKey: R2_CONFIG.secretAccessKey,
-    },
-    maxAttempts: 3, // 自动重试
-  });
-
-  // 1. 处理不同来源 → 统一得到 Buffer + contentType + fileName
   if (source.startsWith("http://") || source.startsWith("https://")) {
     // 远程 URL
     const response = await fetch(source.replace("!/fwfh/368x238", ""));
@@ -81,30 +197,207 @@ export const uploadImageToR2 = async (
   } else {
     // 纯 base64（无 data: 前缀）
     buffer = Buffer.from(source, "base64");
+    contentType = "image/jpeg";
     fileName = `image-${Date.now()}.jpg`;
   }
 
-  // 2. 生成对象 key（文件名）
-  const objectKey =
-    key ||
-    `${Date.now()}-${Math.random().toString(36).slice(2, 10)}.${mime.extension(contentType) || "jpg"}`;
+  return { buffer, contentType, fileName };
+};
 
-  // 3. 上传
+/**
+ * 上传图片到 Cloudflare R2，自动转换为静态WebP/PNG，智能处理动图
+ * @param {string} source - 支持三种格式：
+ *   1. 本地路径: "/path/to/image.jpg"
+ *   2. base64 数据: "data:image/jpeg;base64,xxxx..." 或纯 base64 字符串
+ *   3. 远程 URL: "https://example.com/image.png"
+ * @param {string} [key] - 可选，自定义文件名（不含路径），默认用时间戳+随机
+ * @param {ImageProcessOptions} [processOptions] - 图片处理选项
+ * @returns {Promise<string>} 公共 URL
+ */
+export const uploadImageToR2 = async (
+  source: string,
+  key?: string,
+  processOptions: ImageProcessOptions = {},
+): Promise<string> => {
+  // 1. 获取原始图片数据
+  const {
+    buffer: originalBuffer,
+    contentType: originalContentType,
+    fileName: originalFileName,
+  } = await getImageBuffer(source);
+
+  // 2. 预处理图片（转换格式、压缩、处理动图）
+  const {
+    buffer: processedBuffer,
+    contentType,
+    format,
+    wasAnimated,
+  } = await preprocessImage(
+    originalBuffer,
+    originalContentType,
+    processOptions,
+  );
+
+  // 3. 获取R2配置
+  const config = (await redis.get(`chat:image:bed`)) || "R2";
+
+  const R2_CONFIG =
+    config == "R2"
+      ? {
+          accessKeyId: "f8f0d360d3156a1667c527c5ea4b18d7",
+          secretAccessKey:
+            "365f44cf6079054ad99923dd32966d0aba4e4d2d24726cadcd0102a7c2e7bc08",
+          bucket: "images",
+          publicDomain: "https://r2img.ccxk.top",
+          endpoint:
+            "https://b24a196dc2ee578845bb555d53812508.r2.cloudflarestorage.com",
+        }
+      : {
+          accessKeyId: "pCLV51yDLbntzsfUkgBSjo5fJSor3nr5",
+          secretAccessKey: "5672e62135be31808f1afbd35862839e",
+          bucket: "schub-image",
+          publicDomain: "https://s3img.suancaixianyu.cn",
+          endpoint: "https://s3.api.upyun.com",
+        };
+
+  // 4. 创建S3客户端
+  const s3Client = new S3Client({
+    region: "auto",
+    endpoint: R2_CONFIG.endpoint,
+    credentials: {
+      accessKeyId: R2_CONFIG.accessKeyId,
+      secretAccessKey: R2_CONFIG.secretAccessKey,
+    },
+    maxAttempts: 3,
+  });
+
+  // 5. 生成对象key（使用新格式的扩展名）
+  const extension = format; // webp/png/jpeg
+  const baseFileName = key || originalFileName.replace(/\.[^/.]+$/, ""); // 移除原扩展名
+  const objectKey = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}.${extension}`;
+
+  // 6. 上传
   const command = new PutObjectCommand({
     Bucket: R2_CONFIG.bucket,
     Key: objectKey,
-    Body: buffer, // 或 Readable.from(buffer) 如果是大文件
+    Body: processedBuffer,
     ContentType: contentType,
-    // 如果 bucket 已设为 public-read，可加：
-    // ACL: "public-read",          // 但 R2 更推荐用 bucket 设置 + 自定义域名
   });
 
   await s3Client.send(command);
 
-  // 4. 返回公共 URL
-  // 推荐方式：用自定义域名或 r2.dev 公共域名（需在 R2 设置允许 public access）
+  // 7. 返回公共URL
   const publicUrl = `${R2_CONFIG.publicDomain}/${objectKey}`;
 
-  console.log(`上传成功: ${publicUrl}`);
+  // 添加处理日志
+  const animatedMessage = wasAnimated ? " (原为动图，已取第一帧)" : "";
+  console.log(
+    `上传成功: ${publicUrl} [原始: ${originalContentType}, 转换后: ${contentType}${animatedMessage}]`,
+  );
+
   return publicUrl;
 };
+
+/**
+ * 工具函数：设置默认图片处理选项
+ */
+export const setImageProcessOptions = {
+  /**
+   * 转换为WebP格式（默认）
+   */
+  toWebP: (
+    options?: Omit<ImageProcessOptions, "format">,
+  ): ImageProcessOptions => ({
+    format: "webp",
+    ...options,
+  }),
+
+  /**
+   * 转换为PNG格式
+   */
+  toPNG: (
+    options?: Omit<ImageProcessOptions, "format">,
+  ): ImageProcessOptions => ({
+    format: "png",
+    ...options,
+  }),
+
+  /**
+   * 转换为JPEG格式
+   */
+  toJPEG: (
+    options?: Omit<ImageProcessOptions, "format">,
+  ): ImageProcessOptions => ({
+    format: "jpeg",
+    ...options,
+  }),
+
+  /**
+   * 动图处理策略
+   */
+  animated: {
+    /**
+     * 取第一帧（默认）
+     */
+    firstFrame: (
+      options?: Omit<ImageProcessOptions, "animatedBehavior">,
+    ): ImageProcessOptions => ({
+      animatedBehavior: "first-frame",
+      ...options,
+    }),
+
+    /**
+     * 报错
+     */
+    error: (
+      options?: Omit<ImageProcessOptions, "animatedBehavior">,
+    ): ImageProcessOptions => ({
+      animatedBehavior: "error",
+      ...options,
+    }),
+
+    /**
+     * 保持原样
+     */
+    keep: (
+      options?: Omit<ImageProcessOptions, "animatedBehavior">,
+    ): ImageProcessOptions => ({
+      animatedBehavior: "keep",
+      ...options,
+    }),
+  },
+};
+
+/**
+ * 使用示例：
+ *
+ * // 1. 默认行为：动图自动取第一帧，转WebP
+ * const url1 = await uploadImageToR2('animation.gif');
+ *
+ * // 2. 转PNG，动图取第一帧
+ * const url2 = await uploadImageToR2('animation.gif', undefined,
+ *   setImageProcessOptions.toPNG()
+ * );
+ *
+ * // 3. 动图报错（如果你确实想阻止动图）
+ * try {
+ *   const url3 = await uploadImageToR2('animation.gif', undefined,
+ *     setImageProcessOptions.animated.error()
+ *   );
+ * } catch (error) {
+ *   console.log('动图不允许上传');
+ * }
+ *
+ * // 4. 保持动图原样（转WebP格式但保留动画）
+ * const url4 = await uploadImageToR2('animation.gif', undefined,
+ *   setImageProcessOptions.animated.keep()
+ * );
+ *
+ * // 5. 自定义尺寸和质量
+ * const url5 = await uploadImageToR2('image.jpg', undefined,
+ *   setImageProcessOptions.toWebP({
+ *     maxWidth: 800,
+ *     quality: 90
+ *   })
+ * );
+ */
