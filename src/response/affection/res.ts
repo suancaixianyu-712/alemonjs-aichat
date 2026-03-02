@@ -17,7 +17,7 @@ export default onResponse(selects, async (e, next) => {
 
   // 查看好感度
   if (regular$1.test(e.msg)) {
-    const affections = await getAffectionLevel(e.uidkey);
+    const affections = await getAffectionLevel(e.guid, e.uidkey);
     message.send(
       format(Text(`当前用户\`${e.UserName}\`的好感度为: ${affections}。`)),
     );

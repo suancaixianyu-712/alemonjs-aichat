@@ -4,6 +4,8 @@ import path from "path";
 import mime from "mime-types";
 import { redis } from "./redis";
 import sharp from "sharp"; // 需要安装: npm install sharp
+import { getConfigValue } from "alemonjs";
+const value = getConfigValue();
 
 /**
  * 图片处理选项
@@ -158,7 +160,7 @@ const preprocessImage = async (
 /**
  * 从各种源获取图片buffer
  */
-const getImageBuffer = async (
+export const getImageBuffer = async (
   source: string,
 ): Promise<{
   buffer: Buffer;
@@ -171,7 +173,14 @@ const getImageBuffer = async (
 
   if (source.startsWith("http://") || source.startsWith("https://")) {
     // 远程 URL
-    const response = await fetch(source.replace("!/fwfh/368x238", ""));
+    let url = source.replace("!/fwfh/368x238", "");
+
+    // 判断是否为 https://imgen.x.ai 开头
+    if (url.startsWith("https://imgen.x.ai")) {
+      url = url.replace("https://imgen.x.ai", value.xaiImgProxy);
+    }
+
+    const response = await fetch(url);
     if (!response.ok) throw new Error(`下载图片失败: ${response.statusText}`);
 
     buffer = Buffer.from(await response.arrayBuffer());
@@ -367,37 +376,3 @@ export const setImageProcessOptions = {
     }),
   },
 };
-
-/**
- * 使用示例：
- *
- * // 1. 默认行为：动图自动取第一帧，转WebP
- * const url1 = await uploadImageToR2('animation.gif');
- *
- * // 2. 转PNG，动图取第一帧
- * const url2 = await uploadImageToR2('animation.gif', undefined,
- *   setImageProcessOptions.toPNG()
- * );
- *
- * // 3. 动图报错（如果你确实想阻止动图）
- * try {
- *   const url3 = await uploadImageToR2('animation.gif', undefined,
- *     setImageProcessOptions.animated.error()
- *   );
- * } catch (error) {
- *   console.log('动图不允许上传');
- * }
- *
- * // 4. 保持动图原样（转WebP格式但保留动画）
- * const url4 = await uploadImageToR2('animation.gif', undefined,
- *   setImageProcessOptions.animated.keep()
- * );
- *
- * // 5. 自定义尺寸和质量
- * const url5 = await uploadImageToR2('image.jpg', undefined,
- *   setImageProcessOptions.toWebP({
- *     maxWidth: 800,
- *     quality: 90
- *   })
- * );
- */

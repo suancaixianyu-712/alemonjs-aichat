@@ -141,8 +141,8 @@ export const clearAIChatHistory = async (guid?: string) => {
  * @param userKey 用户标识
  * @returns
  */
-export const getAffectionLevel = async (userKey: string) => {
-  const levelStr = await redis.get(`ai:affection:${userKey}`);
+export const getAffectionLevel = async (guid: string, userKey: string) => {
+  const levelStr = await redis.get(`ai:affection:${guid}:${userKey}`);
   if (levelStr) {
     return parseInt(levelStr, 10);
   }
@@ -168,8 +168,12 @@ export const getAffectionLevelAll = async (guid: string) => {
  * @param level 好感度等级
  * @returns
  */
-export const setAffectionLevel = async (userKey: string, level: number) => {
-  return await redis.set(`ai:affection:${userKey}`, level.toString());
+export const setAffectionLevel = async (
+  guid: string,
+  userKey: string,
+  level: number,
+) => {
+  return await redis.set(`ai:affection:${guid}:${userKey}`, level.toString());
 };
 
 /**
@@ -179,12 +183,13 @@ export const setAffectionLevel = async (userKey: string, level: number) => {
  * @returns
  */
 export const incrementAffectionLevel = async (
+  guid: string,
   userKey: string,
   increment: number,
 ) => {
-  const currentLevel = await getAffectionLevel(userKey);
+  const currentLevel = await getAffectionLevel(guid, userKey);
   const newLevel = currentLevel + increment;
-  await setAffectionLevel(userKey, newLevel);
+  await setAffectionLevel(guid, userKey, newLevel);
   return newLevel;
 };
 
@@ -233,7 +238,8 @@ export const tools: ChatCompletionTool[] = [
     type: "function",
     function: {
       name: "StableDiffusionGenerateImage",
-      description: "使用 Stable Diffusion 模型生成图像",
+      description:
+        "使用 Stable Diffusion 模型生成图像, 该工具只擅长生成动漫风格的图片, 文本生成图像, 如需修改图像请使用AIPS工具",
       parameters: {
         type: "object",
         properties: {
@@ -261,24 +267,24 @@ export const tools: ChatCompletionTool[] = [
       },
     },
   },
-  {
-    type: "function",
-    function: {
-      name: "StableDiffusionImageToPrompt",
-      description:
-        "使用 Stable Diffusion 将图片转换为提示词, 仅供绘图时使用, 其他场景请勿使用",
-      parameters: {
-        type: "object",
-        properties: {
-          image_url: {
-            type: "string",
-            description: "图片的URL地址，必须是你所收到的图片地址",
-          },
-        },
-        required: ["image_url"],
-      },
-    },
-  },
+  // {
+  //   type: "function",
+  //   function: {
+  //     name: "StableDiffusionImageToPrompt",
+  //     description:
+  //       "使用 Stable Diffusion 将图片转换为提示词, 仅供绘图时使用, 其他场景请勿使用",
+  //     parameters: {
+  //       type: "object",
+  //       properties: {
+  //         image_url: {
+  //           type: "string",
+  //           description: "图片的URL地址，必须是你所收到的图片地址",
+  //         },
+  //       },
+  //       required: ["image_url"],
+  //     },
+  //   },
+  // },
   {
     type: "function",
     function: {
@@ -297,7 +303,6 @@ export const tools: ChatCompletionTool[] = [
       },
     },
   },
-
   {
     type: "function",
     function: {
@@ -332,6 +337,29 @@ export const tools: ChatCompletionTool[] = [
           },
         },
         required: ["keyword"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "AIPS",
+      description:
+        "AI修图工具, 可以对图片进行任何处理, 只需提供需要修改的图片url和修改需求即可. 当遇到审核拦截的问题时, 请不要再次尝试提交相同的修改需求, 这可能会导致账号被封禁. 请修改你的修改需求文本描述, 使其更具体和详细, 以避免触发审核拦截. ",
+      parameters: {
+        type: "object",
+        properties: {
+          image_url: {
+            type: "string",
+            description: "需要修改的图片URL地址，必须是你所收到的图片地址",
+          },
+          instruction: {
+            type: "string",
+            description:
+              "修改需求的文本描述，尽量详细和具体，例如：'请将图片中的人物换成一个穿着宇航服的宇航员，背景改成月球表面，保持其他元素不变'",
+          },
+        },
+        required: ["image_url", "instruction"],
       },
     },
   },

@@ -1,6 +1,7 @@
 import { redis } from "./redis";
 import { getConfigValue } from "alemonjs";
 import fs from "fs";
+import { uploadImageToR2 } from "./s3";
 const value = getConfigValue();
 
 export const uploadImage = async (
@@ -202,12 +203,14 @@ export const availableTools = {
    * @param {string} prompt - 正向提示词
    * @param {string} [bad_prompt] - 反向提示词
    * @param {string} [direction] - 方向: landscape, portrait, square
+   * @param {boolean} [base64] - 是否返回base64格式的图片
    * @returns {Promise<{type: "image", url: string}[]>} 图片列表
    */
   StableDiffusionGenerateImage: async ({
     prompt,
     bad_prompt = "(easynegative:1.1), (verybadimagenegative_v1.3:1), (low quality:1.2), (worst quality:1.2)",
     direction = "portrait",
+    base64 = false,
   }) => {
     const images: { type: "image"; url: string }[] = [];
     const sizeMap = {
@@ -256,8 +259,12 @@ export const availableTools = {
       const base64Data = data.images[0].replace(/^data:image\/\w+;base64,/, "");
       const buffer = Buffer.from(base64Data, "base64");
       fs.writeFileSync(path, buffer);
+      if (base64) {
+        return data.images;
+      }
 
       images.push({ type: "image", url: path });
+
       return images;
     } catch (error) {
       console.error("Error generating images:", error);
@@ -381,6 +388,74 @@ export const availableTools = {
     } catch (error) {
       console.error("Error searching web:", error);
       return [];
+    }
+  },
+
+  AIPS: async ({ image_url, instruction }) => {
+    // 从aiconfig中查询grok配置
+    const aiConfigStr = await redis.get(`ai:list:grok`);
+    if (!aiConfigStr) {
+      return "未找到AI配置";
+    }
+    const aiConfig = JSON.parse(aiConfigStr);
+
+    // 处理单个或多个图片
+    const imageUrls = Array.isArray(image_url) ? image_url : [image_url];
+    const imgBase64Array: string[] = [];
+
+    for (const url of imageUrls) {
+      let imgBase64 = "";
+      if (url.startsWith("https://imgen.x.ai")) {
+        imgBase64 = url;
+      } else {
+        imgBase64 = await uploadImageToR2(url);
+      }
+      imgBase64Array.push(imgBase64);
+    }
+
+    try {
+      const requestBody = Array.isArray(image_url)
+        ? {
+            model: "grok-imagine-image",
+            images: imgBase64Array.map((base64) => ({
+              url: base64,
+              type: "image_url",
+            })),
+            prompt: instruction,
+            n: 1,
+          }
+        : {
+            model: "grok-imagine-image",
+            image: {
+              url: imgBase64Array[0],
+              type: "image_url",
+            },
+            prompt: instruction,
+            n: 1,
+          };
+
+      console.log("最终请求体", requestBody);
+
+      const res = await fetch(aiConfig.host + "/images/edits", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${aiConfig.key}`,
+        },
+        body: JSON.stringify(requestBody),
+      });
+      if (!res.ok) {
+        const err = await res.text();
+        console.log(err);
+        return err;
+      }
+      const image = await res.json();
+      console.log("画好了", image);
+
+      return image.data;
+    } catch (error) {
+      console.error("Error calling AIPS:", error);
+      return "调用接口失败" + error;
     }
   },
 };

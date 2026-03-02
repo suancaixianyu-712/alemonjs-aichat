@@ -11,9 +11,18 @@ import {
 import { emojiMap } from "@src/emoji";
 import { redis } from "@src/redis";
 import { uploadImageToR2 } from "@src/s3";
-import { ImageFile, Mention, Text, useClient, useMessage } from "alemonjs";
+import {
+  ImageFile,
+  ImageURL,
+  Mention,
+  Text,
+  useClient,
+  useMessage,
+} from "alemonjs";
 import { log } from "console";
 import OpenAi from "openai";
+import { getConfigValue } from "alemonjs";
+const value = getConfigValue();
 
 export const selects = onSelects(["message.create", "private.message.create"]);
 export const regular = /.*/;
@@ -36,6 +45,7 @@ export default onResponse(selects, async (e, next) => {
 
   const complexOutputIsOpen =
     (await redis.get(`chat:complex:response:${e.guid}`)) || "1";
+  console.log("complexOutputIsOpen", complexOutputIsOpen);
 
   // 创建消息
   const [message] = useMessage(e);
@@ -73,9 +83,11 @@ export default onResponse(selects, async (e, next) => {
           ? `当你认为对方在示好或骂你时,可添加{affections:数字}表示好感度变化,你可以根据好感度来适当改变回复语气.
 示例: [{'assistant':'你人真好[好感+2]','affections':2}], 或者 [{'assistant':'我才不理你这个坏人呢[好感-1]','affections':-1}]
 当对方希望和好时提出道歉条件,可以给对方一个恢复的机会.
-当前群时间:${getTimeString()}\n
 当前用户的好感度列表如下:\n` + JSON.stringify(affections)
-          : `当前群时间:${getTimeString()}`);
+          : "") +
+        `当前群时间:${getTimeString()}
+当前群号:${e.guid}
+当前群名称:${e.GroupName || "无"}`;
 
   // 如果没有配置AI,则不处理
   if (
@@ -88,6 +100,11 @@ export default onResponse(selects, async (e, next) => {
 
   console.log("e.reply", e.reply);
 
+  // 发消息的人是机器人自己, 则不处理
+  if (e.UserId == e.bot.user_id) {
+    return;
+  }
+
   // 当e.at不存在时,只给20%概率继续执行, 当e.at存在时,概率为40%,当e.atBot存在时,概率为100%
   const rand = Math.random();
   if (e.Name !== "private.message.create") {
@@ -98,8 +115,6 @@ export default onResponse(selects, async (e, next) => {
   }
   // if (e.UserId != "3501869534") return;
 
-  console.log("系统提示词:", systemPrompt);
-
   // 处理回复图片
   if (complexOutputIsOpen === "1") {
     if (e.reply) {
@@ -107,6 +122,25 @@ export default onResponse(selects, async (e, next) => {
         .filter((item) => item.type === "image")
         .map((item) => item.data.url);
       imgs.push(...replyImages);
+      const replyAt = e.reply.message
+        .filter((item) => item.type === "at")
+        .map((item) => item.data);
+      const replyContent = e.reply.message
+        .filter((item) => item.type === "text")
+        .map((item) => item.data.text)
+        .join("");
+
+      if (replyAt.length > 0) {
+        for (const atItem of replyAt) {
+          const qq = atItem.qq;
+          const nickname = atItem.nickname || "未知昵称";
+          const cqAt = `[CQ:at,qq=${qq}]`;
+          rawMessage = rawMessage.replace(cqAt, `@${nickname}`);
+        }
+      }
+
+      rawMessage = rawMessage.replace(/\[CQ:image,[^\]]+\]/g, "[图片]");
+      rawMessage = `[回复:${replyContent}]` + "\n" + rawMessage;
     }
 
     // 处理图片
@@ -121,8 +155,6 @@ export default onResponse(selects, async (e, next) => {
 
   console.log("开始回复");
 
-  // 处理图片链接, 转为base64格式
-
   // 下载图片并转换为 Base64
   const imageurls = await Promise.all(
     imgs.map(async (imageUrl) => {
@@ -131,6 +163,8 @@ export default onResponse(selects, async (e, next) => {
   );
   // 过滤掉下载失败的图片
   const validImageUrls = imageurls.filter((img) => img !== null);
+
+  console.log("validImageUrls", validImageUrls);
 
   // 处理艾特
   if (e.at && e.at.length > 0) {
@@ -150,7 +184,13 @@ export default onResponse(selects, async (e, next) => {
     return imageUrl ? `![图片${index}](${imageUrl})` : "[图片]";
   });
 
-  rawMessage = rawMessage.replace(/\[CQ:reply,[^\]]+\]/g, "");
+  if (/\[CQ:reply,[^\]]+\]/.test(rawMessage)) {
+    rawMessage = rawMessage.replace(/\[CQ:reply,[^\]]+\]/g, "");
+    validImageUrls.map((url) => {
+      rawMessage += `\n![图片](${url})`;
+    });
+  }
+
   // 处理表情,转为[emojiMap[id]]
   rawMessage = rawMessage.replace(/\[CQ:face,id=(\d+)\]/g, (_match, p1) => {
     return `[${emojiMap[p1]}]`;
@@ -245,6 +285,12 @@ export default onResponse(selects, async (e, next) => {
       message.send(format(Text("好的, 我这就去画图~稍等一会儿哦~")));
     }
 
+    if (
+      responseMessage.tool_calls.find((tc: any) => tc.function.name === "AIPS")
+    ) {
+      message.send(format(Text("开始修图中~稍等一会儿哦~")));
+    }
+
     console.log("模型决定调用工具：", responseMessage.tool_calls);
     for (const toolCall of responseMessage.tool_calls) {
       const functionName = toolCall.function.name;
@@ -322,7 +368,7 @@ export default onResponse(selects, async (e, next) => {
         if (aiReply.affections) {
           const change = parseInt(aiReply.affections, 10);
           if (!isNaN(change) && change !== 0) {
-            await incrementAffectionLevel(e.userKey, change);
+            await incrementAffectionLevel(e.guid, e.userKey, change);
             console.log(`更新好感度: ${e.userKey} 改变 ${change}`);
             affectionUpdated = true;
           }
@@ -339,7 +385,7 @@ export default onResponse(selects, async (e, next) => {
         const change = parseInt(match[1], 10);
         if (!isNaN(change) && change !== 0) {
           console.log(`检测到好感变化: ${change}`);
-          await incrementAffectionLevel(e.userKey, change); // 更新好感度
+          await incrementAffectionLevel(e.guid, e.userKey, change); // 更新好感度
         }
       }
     }
@@ -352,7 +398,6 @@ export default onResponse(selects, async (e, next) => {
 
   if (isOpenTTSReply === "1") {
     ttsClient = new TTSClient();
-    await ttsClient.setModel("派蒙", "默认");
   }
 
   // 解析回复内容
@@ -372,13 +417,25 @@ export default onResponse(selects, async (e, next) => {
         const msg = aiReply.assistant.replace(/\[CQ:[^\]]+\]/, "").trim();
 
         if (aiReply.image_url) {
+          const isNetworkImage = /^https?:\/\//.test(aiReply.image_url);
+          if (aiReply.image_url.startsWith("https://imgen.x.ai")) {
+            aiReply.image_url = aiReply.image_url.replace(
+              "https://imgen.x.ai",
+              value.xaiImgProxy,
+            );
+          }
+
+          const imageComponent = isNetworkImage
+            ? ImageURL(aiReply.image_url)
+            : ImageFile(aiReply.image_url);
+
           const replyRes = await message.send(
-            format(Mention(e.UserId), Text(msg), ImageFile(aiReply.image_url)),
+            format(Mention(e.UserId), Text(msg), imageComponent),
           );
           if (replyRes[0].code !== 2000) {
             console.log("发送消息失败:", replyRes);
             await message.send(format(Text(msg)));
-            await message.send(format(ImageFile(aiReply.image_url)));
+            await message.send(format(imageComponent));
           }
         } else {
           message.send(format(Text(msg)));
@@ -388,7 +445,18 @@ export default onResponse(selects, async (e, next) => {
         }
       } else {
         if (aiReply.image_url) {
-          await message.send(format(ImageFile(aiReply.image_url)));
+          const isNetworkImage = /^https?:\/\//.test(aiReply.image_url);
+          if (aiReply.image_url.startsWith("https://imgen.x.ai")) {
+            aiReply.image_url = aiReply.image_url.replace(
+              "https://imgen.x.ai",
+              value.xaiImgProxy,
+            );
+          }
+          const imageComponent = isNetworkImage
+            ? ImageURL(aiReply.image_url)
+            : ImageFile(aiReply.image_url);
+
+          await message.send(format(imageComponent));
         }
       }
     }
@@ -408,7 +476,8 @@ export default onResponse(selects, async (e, next) => {
   }
 });
 
-function sendTTSMessage(message: any, e: any, ttsClient: TTSClient) {
+async function sendTTSMessage(message: any, e: any, ttsClient: TTSClient) {
+  await ttsClient.setModel("派蒙", "默认");
   // 发送TTS语音
   ttsClient.getAudio(message).then(async (audio) => {
     console.log("audio", audio);

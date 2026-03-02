@@ -1,10 +1,12 @@
-import { useClient } from "alemonjs";
+import { getConfigValue, useClient } from "alemonjs";
 import { API } from "@alemonjs/onebot";
+import { API as BubbleAPI } from "@alemonjs/bubble";
 
 const selects = onSelects(["message.create", "private.message.create"]);
 // 中间件
 export default onMiddleware(selects, async (event, next) => {
-  // const config = getConfigValue();
+  const config = getConfigValue();
+  console.log("原始事件:", event.value);
 
   // 新增字段
   event["user_id"] = event.UserId; // 用户QQ号
@@ -140,6 +142,66 @@ export default onMiddleware(selects, async (event, next) => {
         }
       })
       .join("");
+  }
+  if (event.Platform == "bubble") {
+    const bubbleConfig = config.bubble || {};
+    const [client] = useClient(event, BubbleAPI);
+
+    event["uidkey"] = `${event["guid"]}:${event.value.author}(${event.UserId})`; // 唯一标识
+    event["nickname"] =
+      `${event.name == "private.message.create" ? "[私信]" : ""}${event.value.author}(${event.UserId})`; // 昵称(用户名+QQ号)
+
+    event["user_id"] = event.UserId;
+    event["guid"] = event.ChannelId ?? event.UserId;
+    const botInfo: any = await client.getMe();
+    event["bot"] = {
+      nickname: botInfo[0].data.botUser.name,
+      user_id: botInfo[0].data.botUser.id,
+    };
+
+    event["at"] =
+      event.value.content.match(/<@!?(\d+)>/g)?.map((mention: string) => {
+        return {
+          type: "at",
+          data: {
+            qq: mention.match(/<@!?(\d+)>/)![1],
+          },
+        };
+      }) || [];
+    event["atBot"] = event["at"].find(
+      (item: { data: { qq: string } }) => item.data.qq === event["bot"].id,
+    );
+    event["originalMsg"] = event.value.content; // 原始消息内容
+    event["img"] =
+      event.value.fileMeta &&
+      event.value.fileMeta.contentType?.startsWith("image/")
+        ? [
+            bubbleConfig.CDN_URL ??
+              "https://bubble-oss-files.alemonjs.com/" +
+                event.value.fileMeta.url,
+          ]
+        : [];
+
+    // if (event.value.replyToId) {
+    //   const channelMessages = await client.request({
+    //     method: "GET",
+    //     url: `${bubbleConfig.API_URL ?? "https://api.bubble.alemonjs.com"}/channels/${event.ChannelId}/messages`,
+    //     headers: {
+    //       Authorization: `Bearer ${bubbleConfig.token}`,
+    //       "Content-Type": "application/json",
+    //     },
+    //   });
+
+    //   const replyMsg = channelMessages.find(
+    //     (msg: { id: string | number }) =>
+    //       msg.id.toString() === event.value.replyToId,
+    //   );
+    //   console.log("获取到的回复消息", replyMsg);
+
+    //   if (replyMsg) {
+    //     event["reply"] = replyMsg;
+    //   }
+    // }
   }
 
   console.log("处理后的事件", JSON.stringify(event, null, 2));

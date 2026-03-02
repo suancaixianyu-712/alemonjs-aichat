@@ -30,9 +30,10 @@ export default function App() {
             key={index}
             className=" border-b last:border-0 bg-black/60 rounded-lg overflow-hidden mb-4 text-white backdrop-blur-xs"
           >
-            <h2 className="p-4 text-lg font-semibold bg-black/30 border-b border-white/20">
-              {item.group.title}
-            </h2>
+            <div className="p-4 bg-black/30 border-b border-white/20">
+              <p className="text-lg font-semibold">{item.group.title}</p>
+              <p className="text-md mt-1">{item.group.desc}</p>
+            </div>
             <div>
               {Array.from({
                 length: Math.ceil(item.group.items.length / 3),

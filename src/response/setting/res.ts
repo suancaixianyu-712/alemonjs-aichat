@@ -1,3 +1,4 @@
+import { availableTools } from "@src/api";
 import {
   addAI,
   addPrompt,
@@ -10,9 +11,16 @@ import {
   switchPrompt,
 } from "@src/config";
 import { redis } from "@src/redis";
-import { uploadImageToR2 } from "@src/s3";
-import { ImageFile, Text, useMessage } from "alemonjs";
+import { getImageBuffer, uploadImageToR2 } from "@src/s3";
+import {
+  ImageFile,
+  ImageURL,
+  Text,
+  useMessage,
+  getConfigValue,
+} from "alemonjs";
 import { Regular } from "alemonjs/utils";
+const value = getConfigValue();
 
 const selects = onSelects(["message.create", "private.message.create"]);
 const regular$1 = /(\/|#)添加ai$/i;
@@ -60,16 +68,14 @@ export default onResponse(selects, async (e, next) => {
 
   // 测试
   if (test.test(e.msg)) {
-    // uploadImageToR2("./public/image_out/1769259547338.jpg").then((url) => {
-    //   console.log("上传成功，图片URL：", url);
-    // });
+    let img =
+      "https://imgen.x.ai/xai-imgen/xai-tmp-imgen-597ead9b-8db9-4f43-a501-ee4f32d9b4d0.jpeg";
 
-    message.send(
-      format(
-        Text("测试消息"),
-        // ImageFile("./public/image_out/1769257917858.jpg"),
-      ),
-    );
+    if (img.startsWith("https://imgen.x.ai")) {
+      img = img.replace("https://imgen.x.ai", value.xaiImgProxy);
+    }
+
+    message.send(format(Text("测试消息"), ImageURL(img)));
     // const a = await availableTools.StableDiffusionGenerateImage({
     //   prompt: "a cat playing with a ball",
     // });
