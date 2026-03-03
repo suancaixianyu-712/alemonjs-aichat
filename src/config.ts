@@ -233,6 +233,22 @@ export const affectionSwitch = async (guid: string, enable: boolean) => {
   return await redis.set(`ai:affection:switch:${guid}`, enable ? "1" : "0");
 };
 
+/**
+ * 获取好感度开关状态
+ */
+export const getAffectionSwitch = async (guid: string) => {
+  const switchStr = (await redis.get(`ai:affection:switch:${guid}`)) || "1";
+  return switchStr;
+};
+
+/**
+ * 获取tts回复开关状态
+ */
+export const getTTSResponseSwitch = async (guid: string) => {
+  const switchStr = (await redis.get(`chat:tts:response:${guid}`)) || "0";
+  return switchStr;
+};
+
 export const tools: ChatCompletionTool[] = [
   {
     type: "function",

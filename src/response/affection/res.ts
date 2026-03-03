@@ -17,7 +17,7 @@ export default onResponse(selects, async (e, next) => {
 
   // 查看好感度
   if (regular$1.test(e.msg)) {
-    const affections = await getAffectionLevel(e.guid, e.uidkey);
+    const affections = await getAffectionLevel(e.guid, e.UserName as string);
     message.send(
       format(Text(`当前用户\`${e.UserName}\`的好感度为: ${affections}。`)),
     );
@@ -33,7 +33,7 @@ export default onResponse(selects, async (e, next) => {
       await resetAllAffectionLevels();
       message.send(format(Text(`已重置所有用户的好感度。`)));
     } else {
-      await resetAffectionLevel(e.uidkey);
+      await resetAffectionLevel(e.UserName as string);
       message.send(format(Text(`已重置用户\`${e.UserName}\`的好感度。`)));
     }
   }

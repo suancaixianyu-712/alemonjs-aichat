@@ -3,8 +3,10 @@ import { availableTools, getTimeString, TTSClient } from "@src/api";
 import {
   addAIChatHistory,
   getAffectionLevelAll,
+  getAffectionSwitch,
   getAIChatHistory,
   getAIConfig,
+  getTTSResponseSwitch,
   incrementAffectionLevel,
   tools,
 } from "@src/config";
@@ -44,9 +46,7 @@ export default onResponse(selects, async (e, next) => {
   }
 
   const complexOutputIsOpen =
-    (await redis.get(`chat:complex:response:${e.guid}`)) || "1";
-  console.log("complexOutputIsOpen", complexOutputIsOpen);
-
+    (await redis.get(`chat:complex:response:${e.guid}`)) || "1"; // 复杂输出开关
   // 创建消息
   const [message] = useMessage(e);
   const config = await getAIConfig(e.guid);
@@ -55,39 +55,61 @@ export default onResponse(selects, async (e, next) => {
   const imgs: string[] = [];
   let rawMessage = e.value.raw_message || e.raw_message || e.msg;
   // 好感度开关
-  const affectionIsOpen =
-    (await redis.get(`ai:affection:switch:${e.guid}`)) || "1";
+  const affectionIsOpen = await getAffectionSwitch(e.guid);
   const botName = e.bot.nickname || "小咸鱼";
-  const systemPrompt =
-    complexOutputIsOpen === "1"
-      ? `你正在一个群聊中跟用户聊天,你的聊天昵称是'${botName}'
-关于回复格式:
-  用户的发言方式为: [{'用户昵称(用户id)(发送时间)':回复内容}]
-  当聊天场景为私信时, 用户昵称前方会有[私信]前缀, 例如: [{'[私信]用户昵称(用户id)(发送时间)':回复内容}]
-  你的回复方式为JSON: [{assistant:回复内容}],你可以在数组中加入多条消息来模拟更真实的聊天
-  当然你觉得当前聊的话题确定与你有关是才回复,否则你就回复空数组[]来表示不回复.请尽可能降低回复频率.
-关于图片发送:
-  如果你在使用画图工具后需要回复图片, 可在消息中追加image_url, 例如:
-  [{'assistant':'画好啦','image_url':'图片地址'}]
-  注意:图片地址必须是接口返回的完整地址, 通常是相对路径
-  注意:你的回复中除了json必要的双引号之外, 不要再添加多余的双引号, 否则会导致解析失败, 需要在回复内容中使用单引号来表示字符串, 例如: [{"assistant":"这是一个'引号'的例子"}]
+  const systemPrompt = `
+## 关于回复格式:
+### 用户发言
+- 格式: [私聊]用户昵称(用户id)(发送时间):消息内容
+当场景为私聊时, 用户昵称前方会出现[私聊]标识
+### 你的回复格式
+格式:
+${botName}:消息内容
+
+消息叠加:
+你可以使用多个叠加, 来模拟发送多条消息, 让聊天显得更真实, 例如:
+${botName}:早上好
+${botName}:吃过早饭了吗
+
+${
+  complexOutputIsOpen === "1"
+    ? `
+发送图片:
+你可以使用<img=图片链接>的方式来发送图片, 允许发送多张图, 例如:
+${botName}:画好了<img=https://example.com/landmarks.jpg>
+支持发送网络图片和相对路径图片, 例如:
+${botName}:这是本地图片<img=./localimage.jpg>
+${botName}:这是网络图片<img=https://example.com/image.jpg>
 `
-      : `你正在一个群聊中跟用户聊天,你的聊天昵称是'${botName}'
-关于回复格式:
-  用户的发言方式为: '用户昵称(用户id)(发送时间):聊天内容'
-  当聊天场景为私信时, 用户昵称前方会有[私信]前缀, 例如: '[私信]用户昵称(用户id)(发送时间)':聊天内容'
-  你的回复格式为: '${botName}:回复内容'.
-  当然你觉得当前聊的话题确定与你有关是才回复,否则你就回复空数组[]来表示不回复.请尽可能降低回复频率
-` +
-        (affectionIsOpen === "1" && complexOutputIsOpen === "1"
-          ? `当你认为对方在示好或骂你时,可添加{affections:数字}表示好感度变化,你可以根据好感度来适当改变回复语气.
-示例: [{'assistant':'你人真好[好感+2]','affections':2}], 或者 [{'assistant':'我才不理你这个坏人呢[好感-1]','affections':-1}]
-当对方希望和好时提出道歉条件,可以给对方一个恢复的机会.
-当前用户的好感度列表如下:\n` + JSON.stringify(affections)
-          : "") +
-        `当前群时间:${getTimeString()}
+    : ""
+}
+
+${
+  affectionIsOpen === "1" && complexOutputIsOpen === "1"
+    ? `好感度系统:
+好感度主要影响回复该用户的语气, 对低好感度的用户破口大骂, 对高好感度的用户温柔以待
+例如增加:
+${botName}:主人你对我真好<好感+1>
+例如减少:
+${botName}:滚一边去吧,傻b<好感-2>
+
+其他情况, 例如指定修改对某个用户的好感:
+${botName}:原来ta是这样的人, 人家以后再也不理ta了<用户昵称好感-1>
+假设对方昵称为'哈基米':
+${botName}:原来ta是这样的人, 人家以后再也不理ta了<哈基米好感-1>`
+    : ""
+}
+
+拒绝回复:
+在讨论中如果你觉得不适合回复或觉得与你无关又或者不感兴趣, 可以直接回复"[]"来拒绝本次回复, 例如:
+${botName}:[]
+
+基础状态信息:
+这里的信息会实时变化,根据需要进行获取使用
+当前群时间:${getTimeString()}
 当前群号:${e.guid}
-当前群名称:${e.GroupName || "无"}`;
+当前群名称:${e.GroupName || "无"}
+`;
 
   // 如果没有配置AI,则不处理
   if (
@@ -192,9 +214,14 @@ export default onResponse(selects, async (e, next) => {
   }
 
   // 处理表情,转为[emojiMap[id]]
-  rawMessage = rawMessage.replace(/\[CQ:face,id=(\d+)\]/g, (_match, p1) => {
-    return `[${emojiMap[p1]}]`;
-  });
+  rawMessage = rawMessage.replace(
+    /\[CQ:face,id=(\d+),[^\]]+\]/g,
+    (_match, p1) => {
+      return `[${emojiMap[p1]}]`;
+    },
+  );
+
+  console.log("处理后的消息内容:\n", rawMessage);
 
   const usermessage = {
     role: "user",
@@ -339,141 +366,89 @@ export default onResponse(selects, async (e, next) => {
   }
 
   // 如果没有工具调用，处理最终回复
-  let reply =
-    res.choices?.[0]?.message?.content
-      ?.trim()
-      .replace(/'/g, '"')
-      .replace(new RegExp(`^${botName}:`, "i"), "") || "";
-  log("AI回复内容:", reply);
-  if (reply === "[]") {
+  let reply = res.choices?.[0]?.message?.content?.trim() || `${botName}:[]`;
+  if (reply === `${botName}:[]`) {
     log("AI选择不回复");
     return;
   }
 
-  // 修复assistant字段中多余的双引号
-  reply = reply
-    .replace(/(?<="assistant":")(.*?)(?="[,}])/, (match) =>
-      match.replace(/"/g, "'"),
-    )
-    .replace(/\\n/g, "\n")
-    .replace(/}]}$/, "}]");
+  console.log("AI回复:\n", reply);
 
-  // 提取好感变化, 使用incrementAffectionLevel更新好感
-  if (affectionIsOpen === "1" && complexOutputIsOpen === "1") {
-    let affectionUpdated = false;
+  // 处理消息
+  // 提取ai发送的消息有多少条
+  const replyMessages = reply.split(new RegExp(`${botName}:`, "g")).slice(1);
 
-    try {
-      const aiReplys = JSON.parse(reply);
-      for (const aiReply of aiReplys) {
-        if (aiReply.affections) {
-          const change = parseInt(aiReply.affections, 10);
-          if (!isNaN(change) && change !== 0) {
-            await incrementAffectionLevel(e.guid, e.userKey, change);
-            console.log(`更新好感度: ${e.userKey} 改变 ${change}`);
-            affectionUpdated = true;
-          }
-        }
-      }
-    } catch (error) {
-      console.log("解析AI好感变化失败:", error);
+  const replymessages: { text: string; images: string[] }[] = [];
+
+  for (const replyMessage of replyMessages) {
+    // 从消息中提取图片
+    const imageRegex = /<img=(.*?)>/g;
+    let match;
+    const imgUrls: string[] = [];
+    while ((match = imageRegex.exec(replyMessage)) !== null) {
+      imgUrls.push(match[1]);
     }
 
-    if (!affectionUpdated) {
-      const affectionChangeRegex = /【|\[好感([+-]\d+)\]|】/g;
-      let match;
-      while ((match = affectionChangeRegex.exec(reply)) !== null) {
-        const change = parseInt(match[1], 10);
-        if (!isNaN(change) && change !== 0) {
-          console.log(`检测到好感变化: ${change}`);
-          await incrementAffectionLevel(e.guid, e.userKey, change); // 更新好感度
-        }
+    // 处理好感度变化（通用和特定用户）
+    const affectionRegex = /<([^<>]*?)好感([+-]\d+)>/g;
+    let affectionMatch: RegExpExecArray | null;
+    while ((affectionMatch = affectionRegex.exec(replyMessage)) !== null) {
+      const nickname = affectionMatch[1] || (e.UserName as string);
+      const change = parseInt(affectionMatch[2], 10);
+      if (!isNaN(change) && change !== 0) {
+        console.log(`检测到对${nickname}的好感变化: ${change}`);
+        await incrementAffectionLevel(e.guid, nickname, change);
       }
     }
+
+    // 组合消息,添加到replymessages数组中
+    replymessages.push({
+      text: replyMessage.replace(imageRegex, "").trim(),
+      images: imgUrls,
+    });
   }
   // 记录对话
   await addAIChatHistory(e.guid, res.choices?.[0].message);
 
-  const isOpenTTSReply =
-    (await redis.get(`chat:tts:response:${e.guid}`)) || "0";
-
+  // 发送消息
+  const isOpenTTSReply = await getTTSResponseSwitch(e.guid);
   if (isOpenTTSReply === "1") {
+    // 提前发送语音消息避免等待时间过长
     ttsClient = new TTSClient();
+    let msg = replymessages.map((item) => item.text).join("\n");
+    msg = msg.replace(/\[CQ:[^\]]+\]/g, "");
+    sendTTSMessage(msg, e, ttsClient);
   }
 
-  // 解析回复内容
-  try {
-    const aiReplys = JSON.parse(reply);
-    // ai回答
-    console.log("aiReplys", JSON.stringify(aiReplys, null, 2));
-
-    for (let i = 0; i < aiReplys.length; i++) {
-      const aiReply = aiReplys[i];
-      if (aiReply.assistant) {
-        if (i > 0) {
-          // 从第二个回复开始，添加1-4秒随机延迟
-          const delay = Math.floor(Math.random() * 3000) + 1000;
-          await new Promise((resolve) => setTimeout(resolve, delay));
-        }
-        const msg = aiReply.assistant.replace(/\[CQ:[^\]]+\]/, "").trim();
-
-        if (aiReply.image_url) {
-          const isNetworkImage = /^https?:\/\//.test(aiReply.image_url);
-          if (aiReply.image_url.startsWith("https://imgen.x.ai")) {
-            aiReply.image_url = aiReply.image_url.replace(
-              "https://imgen.x.ai",
-              value.xaiImgProxy,
-            );
-          }
-
-          const imageComponent = isNetworkImage
-            ? ImageURL(aiReply.image_url)
-            : ImageFile(aiReply.image_url);
-
-          const replyRes = await message.send(
-            format(Mention(e.UserId), Text(msg), imageComponent),
-          );
-          if (replyRes[0].code !== 2000) {
-            console.log("发送消息失败:", replyRes);
-            await message.send(format(Text(msg)));
-            await message.send(format(imageComponent));
-          }
-        } else {
-          message.send(format(Text(msg)));
-        }
-        if (isOpenTTSReply === "1") {
-          sendTTSMessage(msg, e, ttsClient);
+  // 处理消息
+  for (const replyMessage of replymessages) {
+    const { text, images } = replyMessage;
+    const components: any[] = [Mention(e.UserId), Text(text)];
+    for (const img of images) {
+      const isNetworkImage = /^https?:\/\//.test(img);
+      if (e.Platform == "scbbs" && isNetworkImage) {
+        // scbbs平台不支持网络图片, 需要先下载再上传
+        const uploadedUrl = await uploadImageToR2(
+          img.replace(
+            "https://imgen.x.ai",
+            value.xaiImgProxy || "https://imgen.x.ai",
+          ),
+        );
+        if (uploadedUrl) {
+          components.push(ImageURL(uploadedUrl));
         }
       } else {
-        if (aiReply.image_url) {
-          const isNetworkImage = /^https?:\/\//.test(aiReply.image_url);
-          if (aiReply.image_url.startsWith("https://imgen.x.ai")) {
-            aiReply.image_url = aiReply.image_url.replace(
-              "https://imgen.x.ai",
-              value.xaiImgProxy,
-            );
-          }
-          const imageComponent = isNetworkImage
-            ? ImageURL(aiReply.image_url)
-            : ImageFile(aiReply.image_url);
-
-          await message.send(format(imageComponent));
-        }
+        const imageComponent = isNetworkImage ? ImageURL(img) : ImageFile(img);
+        components.push(imageComponent);
       }
     }
-  } catch (error) {
-    console.log("解析AI回复失败，发送原始内容");
-    console.log(error);
-
-    const msg = reply
-      .replace(/\[CQ:[^\]]+\]/, "")
-      .replace(/"}]/, "")
-      .replace(/\[{"assistant":"/, "")
-      .trim();
-    message.send(format(Text(reply)));
-    if (isOpenTTSReply === "1") {
-      sendTTSMessage(msg, e, ttsClient);
-    }
+    // 添加随机1-5秒延迟
+    const delay = Math.random() * 4000 + 1000;
+    await new Promise((resolve) => setTimeout(resolve, delay));
+    await message.send(format(...components));
   }
+
+  return;
 });
 
 async function sendTTSMessage(message: any, e: any, ttsClient: TTSClient) {

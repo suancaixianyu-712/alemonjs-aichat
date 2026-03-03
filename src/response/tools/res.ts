@@ -4,6 +4,7 @@ import { getConfigValue, Image, Text, ImageURL, useMessage } from "alemonjs";
 import { Regular } from "alemonjs/utils";
 import OpenAi from "openai";
 import { API as BubbleAPI } from "@alemonjs/bubble";
+import { getAIConfig } from "@src/config";
 
 export const selects = onSelects(["message.create", "private.message.create"]);
 const regular$1 = /(\/|#)(ai)?(pt|p图|ps|修图)(.*)$/i;
@@ -53,7 +54,13 @@ export default onResponse(selects, async (e) => {
     if (res && typeof res === "object" && res.length > 0) {
       message.send(format(Text("修图完成喵~"), ImageURL(res[0].url)));
     } else {
-      message.send(format(Text("图片过于色情被和谐了喵~")));
+      try {
+        const json = JSON.parse(res);
+        console.log("res", json);
+        message.send(format(Text(json.error)));
+      } catch (error) {
+        message.send(format(Text("图片过于色情被和谐了喵~")));
+      }
     }
   }
 
@@ -66,7 +73,7 @@ export default onResponse(selects, async (e) => {
     }
     message.send(format(Text("开始画图喵~")));
 
-    const aiConfig = await redis.get(`ai:list:grok`);
+    const aiConfig = await getAIConfig(e.guid);
     if (!aiConfig) {
       const res = await availableTools.StableDiffusionGenerateImage({
         prompt: content,
@@ -77,15 +84,14 @@ export default onResponse(selects, async (e) => {
       }
       return;
     }
-    const config = JSON.parse(aiConfig);
     const openai = new OpenAi({
-      baseURL: config.host,
-      apiKey: config.key,
+      baseURL: aiConfig.host,
+      apiKey: aiConfig.key,
       timeout: 300000,
     });
     try {
       const response = await openai.chat.completions.create({
-        model: "grok-4-fast-non-reasoning",
+        model: aiConfig.model,
         messages: [
           {
             role: "system",
