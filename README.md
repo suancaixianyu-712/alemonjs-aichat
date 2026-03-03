@@ -4,6 +4,8 @@
 安装中遇到问题可访问alemonjs官网查询[https://alemonjs.com/docs](https://alemonjs.com/docs)
 
 ### yarn安装方式(推荐)
+前置条件:
+安装alemonjs: [alemonjs官网](https://alemonjs.com)
 
 ``` sh
 yarn add alemonjs-aichat
