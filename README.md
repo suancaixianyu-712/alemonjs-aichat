@@ -9,8 +9,18 @@ yarn add alemonjs-aichat
 
 ### git拉取项目安装
 
-```
+```sh
 git clone git@gitee.com:suancaixianyu/alemonjs-aichat.git
+cd alemonjs-aichat
+yarn
+```
+
+```sh
+## 运行
+yarn dev
+
+## 打包
+yarn build
 ```
 
 ## 2.配置
