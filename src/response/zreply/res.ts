@@ -30,6 +30,8 @@ export const selects = onSelects(["message.create", "private.message.create"]);
 export const regular = /.*/;
 let ttsClient: TTSClient;
 
+let currentModel = "派蒙-默认"; // 默认音色
+
 export default onResponse(selects, async (e, next) => {
   console.log("收到消息");
 
@@ -47,6 +49,8 @@ export default onResponse(selects, async (e, next) => {
 
   const complexOutputIsOpen =
     (await redis.get(`chat:complex:response:${e.guid}`)) || "1"; // 复杂输出开关
+  const affectionIsOpen = await getAffectionSwitch(e.guid); // 好感度开关
+  const isOpenTTSReply = await getTTSResponseSwitch(e.guid); // TTS回复开关
   // 创建消息
   const [message] = useMessage(e);
   const config = await getAIConfig(e.guid);
@@ -54,8 +58,6 @@ export default onResponse(selects, async (e, next) => {
   const affections = await getAffectionLevelAll(e.guid);
   const imgs: string[] = [];
   let rawMessage = e.value.raw_message || e.raw_message || e.msg;
-  // 好感度开关
-  const affectionIsOpen = await getAffectionSwitch(e.guid);
   const botName = e.bot.nickname || "小咸鱼";
   const systemPrompt = `
 ## 关于回复格式:
@@ -80,9 +82,30 @@ ${botName}:画好了<img=https://example.com/landmarks.jpg>
 支持发送网络图片和相对路径图片, 例如:
 ${botName}:这是本地图片<img=./localimage.jpg>
 ${botName}:这是网络图片<img=https://example.com/image.jpg>
+注意: 如果有用户问你能不能看动图时, 你要回答只能看到第一帧
 `
     : ""
 }
+
+${
+  complexOutputIsOpen === "1" && isOpenTTSReply === "1"
+    ? `\n语音回复:
+你可以使用语音回复来让你的回复更生动, 例如:
+${botName}:你好呀~<tts=你好呀~>
+可以通过调用GetTTSModels工具函数获取音色列表, 可使用<tts=内容,音色=派蒙-情感>的格式来指定音色,设置一次后, 后面的回复将使用相同的音色, 例如:
+${botName}:这是派蒙的声音哦~<音色=派蒙-默认><tts=这是派蒙的默认声音哦>
+${botName}:现在还是派蒙的声音哦~<tts=现在还是派蒙的声音哦>
+注意: 语音回复会增加回复时间, 请合理使用
+注意: 不可使用列表中不存在的音色, 否则会回复失败
+注意: 在设置音色时只需要指定模的角色名字和情感, 例如模型是"星穹铁道-中文-花火", 则音色应该设置为"花火-情感", 而不是"星穹铁道-中文-花火-情感"
+注意: 使用语音必须用${botName}:开头, 否则不会处理, 例如:
+<tts=你好> 这是错误的格式, 不会被处理
+${botName}:<tts=你好> 这是正确的格式, 会被处理
+
+`
+    : "语音回复: 当前不可用"
+}
+
 
 ${
   affectionIsOpen === "1" && complexOutputIsOpen === "1"
@@ -379,6 +402,7 @@ ${botName}:[]
   const replyMessages = reply.split(new RegExp(`${botName}:`, "g")).slice(1);
 
   const replymessages: { text: string; images: string[] }[] = [];
+  const ttsMessages: { text: string; model: string }[] = [];
 
   for (const replyMessage of replyMessages) {
     // 从消息中提取图片
@@ -401,9 +425,25 @@ ${botName}:[]
       }
     }
 
+    // 处理语音回复
+    const ttsRegex = /<(tts|音色)=([^>]+)>/gi;
+    let ttsMatch: RegExpExecArray | null;
+
+    while ((ttsMatch = ttsRegex.exec(replyMessage)) !== null) {
+      console.log("检测到语音回复");
+
+      const isTTS = ttsMatch[1].toLowerCase() === "tts";
+      const content = ttsMatch[2].trim();
+      if (isTTS) {
+        ttsMessages.push({ text: content, model: currentModel });
+      } else {
+        currentModel = content;
+      }
+    }
+
     // 组合消息,添加到replymessages数组中
     replymessages.push({
-      text: replyMessage.replace(imageRegex, "").trim(),
+      text: replyMessage.replace(imageRegex, "").replace(ttsRegex, "").trim(),
       images: imgUrls,
     });
   }
@@ -411,19 +451,21 @@ ${botName}:[]
   await addAIChatHistory(e.guid, res.choices?.[0].message);
 
   // 发送消息
-  const isOpenTTSReply = await getTTSResponseSwitch(e.guid);
   if (isOpenTTSReply === "1") {
     // 提前发送语音消息避免等待时间过长
     ttsClient = new TTSClient();
-    let msg = replymessages.map((item) => item.text).join("\n");
-    msg = msg.replace(/\[CQ:[^\]]+\]/g, "");
-    sendTTSMessage(msg, e, ttsClient);
+    console.log("发送语音", ttsMessages);
+
+    for (const ttsMessage of ttsMessages) {
+      sendTTSMessage(ttsMessage.text, e, ttsClient, ttsMessage.model);
+    }
   }
 
   // 处理消息
-  for (const replyMessage of replymessages) {
-    const { text, images } = replyMessage;
-    const components: any[] = [Mention(e.UserId), Text(text)];
+  for (let i = 0; i < replymessages.length; i++) {
+    const { text, images } = replymessages[i];
+    const components: any[] = i === 0 ? [Mention(e.UserId)] : [];
+    components.push(Text(text));
     for (const img of images) {
       const isNetworkImage = /^https?:\/\//.test(img);
       if (e.Platform == "scbbs" && isNetworkImage) {
@@ -442,8 +484,8 @@ ${botName}:[]
         components.push(imageComponent);
       }
     }
-    // 添加随机1-5秒延迟
-    const delay = Math.random() * 4000 + 1000;
+    // 添加随机1-3秒延迟
+    const delay = Math.random() * 2000 + 1000;
     await new Promise((resolve) => setTimeout(resolve, delay));
     await message.send(format(...components));
   }
@@ -451,8 +493,16 @@ ${botName}:[]
   return;
 });
 
-async function sendTTSMessage(message: any, e: any, ttsClient: TTSClient) {
-  await ttsClient.setModel("派蒙", "默认");
+async function sendTTSMessage(
+  message: any,
+  e: any,
+  ttsClient: TTSClient,
+  modelAndEmotion: string,
+) {
+  const [model, emotion] = modelAndEmotion.split("-");
+  console.log("message", message, "model", model, "emotion", emotion);
+
+  await ttsClient.setModel(model || "派蒙", emotion || "默认");
   // 发送TTS语音
   ttsClient.getAudio(message).then(async (audio) => {
     console.log("audio", audio);

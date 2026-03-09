@@ -180,8 +180,17 @@ export const getImageBuffer = async (
       url = url.replace("https://imgen.x.ai", value.xaiImgProxy);
     }
 
-    const response = await fetch(url);
-    if (!response.ok) throw new Error(`下载图片失败: ${response.statusText}`);
+    let response = await fetch(url);
+    if (!response.ok) {
+      if (url.startsWith("https://img.suancaixianyu.cn")) {
+        url = url.replace(
+          "https://img.suancaixianyu.cn",
+          "https://r2.scbbs.top",
+        );
+        response = await fetch(url);
+      }
+      if (!response.ok) throw new Error(`下载图片失败: ${response.statusText}`);
+    }
 
     buffer = Buffer.from(await response.arrayBuffer());
     contentType =

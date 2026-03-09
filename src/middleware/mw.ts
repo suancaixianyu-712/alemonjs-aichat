@@ -1,6 +1,7 @@
 import { getConfigValue, useClient } from "alemonjs";
 import { API } from "@alemonjs/onebot";
 import { API as BubbleAPI } from "@alemonjs/bubble";
+import { API as ScbbsAPI } from "@alemonjs/scbbs";
 
 const selects = onSelects(["message.create", "private.message.create"]);
 // 中间件
@@ -108,6 +109,8 @@ export default onMiddleware(selects, async (event, next) => {
   }
 
   if (event.Platform == "scbbs") {
+    const [client] = useClient(event, ScbbsAPI);
+
     event["msg"] = `${event["msg"]}`; // 消息内容包含at机器人昵称
     event["self_id"] = event.value.toUser.id; // 机器人ID
     event["originalMsg"] = event.value.content; // 原始消息内容
@@ -118,7 +121,9 @@ export default onMiddleware(selects, async (event, next) => {
     // 处理图片消息
     event["img"] = (event.value.content || [])
       .filter((item: { type: string }) => item.type === "image")
-      .map((item: { data: { url: string } }) => item.data.url);
+      .map((item: { data: { url: string } }) =>
+        item.data.url.replace("!/fwfh/368x238", ""),
+      );
 
     // 判断是否为群管理员
     event["isAdmin"] =
@@ -142,6 +147,15 @@ export default onMiddleware(selects, async (event, next) => {
         }
       })
       .join("");
+
+    if (event.replyId && event.replyId !== "-1") {
+      const replyMsg = await client.getMessage(event.replyId);
+      console.log("获取回复", replyMsg);
+
+      if (replyMsg) {
+        event["reply"] = replyMsg[0].data;
+      }
+    }
   }
   if (event.Platform == "bubble") {
     const bubbleConfig = config.bubble || {};

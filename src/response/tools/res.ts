@@ -52,7 +52,17 @@ export default onResponse(selects, async (e) => {
     });
 
     if (res && typeof res === "object" && res.length > 0) {
-      message.send(format(Text("修图完成喵~"), ImageURL(res[0].url)));
+      message.send(
+        format(
+          Text("修图完成喵~"),
+          ImageURL(
+            res[0].url.replace(
+              "https://imgen.x.ai",
+              configValue.xaiImgProxy || "https://imgen.x.ai",
+            ),
+          ),
+        ),
+      );
     } else {
       try {
         const json = JSON.parse(res);

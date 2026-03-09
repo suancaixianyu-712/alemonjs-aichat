@@ -114,8 +114,8 @@ export const getAIChatHistory = async (guid: string) => {
 export const addAIChatHistory = async (guid: string, data: any) => {
   const history = await getAIChatHistory(guid);
 
-  // 处理messages, 不要超过15条,超过就删除最早的
-  while (history.length >= 20) {
+  // 处理messages, 不要超过40条,超过就删除最早的
+  while (history.length >= 40) {
     history.shift();
   }
 
@@ -376,6 +376,18 @@ export const tools: ChatCompletionTool[] = [
           },
         },
         required: ["image_url", "instruction"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "GetTTSModels",
+      description:
+        "获取可用的TTS模型列表, 可以用来选择不同的音色进行语音合成. 模型会不定期更新, 你可以定期调用这个工具来获取最新的模型列表. 当你想要使用TTS功能时, 可以先调用这个工具来获取可用的模型列表, 然后选择一个你喜欢的模型来进行语音合成. 例如, 你可以选择一个叫做'派蒙-默认'的模型来模仿派蒙的声音进行语音合成",
+      parameters: {
+        type: "object",
+        properties: {},
       },
     },
   },

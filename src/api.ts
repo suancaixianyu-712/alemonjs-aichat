@@ -415,4 +415,14 @@ export const availableTools = {
       return "调用接口失败" + error;
     }
   },
+
+  /**
+   *  获取TTS模型列表
+   * @returns  TTS模型列表
+   */
+  GetTTSModels: async () => {
+    const ttsClient = new TTSClient();
+    const models = await ttsClient.getModels("v4");
+    return models;
+  },
 };
