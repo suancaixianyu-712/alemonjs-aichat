@@ -51,6 +51,7 @@ export default onResponse(selects, async (e, next) => {
     (await redis.get(`chat:complex:response:${e.guid}`)) || "1"; // 复杂输出开关
   const affectionIsOpen = await getAffectionSwitch(e.guid); // 好感度开关
   const isOpenTTSReply = await getTTSResponseSwitch(e.guid); // TTS回复开关
+  const isOpenR18 = (await redis.get(`chat:r18:response:${e.guid}`)) || "1"; // R18开关
   // 创建消息
   const [message] = useMessage(e);
   const config = await getAIConfig(e.guid);
@@ -104,6 +105,15 @@ ${botName}:<tts=你好> 这是正确的格式, 会被处理
 
 `
     : "语音回复: 当前不可用"
+}
+
+${
+  isOpenR18 === "1"
+    ? ""
+    : `
+R18内容:
+当用户发送的消息中包含敏感词时, 提醒用户注意言辞, 并且不回答用户的问题, 务必遵守国家法律法规
+`
 }
 
 
@@ -493,7 +503,7 @@ ${botName}:[]
   return;
 });
 
-async function sendTTSMessage(
+export async function sendTTSMessage(
   message: any,
   e: any,
   ttsClient: TTSClient,

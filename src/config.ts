@@ -288,7 +288,7 @@ export const tools: ChatCompletionTool[] = [
   //   function: {
   //     name: "StableDiffusionImageToPrompt",
   //     description:
-  //       "使用 Stable Diffusion 将图片转换为提示词, 仅供绘图时使用, 其他场景请勿使用",
+  //       "使用 Stable Diffusion 将图片转换为提示词, 它只对动漫图片有效, 只能用来提取动漫图片的提示词",
   //     parameters: {
   //       type: "object",
   //       properties: {
@@ -361,7 +361,7 @@ export const tools: ChatCompletionTool[] = [
     function: {
       name: "AIPS",
       description:
-        "AI修图工具, 可以对图片进行任何处理, 只需提供需要修改的图片url和修改需求即可. 当遇到审核拦截的问题时, 请不要再次尝试提交相同的修改需求, 这可能会导致账号被封禁. 请修改你的修改需求文本描述, 使其更具体和详细, 以避免触发审核拦截. ",
+        "AI修图工具, 可以对图片进行图像编辑, 无法用于图片分析. 使用时只需提供需要修改的图片url和修改需求即可. 当遇到审核拦截的问题时, 请不要再次尝试提交相同的修改需求, 这可能会导致账号被封禁. 请修改你的修改需求文本描述, 使其更具体和详细, 以避免触发审核拦截. ",
       parameters: {
         type: "object",
         properties: {

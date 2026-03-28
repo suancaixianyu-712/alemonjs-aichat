@@ -104,6 +104,9 @@ export default onMiddleware(selects, async (event, next) => {
       console.log("msg[0].data;", JSON.stringify(msg[0].data, null, 2));
       if (msg && msg[0] && msg[0].data) {
         event["reply"] = msg[0].data;
+        if (msg[0].data.sender.user_id == event.self_id) {
+          event["atBot"] = true;
+        }
       }
     }
   }
@@ -154,11 +157,14 @@ export default onMiddleware(selects, async (event, next) => {
 
       if (replyMsg) {
         event["reply"] = replyMsg[0].data;
+        if (replyMsg[0].data.fromUserId == event.self_id) {
+          event["atBot"] = true;
+        }
       }
     }
   }
   if (event.Platform == "bubble") {
-    const bubbleConfig = config.bubble || {};
+    const CDN_URL = "https://bubble-oss-files.alemonjs.com/";
     const [client] = useClient(event, BubbleAPI);
 
     event["uidkey"] = `${event["guid"]}:${event.value.author}(${event.UserId})`; // 唯一标识
@@ -183,39 +189,67 @@ export default onMiddleware(selects, async (event, next) => {
         };
       }) || [];
     event["atBot"] = event["at"].find(
-      (item: { data: { qq: string } }) => item.data.qq === event["bot"].id,
-    );
+      (item: { data: { qq: string } }) =>
+        item.data.qq == botInfo[0].data.botUser.id.toString(),
+    )
+      ? true
+      : false;
     event["originalMsg"] = event.value.content; // 原始消息内容
     event["img"] =
       event.value.fileMeta &&
       event.value.fileMeta.contentType?.startsWith("image/")
-        ? [
-            bubbleConfig.CDN_URL ??
-              "https://bubble-oss-files.alemonjs.com/" +
-                event.value.fileMeta.url,
-          ]
+        ? [CDN_URL + event.value.fileMeta.url]
         : [];
 
-    // if (event.value.replyToId) {
-    //   const channelMessages = await client.request({
-    //     method: "GET",
-    //     url: `${bubbleConfig.API_URL ?? "https://api.bubble.alemonjs.com"}/channels/${event.ChannelId}/messages`,
-    //     headers: {
-    //       Authorization: `Bearer ${bubbleConfig.token}`,
-    //       "Content-Type": "application/json",
-    //     },
-    //   });
+    if (event.value.replyToId) {
+      const channelMessages = await client.request({
+        method: "GET",
+        url: `/channels/${event.ChannelId}/messages/${event.value.replyToId}`,
+      });
 
-    //   const replyMsg = channelMessages.find(
-    //     (msg: { id: string | number }) =>
-    //       msg.id.toString() === event.value.replyToId,
-    //   );
-    //   console.log("获取到的回复消息", replyMsg);
+      if (channelMessages[0].data.authorId == botInfo[0].data.botUser.id) {
+        event["atBot"] = true;
+      }
 
-    //   if (replyMsg) {
-    //     event["reply"] = replyMsg;
-    //   }
-    // }
+      const replyType = channelMessages[0].data.type;
+      const replyFileMeta = channelMessages[0].data.fileMeta;
+      const replyData = {
+        ...channelMessages[0].data,
+        message: [
+          {
+            type: "text",
+            data: {
+              text: channelMessages[0].data.content || "",
+            },
+          },
+          ...(replyType === "image"
+            ? replyFileMeta.attachments
+              ? replyFileMeta.attachments.map((item: any) => {
+                  console.log("item", item, item.url);
+
+                  return {
+                    type: "image",
+                    data: {
+                      url: CDN_URL + item.url,
+                    },
+                  };
+                })
+              : [
+                  {
+                    type: "image",
+                    data: {
+                      url: CDN_URL + replyFileMeta.url,
+                    },
+                  },
+                ]
+            : []),
+        ],
+      };
+
+      console.log("获取到的回复消息", JSON.stringify(channelMessages, null, 2));
+      console.log("处理后的回复", JSON.stringify(replyData, null, 2));
+      event["reply"] = replyData;
+    }
   }
 
   console.log("处理后的事件", JSON.stringify(event, null, 2));

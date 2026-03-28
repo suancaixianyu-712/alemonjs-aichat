@@ -39,6 +39,8 @@ const regular$15 = /(\/|#)(开启|关闭)(MCP)?工具$/i;
 const regular$16 = /(\/|#)切换图床(.*)$/i;
 const regular$17 = /(\/|#)修改 ?(.+) ?模型 ?(.+)$/i;
 const regular$18 = /(\/|#)(关闭|开启)复杂(输出|回复)$/i;
+const regular$19 =
+  /(\/|#)(关闭|禁止|不可以|不允许|开启|可以|允许)(涩涩|色色)$/i;
 
 const test = /(\/|#)测试$/i;
 
@@ -59,6 +61,7 @@ export const regular = Regular.or(
   regular$16,
   regular$17,
   regular$18,
+  regular$19,
   test,
 );
 
@@ -397,6 +400,27 @@ export default onResponse(selects, async (e, next) => {
     const enable = action === "开启";
     await redis.set(`chat:complex:response:${e.guid}`, enable ? "1" : "0");
     message.send(format(Text(`已${enable ? "开启" : "关闭"}复杂输出功能 !`)));
+    return;
+  }
+
+  // 设置R18开关
+  if (regular$19.test(e.msg)) {
+    // if (!e.IsMaster || String(e.UserId) != "3501869534") {
+    //   return;
+    // }
+    const match = e.msg.match(regular$19);
+    if (!match) {
+      message.send(
+        format(Text("格式错误，请按照 格式：/禁止涩涩 或 /可以涩涩 进行设置")),
+      );
+      return;
+    }
+    const [, , action] = match;
+    console.log("涩涩action", action);
+
+    const enable = /(关闭|禁止|不可以|不允许)/.test(action) ? false : true;
+    await redis.set(`chat:r18:response:${e.guid}`, enable ? "1" : "0");
+    message.send(format(Text(`已${enable ? "允许" : "禁止"}涩涩功能 !`)));
     return;
   }
 

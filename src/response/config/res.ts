@@ -1,20 +1,23 @@
 import {
   clearAIChatHistory,
+  getAffectionSwitch,
   getAIConfig,
   getAIList,
   getPromptList,
+  getTTSResponseSwitch,
 } from "@src/config";
+import { redis } from "@src/redis";
 import { Text, useMessage } from "alemonjs";
 import { Regular } from "alemonjs/utils";
 export const selects = onSelects(["message.create", "private.message.create"]);
 
 const regular$1 = /^(\/|#)(ai配置|当前提示词|查看提示词)$/i;
-const regular$2 = /(\/|#)ai列表$/i;
-const regular$3 = /(\/|#)提示词列表$/i;
-const regular$4 = /(\/|#)清空对话$/i;
-const regular$5 = /(\/|#)清空(所有|全部)对话$/i;
+const regular$2 = /^(\/|#)ai列表$/i;
+const regular$3 = /^(\/|#)提示词列表$/i;
+const regular$4 = /^(\/|#)清空对话$/i;
+const regular$5 = /^(\/|#)清空(所有|全部)对话$/i;
 
-const get = /(\/|#)get (.+)$/i;
+const get = /^(\/|#)get (.+)$/i;
 
 export const regular = Regular.or(
   regular$1,
@@ -32,12 +35,23 @@ export default onResponse(selects, async (e, next) => {
 
   // 查看AI配置
   if (regular$1.test(e.msg)) {
+    const complexResponse =
+      (await redis.get(`chat:complex:response:${e.guid}`)) || "1"; // 复杂输出
+    const affectionIsOpen = await getAffectionSwitch(e.guid); // 好感度开关
+    const isOpenTTSReply = await getTTSResponseSwitch(e.guid); // TTS回复开关
+    const toolsIsOpen = await redis.get(`chat:tools:response:${e.guid}`); // 工具开关
+
     // 发送消息
     message.send(
       format(
         Text(`当前AI配置：\n`),
+        Text(`总开关: ${config.model != "" ? "开启" : "关闭"}\n`),
+        Text(`工具: ${toolsIsOpen == "1" ? "开启" : "关闭"}\n`),
+        Text(`复杂输出: ${complexResponse == "1" ? "开启" : "关闭"}\n`),
+        Text(`好感度开关: ${affectionIsOpen == "1" ? "开启" : "关闭"}\n`),
+        Text(`TTS回复开关: ${isOpenTTSReply == "1" ? "开启" : "关闭"}\n`),
         Text(`模型: ${config.model}\n`),
-        Text(`提示词: ${config.systemPrompt}`),
+        Text(`提示词: ${config.systemPrompt}\n`),
       ),
     );
   }

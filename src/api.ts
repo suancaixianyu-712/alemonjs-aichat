@@ -2,6 +2,7 @@ import { redis } from "./redis";
 import { getConfigValue } from "alemonjs";
 import fs from "fs";
 import { uploadImageToR2 } from "./s3";
+import ttsmodels from "@src/data/ttsmodels.json";
 const value = getConfigValue();
 
 export const getTimeString = (): string => {
@@ -37,6 +38,47 @@ export class TTSClient {
     }
     const data = await res.json();
     return data.models;
+  }
+
+  async installModel(modelname: string) {
+    // 遍历ttsmodels,查找model对应的下载链接,模糊匹配
+    const matchedModel = ttsmodels.find((m) => {
+      return m.models.find((md) => md.modelname.includes(modelname));
+    });
+    if (!matchedModel) {
+      return { success: false, message: "未找到对应的模型" };
+    }
+    const modelInfo = matchedModel.models.find((md) =>
+      md.modelname.includes(modelname),
+    );
+    if (!modelInfo) {
+      return { success: false, message: "未找到对应的模型" };
+    }
+
+    // console.log("matchedModel", matchedModel);
+    console.log("modelInfo", modelInfo);
+
+    // 在这里实现模型安装逻辑
+
+    const res = await fetch(`${this.host}/install_model`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        category: matchedModel.category,
+        dl_url: modelInfo.dl_link,
+        language: matchedModel.lang,
+        model_name: modelInfo.modelname,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      const err = await res.text();
+      console.log(err);
+      return { success: false, message: "模型安装失败: " + err };
+    }
+    return { success: true, message: data.msg };
   }
 
   async setModel(model: string, emotion?: string) {
@@ -356,21 +398,21 @@ export const availableTools = {
     }
     const aiConfig = JSON.parse(aiConfigStr);
 
-    // 处理单个或多个图片
-    const imageUrls = Array.isArray(image_url) ? image_url : [image_url];
-    const imgBase64Array: string[] = [];
-
-    for (const url of imageUrls) {
-      let imgBase64 = "";
-      if (url.startsWith("https://imgen.x.ai")) {
-        imgBase64 = url;
-      } else {
-        imgBase64 = await uploadImageToR2(url);
-      }
-      imgBase64Array.push(imgBase64);
-    }
-
     try {
+      // 处理单个或多个图片
+      const imageUrls = Array.isArray(image_url) ? image_url : [image_url];
+      const imgBase64Array: string[] = [];
+
+      for (const url of imageUrls) {
+        let imgBase64 = "";
+        if (url.startsWith("https://imgen.x.ai")) {
+          imgBase64 = url;
+        } else {
+          imgBase64 = await uploadImageToR2(url);
+        }
+        imgBase64Array.push(imgBase64);
+      }
+
       const requestBody = Array.isArray(image_url)
         ? {
             model: "grok-imagine-image",
@@ -412,6 +454,118 @@ export const availableTools = {
       return image.data;
     } catch (error) {
       console.error("Error calling AIPS:", error);
+      return "调用接口失败" + error;
+    }
+  },
+
+  AIVideos: async ({ image_url, instruction }) => {
+    // 从aiconfig中查询grok配置
+    const aiConfigStr = await redis.get(`ai:list:grok`);
+    if (!aiConfigStr) {
+      return "未找到AI配置";
+    }
+    const aiConfig = JSON.parse(aiConfigStr);
+
+    // 处理单个或多个图片
+    const imageUrls = Array.isArray(image_url) ? image_url : [image_url];
+    const imgBase64Array: string[] = [];
+
+    for (const url of imageUrls) {
+      let imgBase64 = "";
+      if (url) {
+        if (url.startsWith("https://imgen.x.ai")) {
+          imgBase64 = url;
+        } else {
+          imgBase64 = await uploadImageToR2(url);
+        }
+        imgBase64Array.push(imgBase64);
+      }
+    }
+
+    try {
+      const requestBody =
+        imgBase64Array.length === 0
+          ? {
+              model: "grok-imagine-video",
+              prompt: instruction,
+              aspect_ratio: "16:9",
+              resolution: "720p",
+            }
+          : Array.isArray(image_url)
+            ? {
+                model: "grok-imagine-video",
+                images: imgBase64Array.map((base64) => ({
+                  url: base64,
+                  type: "image_url",
+                })),
+                prompt: instruction,
+                resolution: "720p",
+              }
+            : {
+                model: "grok-imagine-video",
+                image: {
+                  url: imgBase64Array[0],
+                  type: "image_url",
+                },
+                prompt: instruction,
+                resolution: "720p",
+              };
+
+      console.log("最终请求体", requestBody);
+
+      const res = await fetch(aiConfig.host + "/videos/generations", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${aiConfig.key}`,
+        },
+        body: JSON.stringify(requestBody),
+      });
+      if (!res.ok) {
+        const err = await res.text();
+        console.log(err);
+        return err;
+      }
+      const video = await res.json();
+      console.log("画好了", video);
+
+      return {
+        data: video,
+        msg: "生成任务已提交,稍后会自动发送生成结果,无需继续等待~,将request_id提供给用户,方便查询生成状态",
+      };
+    } catch (error) {
+      console.error("Error calling AIPS:", error);
+      return "调用接口失败" + error;
+    }
+  },
+
+  AIVideoResult: async ({ request_id }) => {
+    // 从aiconfig中查询grok配置
+    const aiConfigStr = await redis.get(`ai:list:grok`);
+    if (!aiConfigStr) {
+      return "未找到AI配置";
+    }
+    const aiConfig = JSON.parse(aiConfigStr);
+
+    try {
+      const res = await fetch(aiConfig.host + `/videos/${request_id}`, {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${aiConfig.key}`,
+        },
+      });
+      if (!res.ok) {
+        const err = await res.text();
+        console.log(err);
+        return err;
+      }
+      const video = await res.json();
+      console.log("视频生成结果", video);
+
+      return video;
+    } catch (error) {
+      console.error("Error calling AIVideoResult:", error);
       return "调用接口失败" + error;
     }
   },
