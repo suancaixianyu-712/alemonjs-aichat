@@ -19,52 +19,11 @@ import {
   useMessage,
   getConfigValue,
 } from "alemonjs";
-import { Regular } from "alemonjs/utils";
 const value = getConfigValue();
 
 const selects = onSelects(["message.create", "private.message.create"]);
-const regular$1 = /(\/|#)添加ai$/i;
-const regular$2 = /(\/|#)添加ai\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)/i;
-const regular$3 = /(\/|#)(切换)(ai|配置) ?(.*)/i;
-const regular$4 = /(\/|#)添加提示词$/i;
-const regular$5 = /(\/|#)添加提示词 (\S+) ([\s\S]+)/i;
-const regular$6 = /(\/|#)(删除)(提示词|提示词列表) ?(.*)/i;
-const regular$7 = /(\/|#)(切换|设置)提示词 ?(.*)$/i;
-const regular$8 = /(\/|#)清空提示词$/i;
-const regular$10 = /(\/|#)删除ai\s(\S+)$/i;
-const regular$11 = /(\/|#)(开启|启用|关闭|禁用)好感度$/i;
-const regular$13 = /(\/|#)(开启|关闭)聊天$/i;
-const regular$14 = /(\/|#)(开启|关闭)语音回复$/i;
-const regular$15 = /(\/|#)(开启|关闭)(MCP)?工具$/i;
-const regular$16 = /(\/|#)切换图床(.*)$/i;
-const regular$17 = /(\/|#)修改 ?(.+) ?模型 ?(.+)$/i;
-const regular$18 = /(\/|#)(关闭|开启)复杂(输出|回复)$/i;
-const regular$19 =
-  /(\/|#)(关闭|禁止|不可以|不允许|开启|可以|允许)(涩涩|色色)$/i;
-
+// inline regex checks are used in-place; keep `test` as shorthand
 const test = /(\/|#)测试$/i;
-
-export const regular = Regular.or(
-  regular$1,
-  regular$2,
-  regular$3,
-  regular$4,
-  regular$5,
-  regular$6,
-  regular$7,
-  regular$8,
-  regular$10,
-  regular$11,
-  regular$13,
-  regular$14,
-  regular$15,
-  regular$16,
-  regular$17,
-  regular$18,
-  regular$19,
-  test,
-);
-
 export default onResponse(selects, async (e, next) => {
   // 创建
   const [message] = useMessage(e);
@@ -89,7 +48,7 @@ export default onResponse(selects, async (e, next) => {
   }
 
   // 添加AI配置
-  if (regular$1.test(e.msg)) {
+  if (/(\/|#)添加ai$/i.test(e.msg)) {
     message.send(
       format(
         Text(
@@ -101,8 +60,8 @@ export default onResponse(selects, async (e, next) => {
   }
 
   // 处理添加AI配置
-  if (regular$2.test(e.msg)) {
-    const match = e.msg.match(regular$2);
+  if (/(\/|#)添加ai\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)/i.test(e.msg)) {
+    const match = e.msg.match(/(\/|#)添加ai\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)/i);
     if (!match) {
       message.send(
         format(
@@ -120,8 +79,8 @@ export default onResponse(selects, async (e, next) => {
   }
 
   // 切换AI配置
-  if (regular$3.test(e.msg)) {
-    const match = e.msg.match(regular$3);
+  if (/(\/|#)(切换)(ai|配置) ?(.*)/i.test(e.msg)) {
+    const match = e.msg.match(/(\/|#)(切换)(ai|配置) ?(.*)/i);
     if (!match) {
       message.send(
         format(Text("格式错误，请按照 格式：/切换ai <名称> 进行切换")),
@@ -141,7 +100,7 @@ export default onResponse(selects, async (e, next) => {
   }
 
   // 添加提示词
-  if (regular$4.test(e.msg)) {
+  if (/(\/|#)添加提示词$/i.test(e.msg)) {
     message.send(
       format(Text("请按照 格式：/添加提示词 <名称> <内容> 进行添加")),
     );
@@ -149,8 +108,8 @@ export default onResponse(selects, async (e, next) => {
   }
 
   // 处理添加提示词
-  if (regular$5.test(e.msg)) {
-    const match = e.msg.match(regular$5);
+  if (/(\/|#)添加提示词 (\S+) ([\s\S]+)/i.test(e.msg)) {
+    const match = e.msg.match(/(\/|#)添加提示词 (\S+) ([\s\S]+)/i);
     if (!match) {
       message.send(
         format(
@@ -166,8 +125,8 @@ export default onResponse(selects, async (e, next) => {
   }
 
   // 删除提示词
-  if (regular$6.test(e.msg)) {
-    const match = e.msg.match(regular$6);
+  if (/(\/|#)(删除)(提示词|提示词列表) ?(.*)/i.test(e.msg)) {
+    const match = e.msg.match(/(\/|#)(删除)(提示词|提示词列表) ?(.*)/i);
     if (!match) {
       message.send(
         format(Text("格式错误，请按照 格式：/删除提示词 <名称> 进行删除")),
@@ -181,8 +140,8 @@ export default onResponse(selects, async (e, next) => {
   }
 
   // 切换提示词
-  if (regular$7.test(e.msg)) {
-    const match = e.msg.match(regular$7);
+  if (/(\/|#)(切换|设置)提示词 ?(.*)$/i.test(e.msg)) {
+    const match = e.msg.match(/(\/|#)(切换|设置)提示词 ?(.*)$/i);
     if (!match) {
       message.send(
         format(Text("格式错误，请按照 格式：/切换提示词 <名称> 进行切换")),
@@ -198,15 +157,15 @@ export default onResponse(selects, async (e, next) => {
   }
 
   // 清空提示词
-  if (regular$8.test(e.msg)) {
+  if (/(\/|#)清空提示词$/i.test(e.msg)) {
     await switchPrompt(e.guid, "");
     message.send(format(Text("已清空提示词 !")));
     return;
   }
 
   // 删除AI配置
-  if (regular$10.test(e.msg)) {
-    const match = e.msg.match(regular$10);
+  if (/(\/|#)删除ai\s(\S+)$/i.test(e.msg)) {
+    const match = e.msg.match(/(\/|#)删除ai\s(\S+)$/i);
     if (!match) {
       message.send(
         format(Text("格式错误，请按照 格式：/删除ai <名称> 进行删除")),
@@ -224,8 +183,8 @@ export default onResponse(selects, async (e, next) => {
   }
 
   // 设置好感度开关
-  if (regular$11.test(e.msg)) {
-    const match = e.msg.match(regular$11);
+  if (/(\/|#)(开启|启用|关闭|禁用)好感度$/i.test(e.msg)) {
+    const match = e.msg.match(/(\/|#)(开启|启用|关闭|禁用)好感度$/i);
     if (!match) {
       message.send(
         format(
@@ -242,8 +201,8 @@ export default onResponse(selects, async (e, next) => {
   }
 
   // 设置聊天开关 ,发送开启聊天时, 获取ai列表的第一个ai配置, 并切换到该配置
-  if (regular$13.test(e.msg)) {
-    const match = e.msg.match(regular$13);
+  if (/(\/|#)(开启|关闭)聊天$/i.test(e.msg)) {
+    const match = e.msg.match(/(\/|#)(开启|关闭)聊天$/i);
     if (!match) {
       message.send(
         format(Text("格式错误，请按照 格式：/开启聊天 或 /关闭聊天 进行设置")),
@@ -277,8 +236,8 @@ export default onResponse(selects, async (e, next) => {
   }
 
   // 设置语音回复开关
-  if (regular$14.test(e.msg)) {
-    const match = e.msg.match(regular$14);
+  if (/(\/|#)(开启|关闭)语音回复$/i.test(e.msg)) {
+    const match = e.msg.match(/(\/|#)(开启|关闭)语音回复$/i);
     if (!match) {
       message.send(
         format(
@@ -297,8 +256,8 @@ export default onResponse(selects, async (e, next) => {
   }
 
   // 设置工具开关
-  if (regular$15.test(e.msg)) {
-    const match = e.msg.match(regular$15);
+  if (/(\/|#)(开启|关闭)(MCP)?工具$/i.test(e.msg)) {
+    const match = e.msg.match(/(\/|#)(开启|关闭)(MCP)?工具$/i);
     if (!match) {
       message.send(
         format(Text("格式错误，请按照 格式：/开启工具 或 /关闭工具 进行设置")),
@@ -319,8 +278,8 @@ export default onResponse(selects, async (e, next) => {
   }
 
   // 设置图床
-  if (regular$16.test(e.msg)) {
-    const match = e.msg.match(regular$16);
+  if (/(\/|#)切换图床(.*)$/i.test(e.msg)) {
+    const match = e.msg.match(/(\/|#)切换图床(.*)$/i);
     if (!match) {
       message.send(
         format(Text("格式错误，请按照 格式：/切换图床 <图床名称> 进行设置")),
@@ -341,8 +300,8 @@ export default onResponse(selects, async (e, next) => {
   }
 
   // 修改指定ai的模型
-  if (regular$17.test(e.msg)) {
-    const match = e.msg.match(regular$17);
+  if (/(\/|#)修改 ?(.+) ?模型 ?(.+)$/i.test(e.msg)) {
+    const match = e.msg.match(/(\/|#)修改 ?(.+) ?模型 ?(.+)$/i);
     if (!match) {
       message.send(
         format(
@@ -365,7 +324,6 @@ export default onResponse(selects, async (e, next) => {
       message.send(format(Text(`切换失败，未找到 AI ${aiName.trim()} !`)));
       return;
     }
-
     aiInfo.model = modelName.trim();
     await addAI(
       e.guid,
@@ -383,9 +341,32 @@ export default onResponse(selects, async (e, next) => {
     return;
   }
 
+  // 切换当前ai的模型
+  if (/(\/|#)切换模型 ?(.+)$/i.test(e.msg)) {
+    const match = e.msg.match(/(\/|#)切换模型 ?(.+)$/i);
+    if (!match) {
+      message.send(
+        format(Text("格式错误，请按照 格式：/切换模型 <模型名称> 进行设置")),
+      );
+      return;
+    }
+    const [, , modelName] = match;
+    const aiInfo = await getAIConfig(e.guid);
+    if (!aiInfo.model) {
+      message.send(format(Text(`当前没有可用的 AI 配置！`)));
+      return;
+    }
+    aiInfo.model = modelName.trim();
+    redis.set(`ai:config:${e.guid}`, JSON.stringify(aiInfo));
+    message.send(
+      format(Text(`已将当前 AI 的模型修改为 ${modelName.trim()} !`)),
+    );
+    return;
+  }
+
   // 设置复杂输出开关
-  if (regular$18.test(e.msg)) {
-    const match = e.msg.match(regular$18);
+  if (/(\/|#)(关闭|开启)复杂(输出|回复)$/i.test(e.msg)) {
+    const match = e.msg.match(/(\/|#)(关闭|开启)复杂(输出|回复)$/i);
     if (!match) {
       message.send(
         format(
@@ -404,11 +385,15 @@ export default onResponse(selects, async (e, next) => {
   }
 
   // 设置R18开关
-  if (regular$19.test(e.msg)) {
+  if (
+    /(\/|#)(关闭|禁止|不可以|不允许|开启|可以|允许)(涩涩|色色)$/i.test(e.msg)
+  ) {
     // if (!e.IsMaster || String(e.UserId) != "3501869534") {
     //   return;
     // }
-    const match = e.msg.match(regular$19);
+    const match = e.msg.match(
+      /(\/|#)(关闭|禁止|不可以|不允许|开启|可以|允许)(涩涩|色色)$/i,
+    );
     if (!match) {
       message.send(
         format(Text("格式错误，请按照 格式：/禁止涩涩 或 /可以涩涩 进行设置")),
@@ -421,6 +406,22 @@ export default onResponse(selects, async (e, next) => {
     const enable = /(关闭|禁止|不可以|不允许)/.test(action) ? false : true;
     await redis.set(`chat:r18:response:${e.guid}`, enable ? "1" : "0");
     message.send(format(Text(`已${enable ? "允许" : "禁止"}涩涩功能 !`)));
+    return;
+  }
+
+  // ollama获取模型列表
+  if (/(\/|#)ollama ?(模型列表|list)$/i.test(e.msg)) {
+    const models = await availableTools.OllamaListModels();
+    if (models.length > 0) {
+      message.send(
+        format(
+          Text("当前 Ollama 模型列表：\n"),
+          Text(models.map((m) => m.id).join("\n")),
+        ),
+      );
+    } else {
+      message.send(format(Text("未获取到 Ollama 模型列表！")));
+    }
     return;
   }
 

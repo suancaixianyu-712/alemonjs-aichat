@@ -17,34 +17,15 @@ import { API as OneBotApi } from "@alemonjs/onebot";
 import { sendTTSMessage } from "../zreply/res";
 
 export const selects = onSelects(["message.create", "private.message.create"]);
-const regular$1 = /(\/|#)(ai)?(pt|p图|ps|修图)(.*)$/i;
-const regular$2 = /(\/|#)(ai)?(画图)(.*)$/i;
-const regular$3 = /(\/|#)(ai)?(生成视频)(.*)$/i;
-const regular$4 = /(\/|#)(ai)?(查询)(.*)$/i;
-const regular$5 = /(\/|#)(ai)?(开启|关闭)?画图提示词优化$/i;
-const regular$6 = /^(\/|#)(.+)说([\s\S]*)$/i;
-const regular$7 = /^(\/|#)安装语音(模型)?(.+)$/i;
-const regular$8 = /^(\/|#)看魔法$/i;
-
-export const regular = Regular.or(
-  regular$1,
-  regular$2,
-  regular$3,
-  regular$4,
-  regular$5,
-  regular$6,
-  regular$7,
-  regular$8,
-);
-
+// inline regex will be used directly in condition checks
 export default onResponse(selects, async (e) => {
   const configValue = getConfigValue();
   // 创建
   const [message] = useMessage(e);
 
   // p图
-  if (regular$1.test(e.msg)) {
-    const match = e.msg.match(regular$1);
+  if (/(\/|#)(ai)?(pt|p图|ps|修图)(.*)$/i.test(e.msg)) {
+    const match = e.msg.match(/(\/|#)(ai)?(pt|p图|ps|修图)(.*)$/i);
     const [, , , , content] = match;
     if (!content.trim()) {
       message.send(format(Text("请提供修图内容，例如：\n#修图 换个背景")));
@@ -102,8 +83,8 @@ export default onResponse(selects, async (e) => {
   }
 
   // 画图
-  if (regular$2.test(e.msg)) {
-    const match = e.msg.match(regular$2);
+  if (/(\/|#)(ai)?(画图)(.*)$/i.test(e.msg)) {
+    const match = e.msg.match(/(\/|#)(ai)?(画图)(.*)$/i);
     const [, , , , content] = match;
     if (!content.trim()) {
       message.send(format(Text("请提供画图内容，例如：\n#画图 画一只猫")));
@@ -168,8 +149,8 @@ export default onResponse(selects, async (e) => {
   }
 
   // 生成视频
-  if (regular$3.test(e.msg)) {
-    const match = e.msg.match(regular$3);
+  if (/(\/|#)(ai)?(生成视频)(.*)$/i.test(e.msg)) {
+    const match = e.msg.match(/(\/|#)(ai)?(生成视频)(.*)$/i);
     const [, , , , content] = match;
     if (!content.trim()) {
       message.send(
@@ -245,8 +226,8 @@ export default onResponse(selects, async (e) => {
   }
 
   // 查询
-  if (regular$4.test(e.msg)) {
-    const match = e.msg.match(regular$4);
+  if (/(\/|#)(ai)?(查询)(.*)$/i.test(e.msg)) {
+    const match = e.msg.match(/(\/|#)(ai)?(查询)(.*)$/i);
     const [, , , , content] = match;
     if (!content.trim()) {
       message.send(format(Text("请提供查询内容，例如：\n#查询 我的订单")));
@@ -286,8 +267,8 @@ export default onResponse(selects, async (e) => {
   }
 
   // 开启/关闭画图提示词优化
-  if (regular$5.test(e.msg)) {
-    const match = e.msg.match(regular$5);
+  if (/(\/|#)(ai)?(开启|关闭)?画图提示词优化$/i.test(e.msg)) {
+    const match = e.msg.match(/(\/|#)(ai)?(开启|关闭)?画图提示词优化$/i);
     const [, , , action] = match;
     const aiConfig = await getAIConfig(e.guid);
     if (!aiConfig) {
@@ -313,8 +294,8 @@ export default onResponse(selects, async (e) => {
   }
 
   // 文字合成语音
-  if (regular$6.test(e.msg)) {
-    const match = e.msg.match(regular$6);
+  if (/^(\/|#)(.+)说([\s\S]*)$/i.test(e.msg)) {
+    const match = e.msg.match(/^(\/|#)(.+)说([\s\S]*)$/i);
     const [, , speaker, content] = match;
     console.log("speaker", speaker);
     console.log("content", content);
@@ -334,8 +315,8 @@ export default onResponse(selects, async (e) => {
   }
 
   // 安装语音模型
-  if (regular$7.test(e.msg)) {
-    const match = e.msg.match(regular$7);
+  if (/^(\/|#)安装语音(模型)?(.+)$/i.test(e.msg)) {
+    const match = e.msg.match(/^(\/|#)安装语音(模型)?(.+)$/i);
     const [, , , model] = match;
     console.log("model", model);
     if (!model.trim()) {
@@ -356,7 +337,7 @@ export default onResponse(selects, async (e) => {
   }
 
   // 看魔法
-  if (regular$8.test(e.msg)) {
+  if (/^(\/|#)看魔法$/i.test(e.msg)) {
     const imgs: string[] = [];
 
     if (e.reply) {

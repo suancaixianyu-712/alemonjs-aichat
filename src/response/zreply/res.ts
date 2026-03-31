@@ -27,7 +27,6 @@ import { getConfigValue } from "alemonjs";
 const value = getConfigValue();
 
 export const selects = onSelects(["message.create", "private.message.create"]);
-export const regular = /.*/;
 let ttsClient: TTSClient;
 
 let currentModel = "派蒙-默认"; // 默认音色
