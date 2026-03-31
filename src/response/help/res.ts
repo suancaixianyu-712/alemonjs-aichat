@@ -4,9 +4,6 @@ import { renderComponentToBuffer } from "jsxp";
 import Help from "@src/image/conponent/help";
 
 export const selects = onSelects(["message.create", "private.message.create"]);
-
-export const regular = /(\/|#)(ai)?(指令|帮助|菜单|功能)$/i;
-
 export default onResponse(selects, async (e) => {
   // 创建
   const [message] = useMessage(e);

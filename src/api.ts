@@ -579,4 +579,47 @@ export const availableTools = {
     const models = await ttsClient.getModels("v4");
     return models;
   },
+
+  /**
+   * 获取 ollama 模型列表
+   * @returns ollama 模型列表
+   */
+  OllamaListModels: async () => {
+    const res = await fetch("http://localhost:11434/v1/models");
+    if (!res.ok) {
+      return null;
+    }
+    const data = await res.json();
+    return data.data;
+  },
+
+  /**
+   * 安装 ollama 模型
+   * @param modelName 模型名称
+   * @returns 安装结果
+   */
+  OllamaInstallModel: async (modelName: string) => {
+    try {
+      const res = await fetch("http://localhost:11434/v1/models", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: modelName,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.text();
+        console.log(err);
+        return { success: false, error: err };
+      }
+      const data = await res.json();
+      console.log("安装结果", data);
+      return { success: true };
+    } catch (error) {
+      console.error("Error installing Ollama model:", error);
+      return { success: false, error: error };
+    }
+  },
 };

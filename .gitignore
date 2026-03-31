@@ -10,3 +10,4 @@ yarn.lock
 alemon.config.yaml
 ._*
 .DS_Store
+/alemonjs-SKILL

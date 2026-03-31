@@ -8,25 +8,10 @@ import {
 } from "@src/config";
 import { redis } from "@src/redis";
 import { Text, useMessage } from "alemonjs";
-import { Regular } from "alemonjs/utils";
 export const selects = onSelects(["message.create", "private.message.create"]);
 
-const regular$1 = /^(\/|#)(ai配置|当前提示词|查看提示词)$/i;
-const regular$2 = /^(\/|#)ai列表$/i;
-const regular$3 = /^(\/|#)提示词列表$/i;
-const regular$4 = /^(\/|#)清空对话$/i;
-const regular$5 = /^(\/|#)清空(所有|全部)对话$/i;
-
+// inline regex used directly in condition checks
 const get = /^(\/|#)get (.+)$/i;
-
-export const regular = Regular.or(
-  regular$1,
-  regular$2,
-  regular$3,
-  regular$4,
-  regular$5,
-  get,
-);
 
 export default onResponse(selects, async (e, next) => {
   // 创建
@@ -34,12 +19,13 @@ export default onResponse(selects, async (e, next) => {
   const config = await getAIConfig(e.guid);
 
   // 查看AI配置
-  if (regular$1.test(e.msg)) {
+  if (/^(\/|#)(ai配置|当前提示词|查看提示词)$/i.test(e.msg)) {
     const complexResponse =
       (await redis.get(`chat:complex:response:${e.guid}`)) || "1"; // 复杂输出
     const affectionIsOpen = await getAffectionSwitch(e.guid); // 好感度开关
     const isOpenTTSReply = await getTTSResponseSwitch(e.guid); // TTS回复开关
     const toolsIsOpen = await redis.get(`chat:tools:response:${e.guid}`); // 工具开关
+    const aiList = await getAIList();
 
     // 发送消息
     message.send(
@@ -50,14 +36,15 @@ export default onResponse(selects, async (e, next) => {
         Text(`复杂输出: ${complexResponse == "1" ? "开启" : "关闭"}\n`),
         Text(`好感度开关: ${affectionIsOpen == "1" ? "开启" : "关闭"}\n`),
         Text(`TTS回复开关: ${isOpenTTSReply == "1" ? "开启" : "关闭"}\n`),
-        Text(`模型: ${config.model}\n`),
-        Text(`提示词: ${config.systemPrompt}\n`),
+        Text(`模型: ${config.model || "未设置"}\n`),
+        Text(`提示词: ${config.systemPrompt || "未设置"}\n`),
+        Text(`AI数量: ${aiList.length ? aiList.length : "暂无AI配置"}`),
       ),
     );
   }
 
   // 查看AI列表
-  if (regular$2.test(e.msg)) {
+  if (/^(\/|#)ai列表$/i.test(e.msg)) {
     const ailist = await getAIList();
     message.send(
       format(
@@ -68,7 +55,7 @@ export default onResponse(selects, async (e, next) => {
   }
 
   // 查看提示词列表
-  if (regular$3.test(e.msg)) {
+  if (/^(\/|#)提示词列表$/i.test(e.msg)) {
     const prompts = await getPromptList();
     message.send(
       format(
@@ -79,13 +66,13 @@ export default onResponse(selects, async (e, next) => {
   }
 
   // 清空对话
-  if (regular$4.test(e.msg)) {
+  if (/^(\/|#)清空对话$/i.test(e.msg)) {
     await clearAIChatHistory(e.guid);
     message.send(format(Text("对话已清空")));
   }
 
   // 清空所有对话
-  if (regular$5.test(e.msg) && e.IsMaster) {
+  if (/^(\/|#)清空(所有|全部)对话$/i.test(e.msg) && e.IsMaster) {
     await clearAIChatHistory();
     message.send(format(Text("所有对话已清空")));
   }
