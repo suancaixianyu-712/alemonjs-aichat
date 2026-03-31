@@ -390,7 +390,7 @@ export const availableTools = {
     }
   },
 
-  AIPS: async ({ image_url, instruction }) => {
+  Photoshop: async ({ image_url, instruction }) => {
     // 从aiconfig中查询grok配置
     const aiConfigStr = await redis.get(`ai:list:grok`);
     if (!aiConfigStr) {

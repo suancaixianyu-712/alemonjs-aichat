@@ -33,7 +33,7 @@ const regular$7 = /(\/|#)(切换|设置)提示词 ?(.*)$/i;
 const regular$8 = /(\/|#)清空提示词$/i;
 const regular$10 = /(\/|#)删除ai\s(\S+)$/i;
 const regular$11 = /(\/|#)(开启|启用|关闭|禁用)好感度$/i;
-const regular$13 = /(\/|#)(开启|关闭)聊天$/i;
+const regular$13 = /(\/|#)(开启|关闭)(全部|所有)?聊天$/i;
 const regular$14 = /(\/|#)(开启|关闭)语音回复$/i;
 const regular$15 = /(\/|#)(开启|关闭)(MCP)?工具$/i;
 const regular$16 = /(\/|#)切换图床(.*)$/i;
@@ -250,7 +250,7 @@ export default onResponse(selects, async (e, next) => {
       );
       return;
     }
-    const [, , action] = match;
+    const [, , action, isAll] = match;
     const enable = action === "开启";
     if (enable) {
       const aiList = await getAIList();
@@ -270,8 +270,19 @@ export default onResponse(selects, async (e, next) => {
       await switchAI(e.guid, aiList[0]);
       message.send(format(Text(`已开启聊天功能，当前AI为 ${aiList[0]} !`)));
     } else {
-      await switchAI(e.guid, "");
-      message.send(format(Text("已关闭聊天功能 !")));
+      if (isAll) {
+        // 如果是关闭全部聊天，则清空所有AI配置
+        // await redis.del(`ai:config:*`);
+        await redis.keys(`ai:config:*`).then((keys) => {
+          if (keys.length > 0) {
+            redis.del(keys);
+          }
+        });
+        message.send(format(Text("已关闭聊天功能 !")));
+      } else {
+        await switchAI(e.guid, "");
+        message.send(format(Text("已关闭聊天功能 !")));
+      }
     }
     return;
   }

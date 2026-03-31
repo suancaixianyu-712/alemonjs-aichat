@@ -311,7 +311,51 @@ ${botName}:[]
     createParams["tool_choice"] = "auto";
   }
 
-  let res = await openai.chat.completions.create(createParams);
+  createParams["stream"] = true;
+  const stream = (await openai.chat.completions.create(createParams)) as any;
+
+  let fullContent = "";
+  let toolCalls: any[] = [];
+
+  for await (const chunk of stream) {
+    const delta = chunk.choices?.[0]?.delta;
+    if (!delta) continue;
+
+    if (delta.content) {
+      fullContent += delta.content;
+    }
+
+    if (delta.tool_calls) {
+      for (const tc of delta.tool_calls) {
+        if (tc.index !== undefined) {
+          if (!toolCalls[tc.index]) {
+            toolCalls[tc.index] = {
+              id: tc.id || "",
+              type: "function",
+              function: { name: "", arguments: "" },
+            };
+          }
+          if (tc.id) toolCalls[tc.index].id = tc.id;
+          if (tc.function?.name)
+            toolCalls[tc.index].function.name += tc.function.name;
+          if (tc.function?.arguments)
+            toolCalls[tc.index].function.arguments += tc.function.arguments;
+        }
+      }
+    }
+  }
+
+  let res: any = {
+    choices: [
+      {
+        message: {
+          role: "assistant",
+          content: fullContent || null,
+          tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
+        },
+      },
+    ],
+  };
 
   if (!res.choices || res.choices.length === 0) {
     log("AI未返回内容");
