@@ -1,12 +1,14 @@
 // 获取skills/下的文件夹,读取文件夹中的SKILL.md文件,并将其内容解析成对象返回
 import fs from "fs";
 import path from "path";
+import { fileURLToPath } from "url";
 import { getConfigValue } from "alemonjs";
 const value = getConfigValue().aiChat || {};
+const currentDir = path.dirname(fileURLToPath(import.meta.url));
 
 // 获取技能列表的简介和名称
 export const loadSkills = () => {
-  const skillsDir = path.join(process.cwd(), "src/skills");
+  const skillsDir = path.join(currentDir, "../../skills");
   const skillFolders = fs.readdirSync(skillsDir).filter((file) => {
     const skillPath = path.join(skillsDir, file);
     return fs.statSync(skillPath).isDirectory();
@@ -43,7 +45,7 @@ export const loadSkills = () => {
 
 // 获取某个技能的详情, 通过技能名称匹配对应文件夹下的所有md文件,将内容一并返回
 export const loadSkillDetail = (skillName: string) => {
-  const skillsDir = path.join(process.cwd(), "src/skills");
+  const skillsDir = path.join(currentDir, "../../skills");
   const skillFolders = fs.readdirSync(skillsDir).filter((file) => {
     const skillPath = path.join(skillsDir, file);
     return fs.statSync(skillPath).isDirectory();

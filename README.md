@@ -33,7 +33,18 @@ yarn build
 ```
 ### 从零开始安装
 
+1. 拉取仓库
+```sh
+git clone -b release git@gitee.com:suancaixianyu/alemonjs-aichat.git
+cd alemonjs-aichat
+yarn
+```
 
+2. 配置`alemon.config.yaml`连接平台
+3. 启动
+```sh
+node index
+```
 
 ## 2.配置
 
