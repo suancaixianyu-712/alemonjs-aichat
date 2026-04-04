@@ -1,6 +1,6 @@
-import { availableTools } from "@src/api";
+import { availableTools } from "@src/api/aitools";
 import { Text, useMessage, getConfigValue } from "alemonjs";
-const value = getConfigValue();
+const value = getConfigValue().aiChat || {};
 
 const selects = onSelects(["message.create", "private.message.create"]);
 

@@ -5,7 +5,7 @@ import mime from "mime-types";
 import { redis } from "./redis";
 import sharp from "sharp"; // 需要安装: npm install sharp
 import { getConfigValue } from "alemonjs";
-const value = getConfigValue();
+const value = getConfigValue().aiChat || {};
 
 /**
  * 图片处理选项
@@ -207,7 +207,7 @@ export const getImageBuffer = async (
     contentType = matches[1];
     buffer = Buffer.from(matches[2], "base64");
     fileName = `image-${Date.now()}.${mime.extension(contentType) || "jpg"}`;
-  } else if (source.includes("/") || source.includes("\\")) {
+  } else if (source.includes("./") || source.includes("\\")) {
     // 本地路径
     buffer = await fs.readFile(source);
     contentType = mime.lookup(source) || "image/jpeg";
@@ -310,7 +310,7 @@ export const uploadImageToR2 = async (
   // 添加处理日志
   const animatedMessage = wasAnimated ? " (原为动图，已取第一帧)" : "";
   console.log(
-    `上传成功: ${publicUrl} [原始: ${originalContentType}, 转换后: ${contentType}${animatedMessage}]`,
+    `上传成功: [原始: ${originalContentType}, 转换后: ${contentType}${animatedMessage}]`,
   );
 
   return publicUrl;

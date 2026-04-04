@@ -1,7 +1,7 @@
-import { getAIConfig } from "@src/config";
 import { Image, Text, useMessage } from "alemonjs";
 import { renderComponentToBuffer } from "jsxp";
 import Help from "@src/image/conponent/help";
+import redisClient from "@src/config";
 
 export const selects = onSelects(["message.create", "private.message.create"]);
 export default onResponse(selects, async (e) => {
@@ -9,7 +9,7 @@ export default onResponse(selects, async (e) => {
   const [message] = useMessage(e);
   const img = await renderComponentToBuffer("help", Help, {});
   if (img) message.send(format(Image(img)));
-  const config = await getAIConfig(e.guid);
+  const config = await redisClient.getAIConfig(e.guid);
   if (
     config.host.trim() === "" ||
     config.key.trim() === "" ||

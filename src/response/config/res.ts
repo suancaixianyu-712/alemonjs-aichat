@@ -1,12 +1,4 @@
-import {
-  clearAIChatHistory,
-  getAffectionSwitch,
-  getAIConfig,
-  getAIList,
-  getPromptList,
-  getTTSResponseSwitch,
-} from "@src/config";
-import { redis } from "@src/redis";
+import redisClient from "@src/config";
 import { Text, useMessage } from "alemonjs";
 export const selects = onSelects(["message.create", "private.message.create"]);
 
@@ -16,16 +8,15 @@ const get = /^(\/|#)get (.+)$/i;
 export default onResponse(selects, async (e, next) => {
   // 创建
   const [message] = useMessage(e);
-  const config = await getAIConfig(e.guid);
+  const config = await redisClient.getAIConfig(e.guid);
 
   // 查看AI配置
   if (/^(\/|#)(ai配置|当前提示词|查看提示词)$/i.test(e.msg)) {
-    const complexResponse =
-      (await redis.get(`chat:complex:response:${e.guid}`)) || "1"; // 复杂输出
-    const affectionIsOpen = await getAffectionSwitch(e.guid); // 好感度开关
-    const isOpenTTSReply = await getTTSResponseSwitch(e.guid); // TTS回复开关
-    const toolsIsOpen = await redis.get(`chat:tools:response:${e.guid}`); // 工具开关
-    const aiList = await getAIList();
+    const complexResponse = (await redisClient.getComplexOutput(e.guid)) || "1"; // 复杂输出
+    const affectionIsOpen = await redisClient.getAffectionSwitch(e.guid); // 好感度开关
+    const isOpenTTSReply = await redisClient.getTTSResponseSwitch(e.guid); // TTS回复开关
+    const toolsIsOpen = await redisClient.getToolSwitch(e.guid); // 工具开关
+    const aiList = await redisClient.getAIList();
 
     // 发送消息
     message.send(
@@ -45,7 +36,7 @@ export default onResponse(selects, async (e, next) => {
 
   // 查看AI列表
   if (/^(\/|#)ai列表$/i.test(e.msg)) {
-    const ailist = await getAIList();
+    const ailist = await redisClient.getAIList();
     message.send(
       format(
         Text("当前AI列表：\n"),
@@ -56,7 +47,7 @@ export default onResponse(selects, async (e, next) => {
 
   // 查看提示词列表
   if (/^(\/|#)提示词列表$/i.test(e.msg)) {
-    const prompts = await getPromptList();
+    const prompts = await redisClient.getPromptList();
     message.send(
       format(
         Text("当前提示词列表：\n"),
@@ -67,13 +58,13 @@ export default onResponse(selects, async (e, next) => {
 
   // 清空对话
   if (/^(\/|#)清空对话$/i.test(e.msg)) {
-    await clearAIChatHistory(e.guid);
+    await redisClient.clearAIChatHistory(e.guid);
     message.send(format(Text("对话已清空")));
   }
 
   // 清空所有对话
   if (/^(\/|#)清空(所有|全部)对话$/i.test(e.msg) && e.IsMaster) {
-    await clearAIChatHistory();
+    await redisClient.clearAIChatHistory();
     message.send(format(Text("所有对话已清空")));
   }
 

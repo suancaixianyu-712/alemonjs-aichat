@@ -1,4 +1,3 @@
-import { availableTools, TTSClient } from "@src/api";
 import {
   getConfigValue,
   Image,
@@ -7,19 +6,19 @@ import {
   useMessage,
   Video,
   Mention,
-  useClient,
 } from "alemonjs";
-import { Regular } from "alemonjs/utils";
 import OpenAi from "openai";
-import { getAIConfig } from "@src/config";
-import { redis } from "@src/redis";
-import { API as OneBotApi } from "@alemonjs/onebot";
 import { sendTTSMessage } from "../zreply/res";
+import { availableTools } from "@src/api/aitools";
+import { TTSClient } from "@src/api/tts";
+import redisClient from "@src/config";
+import { imageReview } from "@src/api/review";
+import { uploadImageToR2 } from "@src/s3";
 
 export const selects = onSelects(["message.create", "private.message.create"]);
 // inline regex will be used directly in condition checks
 export default onResponse(selects, async (e) => {
-  const configValue = getConfigValue();
+  const configValue = getConfigValue().aiChat || {};
   // 创建
   const [message] = useMessage(e);
 
@@ -54,30 +53,44 @@ export default onResponse(selects, async (e) => {
 
     message.send(format(Text("开始修图喵~")));
 
-    const res = await availableTools.AIPS({
+    const res = await availableTools.Photoshop({
       image_url: imgs,
       instruction: content,
     });
 
     if (res && typeof res === "object" && res.length > 0) {
-      message.send(
-        format(
-          Text("修图完成喵~"),
-          ImageURL(
-            res[0].url.replace(
-              "https://imgen.x.ai",
-              configValue.xaiImgProxy || "https://imgen.x.ai",
+      const imgUrl = res[0].url.replace(
+        "https://imgen.x.ai",
+        configValue.xaiImgProxy || "https://imgen.x.ai",
+      );
+
+      const R18Switch = await redisClient.getR18Switch(e.guid);
+      if (R18Switch === "1") {
+        message.send(format(Text("修图完成喵~"), ImageURL(imgUrl)));
+        return;
+      }
+      const reviewRes = await imageReview(await uploadImageToR2(imgUrl));
+      if (reviewRes && reviewRes.conclusion === "不合规") {
+        message.send(
+          format(
+            Text(
+              "你又再骗我画涩图了喵~已经保存到主人的收藏夹了，不给你看，哼!~",
             ),
           ),
-        ),
-      );
+        );
+      } else {
+        message.send(
+          format(Text("画图完成喵~\n"), Text(content), Image(res[0])),
+        );
+      }
+      await redisClient.addImgUrl(e.guid, imgUrl);
     } else {
       try {
         const json = JSON.parse(res);
         console.log("res", json);
         message.send(format(Text(json.error)));
       } catch (error) {
-        message.send(format(Text("图片过于色情被和谐了喵~")));
+        message.send(format(Text("修图报错了喵~")));
       }
     }
   }
@@ -90,22 +103,61 @@ export default onResponse(selects, async (e) => {
       message.send(format(Text("请提供画图内容，例如：\n#画图 画一只猫")));
       return;
     }
+
     message.send(format(Text("开始画图喵~")));
 
-    const promptOptimization = await redis.get(
-      `alemon:ai:prompt_optimization:${e.guid}`,
-    );
-    const aiConfig = await getAIConfig(e.guid);
+    const promptOptimization = await redisClient.getPromptOptimization(e.guid);
+    const aiConfig = await redisClient.getAIConfig(e.guid);
+    const R18Switch = await redisClient.getR18Switch(e.guid);
+
+    const renderImage = async (prompt: string): Promise<boolean> => {
+      const res = await availableTools.StableDiffusionGenerateImage({
+        prompt,
+        base64: true,
+      });
+      if (!res || !Array.isArray(res) || res.length === 0) {
+        return false;
+      }
+
+      const imgItem = res[0];
+
+      if (R18Switch === "1") {
+        message.send(
+          format(Text("画图完成喵~\n"), Text(prompt), Image(imgItem)),
+        );
+        return true;
+      }
+
+      const reviewRes = await imageReview(imgItem);
+      if (reviewRes && reviewRes.conclusion === "不合规") {
+        message.send(
+          format(
+            Text(
+              "你又再骗我画涩图了喵~已经保存到主人的收藏夹了，不给你看，哼!~",
+            ),
+          ),
+        );
+      } else {
+        message.send(
+          format(Text("画图完成喵~\n"), Text(prompt), Image(imgItem)),
+        );
+      }
+
+      const imgUrl = await uploadImageToR2(imgItem);
+      await redisClient.addImgUrl(e.guid, imgUrl);
+
+      return true;
+    };
 
     if (promptOptimization === "1" && aiConfig) {
       message.send(format(Text("正在优化提示词喵~")));
-
-      const openai = new OpenAi({
-        baseURL: aiConfig.host,
-        apiKey: aiConfig.key,
-        timeout: 300000,
-      });
       try {
+        const openai = new OpenAi({
+          baseURL: aiConfig.host,
+          apiKey: aiConfig.key,
+          timeout: 300000,
+        });
+
         const response = await openai.chat.completions.create({
           model: aiConfig.model,
           messages: [
@@ -114,38 +166,26 @@ export default onResponse(selects, async (e) => {
               content:
                 "你是一个sd画图助手，协助用户将文字描述转换为提示词。描述中会出现一些动漫或游戏角色的名字, 请使用他们的英文名作为提示词, 请直接输出翻译后的提示词",
             },
-            { role: "user", content: content },
+            { role: "user", content },
           ],
         });
-        const prompt = response.choices[0].message?.content?.trim();
-        console.log("prompt", prompt);
 
-        if (prompt) {
-          const res = await availableTools.StableDiffusionGenerateImage({
-            prompt,
-            base64: true,
-          });
-          if (res && typeof res === "object" && res.length > 0) {
-            message.send(
-              format(Text("画图完成喵~\n"), Text(prompt), Image(res[0])),
-            );
+        const optimizedPrompt = response.choices[0].message?.content?.trim();
+        if (optimizedPrompt) {
+          if (await renderImage(optimizedPrompt)) {
             return;
           }
         }
       } catch (error) {
-        console.error("Error generating image:", error);
-        message.send(format(Text("画图失败了喵~")));
+        console.error("优化提示词失败:", error);
       }
     }
 
-    const res = await availableTools.StableDiffusionGenerateImage({
-      prompt: content,
-      base64: true,
-    });
-    if (res && typeof res === "object" && res.length > 0) {
-      message.send(format(Text("画图完成喵~"), Image(res[0])));
+    if (await renderImage(content)) {
+      return;
     }
-    return;
+
+    message.send(format(Text("画图失败了喵~")));
   }
 
   // 生成视频
@@ -270,9 +310,9 @@ export default onResponse(selects, async (e) => {
   if (/(\/|#)(ai)?(开启|关闭)?画图提示词优化$/i.test(e.msg)) {
     const match = e.msg.match(/(\/|#)(ai)?(开启|关闭)?画图提示词优化$/i);
     const [, , , action] = match;
-    const aiConfig = await getAIConfig(e.guid);
+    const aiConfig = await redisClient.getAIConfig(e.guid);
     if (!aiConfig) {
-      redis.set(`alemon:ai:prompt_optimization:${e.guid}`, "0");
+      await redisClient.setPromptOptimization(e.guid, "0");
       message.send(format(Text("请先配置AI相关信息喵~")));
       return;
     }
@@ -286,8 +326,8 @@ export default onResponse(selects, async (e) => {
       );
       return;
     }
-    redis.set(
-      `alemon:ai:prompt_optimization:${e.guid}`,
+    await redisClient.setPromptOptimization(
+      e.guid,
       action === "开启" ? "1" : "0",
     );
     message.send(format(Text(`已${action}画图提示词优化喵~`)));

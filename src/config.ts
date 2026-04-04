@@ -1,394 +1,362 @@
-import { redis } from "@src/redis";
-import { ChatCompletionTool } from "openai/resources";
+import Redis, { RedisOptions } from "ioredis";
+import { getConfigValue } from "alemonjs";
+import { AIConfig } from "./types";
 
-export const systemPrompt = ``;
+class db {
+  redis: Redis;
+  systemPrompt = "";
 
-export const defaultAIConfig = {
-  host: "",
-  key: "",
-  model: "",
-  temperature: 0.7,
-  max_tokens: 150,
-  systemPrompt: systemPrompt,
-};
+  static defaultAIConfig: AIConfig = {
+    host: "",
+    key: "",
+    model: "",
+    temperature: 0.7,
+    max_tokens: 150,
+    systemPrompt: "",
+  };
 
-export const getAIConfig = async (
-  guid?: string,
-): Promise<{
-  host: string;
-  key: string;
-  model: string;
-  temperature: number;
-  max_tokens: number;
-  systemPrompt: string;
-}> => {
-  let id = guid ?? "global";
-
-  const userConfigStr = await redis.get(`ai:config:${id}`);
-  if (userConfigStr) {
-    const userConfig = JSON.parse(userConfigStr);
-    return userConfig;
-  }
-  redis.set(`ai:config:${id}`, JSON.stringify(defaultAIConfig));
-  return defaultAIConfig;
-};
-
-export const getAIList = async () => {
-  const keys = await redis.keys("ai:list:*");
-  return keys.map((key) => key.replace("ai:list:", ""));
-};
-
-export const addAI = async (
-  guid: string,
-  name: string,
-  host: string,
-  key: string,
-  model: string,
-) => {
-  const defaultConfig = await getAIConfig();
-  defaultConfig.host = host;
-  defaultConfig.key = key;
-  defaultConfig.model = model;
-  await redis.set(`ai:list:${name}`, JSON.stringify(defaultConfig));
-  await switchAI(guid, name);
-};
-
-export const switchAI = async (guid: string, name: string) => {
-  const aiConfigStr = await redis.get(`ai:list:${name}`);
-  if (!aiConfigStr) {
-    console.log("切换失败, 无此模型");
-    // 清空当前配置
-    await redis.set(`ai:config:${guid}`, JSON.stringify(defaultAIConfig));
-    return null;
-  }
-  const aiConfig = JSON.parse(aiConfigStr);
-
-  // 保留当前系统提示词
-  const currentConfig = await getAIConfig(guid);
-  aiConfig.systemPrompt = currentConfig.systemPrompt;
-
-  await redis.set(`ai:config:${guid}`, JSON.stringify(aiConfig));
-  return aiConfig;
-};
-
-export const getPromptList = async () => {
-  const keys = await redis.keys("ai:prompt:*");
-  return keys.map((key) => key.replace("ai:prompt:", ""));
-};
-
-export const addPrompt = async (name: string, content: string) => {
-  return await redis.set(`ai:prompt:${name}`, content);
-};
-
-export const deletePrompt = async (name: string) => {
-  return await redis.del(`ai:prompt:${name}`);
-};
-
-export const switchPrompt = async (guid: string, name: string) => {
-  if (name === "") {
-    const config = await getAIConfig(guid);
-    config.systemPrompt = "";
-    await redis.set(`ai:config:${guid}`, JSON.stringify(config));
-    return systemPrompt;
-  }
-  const prompt = await redis.get(`ai:prompt:${name}`);
-  if (!prompt) {
-    console.log("切换提示词失败, 无此提示词");
-    return null;
-  }
-  const config = await getAIConfig(guid);
-  config.systemPrompt = prompt;
-  await redis.set(`ai:config:${guid}`, JSON.stringify(config));
-
-  return prompt;
-};
-
-export const getAIChatHistory = async (guid: string) => {
-  const historyStr = await redis.get(`ai:history:${guid}`);
-  if (historyStr) {
-    return JSON.parse(historyStr);
-  }
-  return [];
-};
-
-export const addAIChatHistory = async (guid: string, data: any) => {
-  const history = await getAIChatHistory(guid);
-
-  // 处理messages, 不要超过40条,超过就删除最早的
-  while (history.length >= 40) {
-    history.shift();
+  constructor(redisConfig?: RedisOptions) {
+    this.redis =
+      redisConfig && Object.keys(redisConfig).length > 0
+        ? new Redis(redisConfig)
+        : new Redis(); // 默认配置
   }
 
-  history.push(data);
-  await redis.set(`ai:history:${guid}`, JSON.stringify(history));
-  return history;
-};
+  /** 获取提示词优化内容 */
+  async getPromptOptimization(guid?: string): Promise<string | null> {
+    const id = guid ?? "global";
+    return (await this.redis.get(`ai:prompt_optimization:${id}`)) || "0";
+  }
 
-export const clearAIChatHistory = async (guid?: string) => {
-  if (!guid) {
-    const keys = await redis.keys(`ai:history:*`);
+  /** 设置提示词优化内容 */
+  async setPromptOptimization(guid: string, value: string): Promise<void> {
+    await this.redis.set(`ai:prompt_optimization:${guid}`, value);
+  }
+
+  /** 获取工具开关状态 */
+  async getToolSwitch(guid: string): Promise<string | null> {
+    return (await this.redis.get(`ai:tool:switch:${guid}`)) || "1";
+  }
+
+  /** 设置工具开关状态 */
+  async setToolSwitch(guid: string, enable: boolean): Promise<void> {
+    await this.redis.set(`ai:tool:switch:${guid}`, enable ? "1" : "0");
+  }
+
+  /** 获取复杂输出开关状态 */
+  async getComplexOutput(guid: string): Promise<string | null> {
+    return (await this.redis.get(`ai:complex_output:${guid}`)) || "1";
+  }
+
+  /** 设置复杂输出开关状态 */
+  async setComplexOutput(guid: string, enable: boolean): Promise<void> {
+    await this.redis.set(`ai:complex_output:${guid}`, enable ? "1" : "0");
+  }
+
+  /** 获取R18模式开关状态 */
+  async getR18Switch(guid: string): Promise<string | null> {
+    return await this.redis.get(`ai:r18:switch:${guid}`);
+  }
+
+  /** 设置R18模式开关状态 */
+  async setR18Switch(guid: string, enable: boolean): Promise<void> {
+    await this.redis.set(`ai:r18:switch:${guid}`, enable ? "1" : "0");
+  }
+
+  /** 切换当前图床 */
+  async switchImageBed(guid: string, bedName: string): Promise<void> {
+    await this.redis.set(`ai:image_bed:${guid}`, bedName);
+  }
+
+  /** 获取当前图床 */
+  async getImageBed(guid: string): Promise<string | null> {
+    return await this.redis.get(`ai:image_bed:${guid}`);
+  }
+
+  /** 获取AI配置 */
+  async getAIConfig(guid?: string): Promise<AIConfig> {
+    const id = guid ?? "global";
+    const userConfigStr = await this.redis.get(`ai:config:${id}`);
+    if (userConfigStr) {
+      return JSON.parse(userConfigStr) as AIConfig;
+    }
+    await this.setAIConfig(id, db.defaultAIConfig);
+    return { ...db.defaultAIConfig };
+  }
+
+  /** 设置AI配置 */
+  async setAIConfig(guid: string, config: AIConfig): Promise<void> {
+    await this.redis.set(`ai:config:${guid}`, JSON.stringify(config));
+  }
+
+  /** 关闭指定聊天 */
+  async closeChat(guid: string): Promise<void> {
+    await this.setAIConfig(guid, db.defaultAIConfig);
+    await this.clearAIChatHistory(guid);
+  }
+
+  /** 关闭所有聊天 */
+  async closeAllChat(): Promise<void> {
+    const keys = await this.redis.keys(`ai:config:*`);
     for (const key of keys) {
-      await redis.del(key);
-    }
-    return;
-  }
-
-  return await redis.del(`ai:history:${guid}`);
-};
-
-/**
- *  获取好感度等级
- * @param userKey 用户标识
- * @returns
- */
-export const getAffectionLevel = async (guid: string, userKey: string) => {
-  const levelStr = await redis.get(`ai:affection:${guid}:${userKey}`);
-  if (levelStr) {
-    return parseInt(levelStr, 10);
-  }
-  return 0;
-};
-
-export const getAffectionLevelAll = async (guid: string) => {
-  const keys = await redis.keys(`ai:affection:${guid}:*`);
-  const levels: Record<string, number> = {};
-  for (const key of keys) {
-    const levelStr = await redis.get(key);
-    if (levelStr) {
-      const userKey = key.replace(`ai:affection:${guid}:`, "");
-      levels[userKey] = parseInt(levelStr, 10);
+      const guid = key.replace("ai:config:", "");
+      await this.setAIConfig(guid, db.defaultAIConfig);
+      await this.clearAIChatHistory(guid);
     }
   }
-  return levels;
-};
 
-/**
- * 设置好感度等级
- * @param userKey 用户标识
- * @param level 好感度等级
- * @returns
- */
-export const setAffectionLevel = async (
-  guid: string,
-  userKey: string,
-  level: number,
-) => {
-  return await redis.set(`ai:affection:${guid}:${userKey}`, level.toString());
-};
-
-/**
- *  增加好感度等级
- * @param userKey 用户标识
- * @param increment  增加的等级
- * @returns
- */
-export const incrementAffectionLevel = async (
-  guid: string,
-  userKey: string,
-  increment: number,
-) => {
-  const currentLevel = await getAffectionLevel(guid, userKey);
-  const newLevel = currentLevel + increment;
-  await setAffectionLevel(guid, userKey, newLevel);
-  return newLevel;
-};
-
-/** * 重置好感度等级
- * @param userKey 用户标识
- * @returns
- */
-export const resetAffectionLevel = async (userKey: string) => {
-  return await redis.del(`ai:affection:${userKey}`);
-};
-
-/** 重置所有用户好感度等级
- * @param guid 频道标识
- * @returns
- */
-export const resetAllAffectionLevels = async () => {
-  const keys = await redis.keys(`ai:affection:*`);
-  for (const key of keys) {
-    await redis.del(key);
+  /** 获取AI列表 */
+  async getAIList(): Promise<string[]> {
+    const keys = await this.redis.keys("ai:list:*");
+    return keys.map((key) => key.replace("ai:list:", ""));
   }
-};
 
-export const setBotID = async (id: string) => {
-  return await redis.set("bot:id", id);
-};
-
-export const deleteAI = async (name: string) => {
-  const aiConfigStr = await redis.get(`ai:list:${name}`);
-  if (!aiConfigStr) {
-    console.log("删除失败, 无此模型");
-    return false;
+  /** 设置AI列表项 */
+  async setAIList(name: string, config: AIConfig): Promise<void> {
+    await this.redis.set(`ai:list:${name}`, JSON.stringify(config));
   }
-  await redis.del(`ai:list:${name}`);
-  return true;
-};
 
-/**
- *  设置好感度开关
- */
-export const affectionSwitch = async (guid: string, enable: boolean) => {
-  return await redis.set(`ai:affection:switch:${guid}`, enable ? "1" : "0");
-};
+  /** 新增AI配置并切换 */
+  async addAI(
+    guid: string,
+    name: string,
+    host: string,
+    key: string,
+    model: string,
+  ): Promise<void> {
+    const defaultConfig = await this.getAIConfig();
+    const aiConfig = {
+      ...defaultConfig,
+      host,
+      key,
+      model,
+    };
+    await this.setAIList(name, aiConfig);
+    await this.switchAI(guid, name);
+  }
 
-/**
- * 获取好感度开关状态
- */
-export const getAffectionSwitch = async (guid: string) => {
-  const switchStr = (await redis.get(`ai:affection:switch:${guid}`)) || "1";
-  return switchStr;
-};
+  /** 删除AI配置 */
+  async deleteAI(name: string): Promise<boolean> {
+    const aiConfigStr = await this.redis.get(`ai:list:${name}`);
+    if (!aiConfigStr) {
+      console.log("删除失败, 无此模型");
+      return false;
+    }
+    await this.redis.del(`ai:list:${name}`);
+    return true;
+  }
 
-/**
- * 获取tts回复开关状态
- */
-export const getTTSResponseSwitch = async (guid: string) => {
-  const switchStr = (await redis.get(`chat:tts:response:${guid}`)) || "0";
-  return switchStr;
-};
+  /** 切换AI */
+  async switchAI(guid: string, name: string): Promise<AIConfig | null> {
+    const aiConfigStr = await this.redis.get(`ai:list:${name}`);
+    if (!aiConfigStr) {
+      console.log("切换失败, 无此模型");
+      await this.setAIConfig(guid, db.defaultAIConfig);
+      return null;
+    }
+    const aiConfig = JSON.parse(aiConfigStr) as AIConfig;
+    const currentConfig = await this.getAIConfig(guid);
+    aiConfig.systemPrompt = currentConfig.systemPrompt;
+    await this.setAIConfig(guid, aiConfig);
+    return aiConfig;
+  }
 
-export const tools: ChatCompletionTool[] = [
-  {
-    type: "function",
-    function: {
-      name: "StableDiffusionGenerateImage",
-      description:
-        "使用 Stable Diffusion 模型生成图像, 该工具只擅长生成动漫风格的图片, 文本生成图像, 如需修改图像请使用AIPS工具",
-      parameters: {
-        type: "object",
-        properties: {
-          prompt: {
-            type: "string",
-            description:
-              "正向提示词（prompt），越详细越好。建议包含：主体、动作、服装、场景、风格、光线、画质修饰词。\n推荐全英文且使用标签描述,当遇到动漫人物时,使用ta的英文名可以自动触发lora,不用额外lora标签\n括号的使用:[增强效果],(弱化效果), 示例：'[artist:ciloranko],artist:kazutake_hazano,[artist:kedama milk]，smile, short_hair, open_mouth, bangs, multiple_girls, skirt, black_hair, hair_ornament, red_eyes, long_sleeves, 2girls, sitting, school_uniform, :d, grey_hair, multicolored_hair, pleated_skirt, shoes, serafuku, choker, socks, sailor_collar, neckerchief, orange_eyes, petals, siblings, black_choker, brown_footwear, blue sky， pointing, loafers, red_neckerchief, bench, falling_petals'",
-          },
-          bad_prompt: {
-            type: "string",
-            description:
-              "反向提示词（negative prompt），用于排除不想要的元素。\n示例：'lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality, normal quality, jpeg artifacts, signature, watermark, username, blurry, deformed'",
-            default:
-              "(easynegative:1.1), (verybadimagenegative_v1.3:1), (low quality:1.2), (worst quality:1.2)",
-          },
-          direction: {
-            type: "string",
-            description:
-              "图片方向, 横向: landscape, 纵向: portrait, 方形: square",
-            enum: ["landscape", "portrait", "square"],
-            default: "portrait",
-          },
-        },
-        required: ["prompt"],
-      },
-    },
-  },
-  // {
-  //   type: "function",
-  //   function: {
-  //     name: "StableDiffusionImageToPrompt",
-  //     description:
-  //       "使用 Stable Diffusion 将图片转换为提示词, 它只对动漫图片有效, 只能用来提取动漫图片的提示词",
-  //     parameters: {
-  //       type: "object",
-  //       properties: {
-  //         image_url: {
-  //           type: "string",
-  //           description: "图片的URL地址，必须是你所收到的图片地址",
-  //         },
-  //       },
-  //       required: ["image_url"],
-  //     },
-  //   },
-  // },
-  {
-    type: "function",
-    function: {
-      name: "SearchScbbsPost",
-      description:
-        "搜索《survivalcraft》(译名《生存战争》,也简称sc)论坛的帖子, 搜索时请尽量提供精确的关键词, 关键词最好只有一个. 在这里可以搜索到sc这个游戏相关的各种模组等资源或教程帖子和更新公告等内容, 但请注意不要搜索与游戏无关的内容, 否则可能会得到不相关的结果，若是搜索不到请减少关键词的数量或更换关键词",
-      parameters: {
-        type: "object",
-        properties: {
-          keyword: {
-            type: "string",
-            description: "搜索关键词",
-          },
-        },
-        required: ["keyword"],
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "SearchWeb",
-      description:
-        "使用搜索引擎搜索网页内容, 你可以使用这个工具来获取最新的资讯或数据, 但请注意不要搜索敏感或违法的内容, 否则可能会得到不相关的结果, 此外,不推荐使用该工具搜索与sc这个游戏相关的内容, 因为搜索引擎的结果可能不如专门的游戏论坛或社区来的准确和有用, 在搜索时请尽量提供精确的关键词, 关键词最好只有一个. 如果你想搜索与游戏相关的内容, 建议使用SearchScbbsPost工具来搜索survivalcraft(生存战争)论坛的帖子",
-      parameters: {
-        type: "object",
-        properties: {
-          keyword: {
-            type: "string",
-            description: "搜索关键词",
-          },
-          engine: {
-            type: "string",
-            description: "选择搜索引擎",
-            enum: ["bing", "google", "baidu"],
-            default: "baidu",
-          },
-          cc: {
-            type: "string",
-            description:
-              "搜索国家/地区代码, 例如搜索美国就填us, 搜索中国就填cn, 搜索日本就填jp, 这个参数会影响搜索结果的地域性",
-            default: "CN",
-          },
-          type: {
-            type: "string",
-            description:
-              "选择结果类型, 搜索后获取对应结果, 建议使用自然结果organic_results, 其他选项可能不存在",
-            enum: ["organic_results", "related_questions", "related_searches"],
-            default: "organic_results",
-          },
-        },
-        required: ["keyword"],
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "Photoshop",
-      description:
-        "AI修图工具, 可以对图片进行图像编辑, 无法用于图片分析, 只能对图片进行修改, 例如更换时装, 修改颜色等操作. 使用时只需提供需要修改的图片url和修改需求即可. 当遇到审核拦截的问题时, 请不要再次尝试提交相同的修改需求, 这可能会导致账号被封禁. 请修改你的修改需求文本描述, 使其更具体和详细, 以避免触发审核拦截. ",
-      parameters: {
-        type: "object",
-        properties: {
-          image_url: {
-            type: "string",
-            description: "需要修改的图片URL地址，必须是你所收到的图片地址",
-          },
-          instruction: {
-            type: "string",
-            description:
-              "修改需求的文本描述，尽量详细和具体，例如：'请将图片中的人物换成一个穿着宇航服的宇航员，背景改成月球表面，保持其他元素不变'",
-          },
-        },
-        required: ["image_url", "instruction"],
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "GetTTSModels",
-      description:
-        "获取可用的TTS模型列表, 可以用来选择不同的音色进行语音合成. 模型会不定期更新, 你可以定期调用这个工具来获取最新的模型列表. 当你想要使用TTS功能时, 可以先调用这个工具来获取可用的模型列表, 然后选择一个你喜欢的模型来进行语音合成. 例如, 你可以选择一个叫做'派蒙-默认'的模型来模仿派蒙的声音进行语音合成",
-      parameters: {
-        type: "object",
-        properties: {},
-      },
-    },
-  },
-];
+  /** 获取提示词列表 */
+  async getPromptList(): Promise<string[]> {
+    const keys = await this.redis.keys("ai:prompt:*");
+    return keys.map((key) => key.replace("ai:prompt:", ""));
+  }
+
+  /** 获取提示词内容 */
+  async getPrompt(name: string): Promise<string | null> {
+    return await this.redis.get(`ai:prompt:${name}`);
+  }
+
+  /** 设置提示词内容 */
+  async setPrompt(name: string, content: string): Promise<void> {
+    await this.redis.set(`ai:prompt:${name}`, content);
+  }
+
+  /** 新增提示词 */
+  async addPrompt(name: string, content: string): Promise<void> {
+    await this.setPrompt(name, content);
+  }
+
+  /** 删除提示词 */
+  async deletePrompt(name: string): Promise<number> {
+    return await this.redis.del(`ai:prompt:${name}`);
+  }
+
+  /** 切换当前提示词 */
+  async switchPrompt(guid: string, name: string): Promise<string | null> {
+    if (name === "") {
+      const config = await this.getAIConfig(guid);
+      config.systemPrompt = "";
+      await this.setAIConfig(guid, config);
+      return this.systemPrompt;
+    }
+    const prompt = await this.getPrompt(name);
+    if (!prompt) {
+      console.log("切换提示词失败, 无此提示词");
+      return null;
+    }
+    const config = await this.getAIConfig(guid);
+    config.systemPrompt = prompt;
+    await this.setAIConfig(guid, config);
+    return prompt;
+  }
+
+  /** 获取聊天历史 */
+  async getAIChatHistory(guid: string): Promise<any[]> {
+    const historyStr = await this.redis.get(`ai:history:${guid}`);
+    if (historyStr) {
+      return JSON.parse(historyStr);
+    }
+    return [];
+  }
+
+  /** 设置聊天历史 */
+  async setAIChatHistory(guid: string, history: any[]): Promise<void> {
+    await this.redis.set(`ai:history:${guid}`, JSON.stringify(history));
+  }
+
+  /** 添加聊天历史 */
+  async addAIChatHistory(guid: string, data: any): Promise<any[]> {
+    const history = await this.getAIChatHistory(guid);
+    while (history.length >= 40) history.shift();
+    history.push(data);
+    await this.setAIChatHistory(guid, history);
+    return history;
+  }
+
+  /** 清除聊天历史 */
+  async clearAIChatHistory(guid?: string): Promise<void> {
+    if (!guid) {
+      const keys = await this.redis.keys(`ai:history:*`);
+      for (const key of keys) {
+        await this.redis.del(key);
+      }
+      return;
+    }
+    await this.redis.del(`ai:history:${guid}`);
+  }
+
+  /** 获取好感度 */
+  async getAffectionLevel(guid: string, userKey: string): Promise<number> {
+    const levelStr = await this.redis.get(`ai:affection:${guid}:${userKey}`);
+    return levelStr ? parseInt(levelStr, 10) : 0;
+  }
+
+  /** 设置好感度 */
+  async setAffectionLevel(
+    guid: string,
+    userKey: string,
+    level: number,
+  ): Promise<void> {
+    await this.redis.set(`ai:affection:${guid}:${userKey}`, level.toString());
+  }
+
+  /** 增加好感度 */
+  async incrementAffectionLevel(
+    guid: string,
+    userKey: string,
+    increment: number,
+  ): Promise<number> {
+    const currentLevel = await this.getAffectionLevel(guid, userKey);
+    const newLevel = currentLevel + increment;
+    await this.setAffectionLevel(guid, userKey, newLevel);
+    return newLevel;
+  }
+
+  /** 获取所有好感度 */
+  async getAffectionLevelAll(guid: string): Promise<Record<string, number>> {
+    const keys = await this.redis.keys(`ai:affection:${guid}:*`);
+    const levels: Record<string, number> = {};
+    for (const key of keys) {
+      const levelStr = await this.redis.get(key);
+      if (levelStr) {
+        const userKey = key.replace(`ai:affection:${guid}:`, "");
+        levels[userKey] = parseInt(levelStr, 10);
+      }
+    }
+    return levels;
+  }
+
+  /** 重置用户好感度 */
+  async resetAffectionLevel(guid: string, userKey: string): Promise<number> {
+    return await this.redis.del(`ai:affection:${guid}:${userKey}`);
+  }
+
+  /** 重置全部好感度 */
+  async resetAllAffectionLevels(): Promise<void> {
+    const keys = await this.redis.keys(`ai:affection:*`);
+    for (const key of keys) {
+      await this.redis.del(key);
+    }
+  }
+
+  /** 设置好感度开关 */
+  async setAffectionSwitch(guid: string, enable: boolean): Promise<void> {
+    await this.redis.set(`ai:affection:switch:${guid}`, enable ? "1" : "0");
+  }
+
+  /** 获取好感度开关 */
+  async getAffectionSwitch(guid: string): Promise<string> {
+    const switchStr =
+      (await this.redis.get(`ai:affection:switch:${guid}`)) || "1";
+    return switchStr;
+  }
+
+  /** 设置语音回复开关 */
+  async setTTSResponseSwitch(guid: string, enable: boolean): Promise<void> {
+    await this.redis.set(`chat:tts:response:${guid}`, enable ? "1" : "0");
+  }
+
+  /** 获取语音回复开关 */
+  async getTTSResponseSwitch(guid: string): Promise<string> {
+    const switchStr =
+      (await this.redis.get(`chat:tts:response:${guid}`)) || "0";
+    return switchStr;
+  }
+
+  /** 设置 bot id */
+  async setBotID(id: string): Promise<void> {
+    await this.redis.set("bot:id", id);
+  }
+
+  /** 获取 bot id */
+  async getBotID(): Promise<string | null> {
+    return await this.redis.get("bot:id");
+  }
+
+  /** 添加图片URL */
+  async addImgUrl(guid: string, url: string): Promise<void> {
+    const id = guid ?? "global";
+    await this.redis.lpush(`ai:images:${id}`, url);
+  }
+
+  /** 获取图片URL列表 */
+  async getImgUrls(guid: string): Promise<string[]> {
+    const id = guid ?? "global";
+    return await this.redis.lrange(`ai:images:${id}`, 0, -1);
+  }
+
+  /** 主动搭话 */
+  async getProactiveSwitch(guid: string): Promise<string> {
+    return (await this.redis.get(`ai:proactive:switch:${guid}`)) || "1";
+  }
+
+  async setProactiveSwitch(guid: string, enable: boolean): Promise<void> {
+    await this.redis.set(`ai:proactive:switch:${guid}`, enable ? "1" : "0");
+  }
+}
+
+const configValue = getConfigValue();
+const aiChatConfig = configValue.aiChat || {};
+const redisClient = new db({
+  host: aiChatConfig.redis?.host ?? "localhost",
+  port: aiChatConfig.redis?.port ?? 6379,
+  password: aiChatConfig.redis?.password ?? "",
+});
+
+export default redisClient;

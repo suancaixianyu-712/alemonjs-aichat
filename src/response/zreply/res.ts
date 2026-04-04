@@ -1,17 +1,5 @@
 import { API } from "@alemonjs/onebot";
-import { availableTools, getTimeString, TTSClient } from "@src/api";
-import {
-  addAIChatHistory,
-  getAffectionLevelAll,
-  getAffectionSwitch,
-  getAIChatHistory,
-  getAIConfig,
-  getTTSResponseSwitch,
-  incrementAffectionLevel,
-  tools,
-} from "@src/config";
 import { emojiMap } from "@src/emoji";
-import { redis } from "@src/redis";
 import { uploadImageToR2 } from "@src/s3";
 import {
   ImageFile,
@@ -24,7 +12,15 @@ import {
 import { log } from "console";
 import OpenAi from "openai";
 import { getConfigValue } from "alemonjs";
-const value = getConfigValue();
+import { TTSClient } from "@src/api/tts";
+import { getTimeString } from "@src/api/format";
+import { availableTools, tools } from "@src/api/aitools";
+import { loadSkills } from "@src/api/loadSkill";
+import redisClient from "@src/config";
+import errorimg from "@src/assets/error.png";
+import { imageReview } from "@src/api/review";
+
+const value = getConfigValue().aiChat || {};
 
 export const selects = onSelects(["message.create", "private.message.create"]);
 let ttsClient: TTSClient;
@@ -32,8 +28,6 @@ let ttsClient: TTSClient;
 let currentModel = "派蒙-默认"; // 默认音色
 
 export default onResponse(selects, async (e, next) => {
-  console.log("收到消息");
-
   console.log("e.UserId", e.UserId, e.bot.user_id);
 
   // 如果是命令则跳过
@@ -46,20 +40,34 @@ export default onResponse(selects, async (e, next) => {
     return;
   }
 
-  const complexOutputIsOpen =
-    (await redis.get(`chat:complex:response:${e.guid}`)) || "1"; // 复杂输出开关
-  const affectionIsOpen = await getAffectionSwitch(e.guid); // 好感度开关
-  const isOpenTTSReply = await getTTSResponseSwitch(e.guid); // TTS回复开关
-  const isOpenR18 = (await redis.get(`chat:r18:response:${e.guid}`)) || "1"; // R18开关
+  const complexOutputIsOpen = await redisClient.getComplexOutput(e.guid); // 复杂输出
+  const affectionIsOpen = await redisClient.getAffectionSwitch(e.guid); // 好感度开关
+  const isOpenTTSReply = await redisClient.getTTSResponseSwitch(e.guid); // TTS回复开关
+  const isOpenR18 = await redisClient.getR18Switch(e.guid); // R18开关
+  const proactiveSwitch = await redisClient.getProactiveSwitch(e.guid); // 主动搭话开关
+  console.log("isOpenR18", isOpenR18, "proactiveSwitch", proactiveSwitch);
+
+  const skills = loadSkills(); // 加载技能列表
   // 创建消息
   const [message] = useMessage(e);
-  const config = await getAIConfig(e.guid);
-  const historyMessages = await getAIChatHistory(e.guid);
-  const affections = await getAffectionLevelAll(e.guid);
+  const config = await redisClient.getAIConfig(e.guid);
+  const historyMessages = await redisClient.getAIChatHistory(e.guid);
+  const affections = await redisClient.getAffectionLevelAll(e.guid);
   const imgs: string[] = [];
   let rawMessage = e.value.raw_message || e.raw_message || e.msg;
   const botName = e.bot.nickname || "小咸鱼";
   const systemPrompt = `
+# AI助手回复规范
+请严格按照以下规范进行回复, 不要添加任何不必要的内容, 也不要删除或修改规范中的任何内容, 以确保回复能够被正确解析和处理
+
+## 技能
+在遇到用户需要执行特定操作时,先获取对应的技能,如果有可用技能,获取该技能,并严格按照技能文档要求的格式调用, 不要添加任何多余的内容, 也不要删除或修改规范中的任何内容, 以确保技能能够被正确解析和处理
+当没有技能可以应对需求时, 就自行挑选合适的工具函数来完成用户的需求
+---
+技能列表:
+${skills.map((skill) => `- ${skill.name}: ${skill.description}`).join("\n")}
+---
+
 ## 关于回复格式:
 ### 用户发言
 - 格式: [私聊]用户昵称(用户id)(发送时间):消息内容
@@ -90,6 +98,7 @@ ${botName}:这是网络图片<img=https://example.com/image.jpg>
 ${
   complexOutputIsOpen === "1" && isOpenTTSReply === "1"
     ? `\n语音回复:
+此能力只能在onebot平台使用, 其他平台请勿使用, 否则会回复失败
 你可以使用语音回复来让你的回复更生动, 例如:
 ${botName}:你好呀~<tts=你好呀~>
 可以通过调用GetTTSModels工具函数获取音色列表, 可使用<tts=内容,音色=派蒙-情感>的格式来指定音色,设置一次后, 后面的回复将使用相同的音色, 例如:
@@ -141,6 +150,7 @@ ${botName}:[]
 当前群时间:${getTimeString()}
 当前群号:${e.guid}
 当前群名称:${e.GroupName || "无"}
+当前聊天平台:${e.Platform}
 `;
 
   // 如果没有配置AI,则不处理
@@ -156,17 +166,26 @@ ${botName}:[]
 
   // 发消息的人是机器人自己, 则不处理
   if (e.UserId == e.bot.user_id) {
+    next();
     return;
   }
 
   // 当e.at不存在时,只给20%概率继续执行, 当e.at存在时,概率为40%,当e.atBot存在时,概率为100%
   const rand = Math.random();
+
   if (e.Name !== "private.message.create") {
-    if ((!e.at && rand > 0.2) || (e.at && !e.atBot && rand > 0.4)) {
+    if (proactiveSwitch !== "1" && e.at && !e.atBot) {
+      console.log("未开启主动搭话, 跳过AI回复");
+      next();
+      return;
+    }
+    if ((!e.at && rand > 0.1) || (e.at && !e.atBot && rand > 0.2)) {
       console.log("跳过AI回复");
+      next();
       return;
     }
   }
+
   // if (e.UserId != "3501869534") return;
 
   // 处理回复图片
@@ -298,7 +317,7 @@ ${botName}:[]
     { ...usermessage },
   ];
 
-  const isTool = await redis.get(`chat:tools:response:${e.guid}`);
+  const isTool = await redisClient.getToolSwitch(e.guid);
 
   const createParams = {
     model: config.model,
@@ -362,7 +381,7 @@ ${botName}:[]
   }
 
   messages.push(usermessage);
-  await addAIChatHistory(e.guid, usermessage);
+  await redisClient.addAIChatHistory(e.guid, usermessage);
 
   // 检查是否有工具调用需要处理
   while (res.choices[0].message?.tool_calls?.length) {
@@ -370,29 +389,7 @@ ${botName}:[]
 
     // 先处理对话
     messages.push(responseMessage);
-    await addAIChatHistory(e.guid, responseMessage);
-
-    if (
-      responseMessage.tool_calls.find(
-        (tc: any) => tc.function.name === "StableDiffusionImageToPrompt",
-      )
-    ) {
-      message.send(format(Text("我瞅瞅这图片长啥样~稍等一会儿哦~")));
-    }
-
-    if (
-      responseMessage.tool_calls.find(
-        (tc: any) => tc.function.name === "StableDiffusionGenerateImage",
-      )
-    ) {
-      message.send(format(Text("好的, 我这就去画图~稍等一会儿哦~")));
-    }
-
-    if (
-      responseMessage.tool_calls.find((tc: any) => tc.function.name === "AIPS")
-    ) {
-      message.send(format(Text("开始修图中~稍等一会儿哦~")));
-    }
+    await redisClient.addAIChatHistory(e.guid, responseMessage);
 
     console.log("模型决定调用工具：", responseMessage.tool_calls);
     for (const toolCall of responseMessage.tool_calls) {
@@ -418,7 +415,7 @@ ${botName}:[]
       });
 
       // 记录工具调用结果
-      await addAIChatHistory(e.guid, {
+      await redisClient.addAIChatHistory(e.guid, {
         role: "tool",
         tool_call_id: toolCall.id,
         name: functionName,
@@ -474,7 +471,7 @@ ${botName}:[]
       const change = parseInt(affectionMatch[2], 10);
       if (!isNaN(change) && change !== 0) {
         console.log(`检测到对${nickname}的好感变化: ${change}`);
-        await incrementAffectionLevel(e.guid, nickname, change);
+        await redisClient.incrementAffectionLevel(e.guid, nickname, change);
       }
     }
 
@@ -501,7 +498,7 @@ ${botName}:[]
     });
   }
   // 记录对话
-  await addAIChatHistory(e.guid, res.choices?.[0].message);
+  await redisClient.addAIChatHistory(e.guid, res.choices?.[0].message);
 
   // 发送消息
   if (isOpenTTSReply === "1") {
@@ -518,28 +515,50 @@ ${botName}:[]
   for (let i = 0; i < replymessages.length; i++) {
     const { text, images } = replymessages[i];
     const components: any[] = i === 0 ? [Mention(e.UserId)] : [];
+
     components.push(Text(text));
+
     for (const img of images) {
       const isNetworkImage = /^https?:\/\//.test(img);
+      let finalImg: string | null = img;
+
+      // 👉 scbbs 平台处理（下载再上传）
       if (e.Platform == "scbbs" && isNetworkImage) {
-        // scbbs平台不支持网络图片, 需要先下载再上传
         const uploadedUrl = await uploadImageToR2(
           img.replace(
             "https://imgen.x.ai",
             value.xaiImgProxy || "https://imgen.x.ai",
           ),
         );
-        if (uploadedUrl) {
-          components.push(ImageURL(uploadedUrl));
-        }
-      } else {
-        const imageComponent = isNetworkImage ? ImageURL(img) : ImageFile(img);
+        finalImg = uploadedUrl || null;
+      }
+
+      // 👉 审核逻辑（只在开启时执行）
+      if (isOpenR18 !== "1" && finalImg) {
+        try {
+          if (res?.conclusion === "不合规") {
+            components.push(ImageFile(errorimg));
+            continue;
+          }
+        } catch (err) {}
+      }
+
+      // 👉 正常图片逻辑
+      if (finalImg) {
+        const imageComponent = isNetworkImage
+          ? ImageURL(finalImg)
+          : ImageFile(finalImg);
         components.push(imageComponent);
+      } else {
+        // 上传失败 fallback
+        components.push(ImageFile(errorimg));
       }
     }
-    // 添加随机1-3秒延迟
+
+    // 随机 1-3 秒延迟
     const delay = Math.random() * 2000 + 1000;
     await new Promise((resolve) => setTimeout(resolve, delay));
+
     await message.send(format(...components));
   }
 

@@ -1,177 +1,12 @@
-import { redis } from "./redis";
+import { redis } from "../redis";
 import { getConfigValue } from "alemonjs";
 import fs from "fs";
-import { uploadImageToR2 } from "./s3";
-import ttsmodels from "@src/data/ttsmodels.json";
-const value = getConfigValue();
+import { uploadImageToR2 } from "../s3";
+import { TTSClient } from "./tts";
+import { ChatCompletionTool } from "openai/resources";
+import { loadSkillDetail } from "./loadSkill";
 
-export const getTimeString = (): string => {
-  const now = new Date();
-  const month = String(now.getMonth() + 1).padStart(2, "0");
-  const day = String(now.getDate()).padStart(2, "0");
-  const hours = String(now.getHours()).padStart(2, "0");
-  const minutes = String(now.getMinutes()).padStart(2, "0");
-  return `${month}-${day} ${hours}:${minutes}`;
-};
-
-type modelInfoType =
-  | string
-  | null
-  | {
-      version: "v4";
-      model_name: string;
-      prompt_text_lang: string;
-      emotion: string;
-      text_lang: string;
-    };
-
-export class TTSClient {
-  host: string;
-  constructor() {
-    this.host = value.ttsServer?.host || "http://localhost:8000";
-  }
-
-  async getModels(version = "v4") {
-    const res = await fetch(`${this.host}/models/${version}`);
-    if (!res.ok) {
-      return null;
-    }
-    const data = await res.json();
-    return data.models;
-  }
-
-  async installModel(modelname: string) {
-    // 遍历ttsmodels,查找model对应的下载链接,模糊匹配
-    const matchedModel = ttsmodels.find((m) => {
-      return m.models.find((md) => md.modelname.includes(modelname));
-    });
-    if (!matchedModel) {
-      return { success: false, message: "未找到对应的模型" };
-    }
-    const modelInfo = matchedModel.models.find((md) =>
-      md.modelname.includes(modelname),
-    );
-    if (!modelInfo) {
-      return { success: false, message: "未找到对应的模型" };
-    }
-
-    // console.log("matchedModel", matchedModel);
-    console.log("modelInfo", modelInfo);
-
-    // 在这里实现模型安装逻辑
-
-    const res = await fetch(`${this.host}/install_model`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        category: matchedModel.category,
-        dl_url: modelInfo.dl_link,
-        language: matchedModel.lang,
-        model_name: modelInfo.modelname,
-      }),
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      const err = await res.text();
-      console.log(err);
-      return { success: false, message: "模型安装失败: " + err };
-    }
-    return { success: true, message: data.msg };
-  }
-
-  async setModel(model: string, emotion?: string) {
-    const models = await this.getModels("v4");
-    if (!models) {
-      return null;
-    }
-    let modelInfo: modelInfoType = await redis.get("chat:tts:modelInfo");
-    if (!modelInfo) {
-      modelInfo = {
-        version: "v4",
-        model_name: "",
-        prompt_text_lang: "中文",
-        emotion: emotion ?? "默认",
-        text_lang: "中文",
-      };
-    } else {
-      modelInfo = JSON.parse(modelInfo);
-    }
-
-    // model可能只包含模型名称的一部分,需要模糊匹配
-    const matchedModel = Object.keys(models).find((m) => m.includes(model));
-    if (!matchedModel) {
-      return null;
-    }
-    if (!modelInfo || typeof modelInfo === "string") {
-      return null;
-    }
-    modelInfo.model_name = matchedModel as string;
-    modelInfo.prompt_text_lang = Object.keys(models[matchedModel as string])[0];
-    modelInfo.emotion =
-      emotion || models[matchedModel as string][modelInfo.prompt_text_lang][0];
-    modelInfo.text_lang = modelInfo.prompt_text_lang;
-    await redis.set("chat:tts:modelInfo", JSON.stringify(modelInfo));
-    return matchedModel;
-  }
-
-  async getAudio(text) {
-    let modelInfo: modelInfoType = await redis.get("chat:tts:modelInfo");
-    if (!modelInfo) {
-      modelInfo = {
-        version: "v4",
-        model_name: "原神-中文-芙宁娜_ZH",
-        prompt_text_lang: "中文",
-        emotion: "默认",
-        text_lang: "中文",
-      };
-    } else {
-      modelInfo = JSON.parse(modelInfo);
-    }
-
-    if (!modelInfo || typeof modelInfo === "string") {
-      return null;
-    }
-    console.log("modelInfo", modelInfo);
-
-    const res = await fetch(`${this.host}/infer_single`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        dl_url: this.host,
-        version: modelInfo.version,
-        model_name: modelInfo.model_name,
-        prompt_text_lang: modelInfo.prompt_text_lang,
-        emotion: modelInfo.emotion,
-        text: text,
-        text_lang: modelInfo.text_lang,
-        top_k: 10,
-        top_p: 1,
-        temperature: 1,
-        text_split_method: "按标点符号切",
-        batch_size: 1,
-        batch_threshold: 0.75,
-        split_bucket: true,
-        speed_facter: 1,
-        fragment_interval: 0.3,
-        media_type: "wav",
-        parallel_infer: true,
-        repetition_penalty: 1.35,
-        seed: -1,
-        sample_steps: 16,
-        if_sr: false,
-      }),
-    });
-    if (!res.ok) {
-      return null;
-    }
-    const data = await res.json();
-    return data;
-  }
-}
+const value = getConfigValue().aiChat || {};
 
 const getPrompt = async (text: string): Promise<string> => {
   // 检查中文
@@ -195,6 +30,183 @@ const getPrompt = async (text: string): Promise<string> => {
     return text;
   }
 };
+
+export const tools: ChatCompletionTool[] = [
+  {
+    type: "function",
+    function: {
+      name: "StableDiffusionGenerateImage",
+      description: "使用 Stable Diffusion 模型生成图像",
+      parameters: {
+        type: "object",
+        properties: {
+          prompt: {
+            type: "string",
+            description:
+              "正向提示词（prompt），越详细越好。建议包含：主体、动作、服装、场景、风格、光线、画质修饰词。\n推荐全英文且使用标签描述,当遇到动漫人物时,使用ta的英文名可以自动触发lora,不用额外lora标签\n括号的使用:[增强效果],(弱化效果), 示例：'[artist:ciloranko],artist:kazutake_hazano,[artist:kedama milk]，smile, short_hair, open_mouth, bangs, multiple_girls, skirt, black_hair, hair_ornament, red_eyes, long_sleeves, 2girls, sitting, school_uniform, :d, grey_hair, multicolored_hair, pleated_skirt, shoes, serafuku, choker, socks, sailor_collar, neckerchief, orange_eyes, petals, siblings, black_choker, brown_footwear, blue sky， pointing, loafers, red_neckerchief, bench, falling_petals'",
+          },
+          bad_prompt: {
+            type: "string",
+            description:
+              "反向提示词（negative prompt），用于排除不想要的元素。\n示例：'lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality, normal quality, jpeg artifacts, signature, watermark, username, blurry, deformed'",
+            default:
+              "(easynegative:1.1), (verybadimagenegative_v1.3:1), (low quality:1.2), (worst quality:1.2)",
+          },
+          direction: {
+            type: "string",
+            description:
+              "图片方向, 横向: landscape, 纵向: portrait, 方形: square",
+            enum: ["landscape", "portrait", "square"],
+            default: "portrait",
+          },
+        },
+        required: ["prompt"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "StableDiffusionImageToPrompt",
+      description:
+        "使用 Stable Diffusion 将图片转换为提示词, 它只对动漫图片有效, 只能用来提取动漫图片的提示词",
+      parameters: {
+        type: "object",
+        properties: {
+          image_url: {
+            type: "string",
+            description: "图片的URL地址，必须是你所收到的图片地址",
+          },
+        },
+        required: ["image_url"],
+      },
+    },
+  },
+  // {
+  //   type: "function",
+  //   function: {
+  //     name: "SearchScbbsPost",
+  //     description:
+  //       "搜索《survivalcraft》(译名《生存战争》,也简称sc)论坛的帖子, 搜索时请尽量提供精确的关键词, 关键词最好只有一个. 在这里可以搜索到sc这个游戏相关的各种模组等资源或教程帖子和更新公告等内容, 但请注意不要搜索与游戏无关的内容, 否则可能会得到不相关的结果，若是搜索不到请减少关键词的数量或更换关键词",
+  //     parameters: {
+  //       type: "object",
+  //       properties: {
+  //         keyword: {
+  //           type: "string",
+  //           description: "搜索关键词",
+  //         },
+  //       },
+  //       required: ["keyword"],
+  //     },
+  //   },
+  // },
+  {
+    type: "function",
+    function: {
+      name: "SearchWeb",
+      description:
+        "使用搜索引擎搜索网页内容, 你可以使用这个工具来获取最新的资讯或数据, 但请注意不要搜索敏感或违法的内容, 否则可能会得到不相关的结果, 此外,不推荐使用该工具搜索与sc这个游戏相关的内容, 因为搜索引擎的结果可能不如专门的游戏论坛或社区来的准确和有用, 在搜索时请尽量提供精确的关键词, 关键词最好只有一个. 如果你想搜索与游戏相关的内容, 建议使用SearchScbbsPost工具来搜索survivalcraft(生存战争)论坛的帖子",
+      parameters: {
+        type: "object",
+        properties: {
+          keyword: {
+            type: "string",
+            description: "搜索关键词",
+          },
+          engine: {
+            type: "string",
+            description: "选择搜索引擎",
+            enum: ["bing", "google", "baidu"],
+            default: "baidu",
+          },
+          cc: {
+            type: "string",
+            description:
+              "搜索国家/地区代码, 例如搜索美国就填us, 搜索中国就填cn, 搜索日本就填jp, 这个参数会影响搜索结果的地域性",
+            default: "CN",
+          },
+          type: {
+            type: "string",
+            description:
+              "选择结果类型, 搜索后获取对应结果, 建议使用自然结果organic_results, 其他选项可能不存在",
+            enum: ["organic_results", "related_questions", "related_searches"],
+            default: "organic_results",
+          },
+        },
+        required: ["keyword"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "Photoshop",
+      description: "AI修图工具",
+      parameters: {
+        type: "object",
+        properties: {
+          image_url: {
+            type: "string",
+            description: "需要修改的图片URL地址，必须是你所收到的图片地址",
+          },
+          instruction: {
+            type: "string",
+            description:
+              "修改需求的文本描述，尽量详细和具体，例如：'请将图片中的人物换成一个穿着宇航服的宇航员，背景改成月球表面，保持其他元素不变'",
+          },
+        },
+        required: ["instruction"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "GetTTSModels",
+      description:
+        "获取可用的TTS模型列表, 可以用来选择不同的音色进行语音合成. 模型会不定期更新, 你可以定期调用这个工具来获取最新的模型列表. 当你想要使用TTS功能时, 可以先调用这个工具来获取可用的模型列表, 然后选择一个你喜欢的模型来进行语音合成. 例如, 你可以选择一个叫做'派蒙-默认'的模型来模仿派蒙的声音进行语音合成",
+      parameters: {
+        type: "object",
+        properties: {},
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "RunCommand",
+      description:
+        "执行终端命令, 请勿执行高危险性指令, 例如rm -rf /等, 否则可能会导致服务器数据丢失或系统崩溃. 你可以使用这个工具来执行一些简单的命令, 例如查看当前目录下的文件ls, 查看系统状态top等. 当你想要执行一个命令时, 请提供具体的命令文本, 例如'ls -la'或'top -n 1'. 执行结果将会返回给你, 但请注意, 由于安全限制, 某些命令可能无法执行或返回受限的结果",
+      parameters: {
+        type: "object",
+        properties: {
+          command: {
+            type: "string",
+            description: "要执行的终端命令",
+          },
+        },
+        required: ["command"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "getSKILLDetail",
+      description: "获取技能详情",
+      parameters: {
+        type: "object",
+        properties: {
+          skillName: {
+            type: "string",
+            description: "要获取详情的技能名称",
+          },
+        },
+        required: ["skillName"],
+      },
+    },
+  },
+];
 
 export const availableTools = {
   /**
@@ -621,5 +633,35 @@ export const availableTools = {
       console.error("Error installing Ollama model:", error);
       return { success: false, error: error };
     }
+  },
+
+  /**
+   * 运行cmd命令
+   * @param command 命令字符串
+   * @returns 命令执行结果
+   */
+  RunCommand: async ({ command }) => {
+    const { exec } = await import("child_process");
+    return new Promise((resolve) => {
+      exec(command, (error, stdout, stderr) => {
+        if (error) {
+          console.error(`Error executing command: ${error}`);
+          resolve(`Error: ${error.message}`);
+          return;
+        }
+        if (stderr) {
+          console.error(`Command stderr: ${stderr}`);
+          resolve(`Error: ${stderr}`);
+          return;
+        }
+        console.log(`Command stdout: ${stdout}`);
+        resolve(stdout);
+      });
+    });
+  },
+
+  getSKILLDetail: async ({ skillName }) => {
+    const skill = loadSkillDetail(skillName);
+    return skill;
   },
 };

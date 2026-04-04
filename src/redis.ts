@@ -1,6 +1,6 @@
 import { getConfigValue } from "alemonjs";
 import Redis from "ioredis";
-const value = getConfigValue();
+const value = getConfigValue().aiChat || {};
 
 const redisConfig = {
   host: value.redis?.host ?? "localhost",

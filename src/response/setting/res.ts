@@ -1,16 +1,6 @@
-import { availableTools } from "@src/api";
-import {
-  addAI,
-  addPrompt,
-  affectionSwitch,
-  deleteAI,
-  deletePrompt,
-  getAIConfig,
-  getAIList,
-  switchAI,
-  switchPrompt,
-} from "@src/config";
-import { redis } from "@src/redis";
+import { availableTools } from "@src/api/aitools";
+import { loadSkills } from "@src/api/loadSkill";
+import redisClient from "@src/config";
 import { getImageBuffer, uploadImageToR2 } from "@src/s3";
 import {
   ImageFile,
@@ -19,7 +9,8 @@ import {
   useMessage,
   getConfigValue,
 } from "alemonjs";
-const value = getConfigValue();
+import { log } from "console";
+const value = getConfigValue().aiChat || {};
 
 const selects = onSelects(["message.create", "private.message.create"]);
 // inline regex checks are used in-place; keep `test` as shorthand
@@ -30,14 +21,21 @@ export default onResponse(selects, async (e, next) => {
 
   // 测试
   if (test.test(e.msg)) {
-    let img =
-      "https://imgen.x.ai/xai-imgen/xai-tmp-imgen-597ead9b-8db9-4f43-a501-ee4f32d9b4d0.jpeg";
+    // 1. 获取技能列表（简要信息）
+    const skills = loadSkills();
+    console.log(skills);
 
-    if (img.startsWith("https://imgen.x.ai")) {
-      img = img.replace("https://imgen.x.ai", value.xaiImgProxy);
-    }
+    log(JSON.stringify(e, null, 2));
 
-    message.send(format(Text("测试消息"), ImageURL(img)));
+    message.send(format(Text("测试消息")));
+    // let img =
+    //   "https://imgen.x.ai/xai-imgen/xai-tmp-imgen-597ead9b-8db9-4f43-a501-ee4f32d9b4d0.jpeg";
+
+    // if (img.startsWith("https://imgen.x.ai")) {
+    //   img = img.replace("https://imgen.x.ai", value.xaiImgProxy);
+    // }
+
+    // message.send(format(Text("测试消息"), ImageURL(img)));
     // const a = await availableTools.StableDiffusionGenerateImage({
     //   prompt: "a cat playing with a ball",
     // });
@@ -74,7 +72,7 @@ export default onResponse(selects, async (e, next) => {
     }
 
     const [, , name, host, key, model] = match;
-    await addAI(e.guid, name, host, key, model);
+    await redisClient.addAI(e.guid, name, host, key, model);
     message.send(format(Text(`AI ${name} 添加成功！`)));
   }
 
@@ -88,7 +86,7 @@ export default onResponse(selects, async (e, next) => {
       return;
     }
     const [, , , , name] = match;
-    const ai = await switchAI(e.guid, name.trim());
+    const ai = await redisClient.switchAI(e.guid, name.trim());
     if (!ai) {
       message.send(format(Text(`切换失败，未找到 AI ${name} !`)));
       return;
@@ -119,7 +117,7 @@ export default onResponse(selects, async (e, next) => {
       return;
     }
     const [, , name, content] = match;
-    await addPrompt(name, content);
+    await redisClient.addPrompt(name, content);
     message.send(format(Text(`提示词 ${name} 添加成功！`)));
     return;
   }
@@ -134,7 +132,7 @@ export default onResponse(selects, async (e, next) => {
       return;
     }
     const [, , , , name] = match;
-    await deletePrompt(name);
+    await redisClient.deletePrompt(name);
     message.send(format(Text(`提示词 ${name} 删除成功！`)));
     return;
   }
@@ -149,7 +147,7 @@ export default onResponse(selects, async (e, next) => {
       return;
     }
     const [, , , name] = match;
-    const prompt = await switchPrompt(e.guid, name);
+    const prompt = await redisClient.switchPrompt(e.guid, name);
     message.send(
       format(Text(`已切换到提示词 ${name} !\n`), Text(prompt || "")),
     );
@@ -158,7 +156,7 @@ export default onResponse(selects, async (e, next) => {
 
   // 清空提示词
   if (/(\/|#)清空提示词$/i.test(e.msg)) {
-    await switchPrompt(e.guid, "");
+    await redisClient.switchPrompt(e.guid, "");
     message.send(format(Text("已清空提示词 !")));
     return;
   }
@@ -173,7 +171,7 @@ export default onResponse(selects, async (e, next) => {
       return;
     }
     const [, , name] = match;
-    const success = await deleteAI(name.trim());
+    const success = await redisClient.deleteAI(name.trim());
     if (!success) {
       message.send(format(Text(`删除失败，未找到 AI ${name} !`)));
       return;
@@ -195,14 +193,14 @@ export default onResponse(selects, async (e, next) => {
     }
     const [, , action] = match;
     const enable = action === "开启" || action === "启用";
-    await affectionSwitch(e.guid, enable);
+    await redisClient.setAffectionSwitch(e.guid, enable);
     message.send(format(Text(`已${enable ? "开启" : "关闭"}好感度功能 !`)));
     return;
   }
 
   // 设置聊天开关 ,发送开启聊天时, 获取ai列表的第一个ai配置, 并切换到该配置
-  if (/(\/|#)(开启|关闭)聊天$/i.test(e.msg)) {
-    const match = e.msg.match(/(\/|#)(开启|关闭)聊天$/i);
+  if (/(\/|#)(开启|关闭)(全部)?聊天$/i.test(e.msg)) {
+    const match = e.msg.match(/(\/|#)(开启|关闭)(全部)?聊天$/i);
     if (!match) {
       message.send(
         format(Text("格式错误，请按照 格式：/开启聊天 或 /关闭聊天 进行设置")),
@@ -212,13 +210,13 @@ export default onResponse(selects, async (e, next) => {
     const [, , action, isAll] = match;
     const enable = action === "开启";
     if (enable) {
-      const aiList = await getAIList();
+      const aiList = await redisClient.getAIList();
       if (aiList.length === 0) {
         message.send(format(Text("当前没有可用的AI配置，请先添加AI配置！")));
         return;
       }
 
-      const aiInfo = await getAIConfig(e.guid);
+      const aiInfo = await redisClient.getAIConfig(e.guid);
       if (aiInfo.model) {
         message.send(
           format(Text(`聊天功能已开启，当前AI为 ${aiInfo.model} !`)),
@@ -226,20 +224,15 @@ export default onResponse(selects, async (e, next) => {
         return;
       }
 
-      await switchAI(e.guid, aiList[0]);
+      await redisClient.switchAI(e.guid, aiList[0]);
       message.send(format(Text(`已开启聊天功能，当前AI为 ${aiList[0]} !`)));
     } else {
       if (isAll) {
         // 如果是关闭全部聊天，则清空所有AI配置
-        // await redis.del(`ai:config:*`);
-        await redis.keys(`ai:config:*`).then((keys) => {
-          if (keys.length > 0) {
-            redis.del(keys);
-          }
-        });
+        await redisClient.closeAllChat();
         message.send(format(Text("已关闭聊天功能 !")));
       } else {
-        await switchAI(e.guid, "");
+        await redisClient.closeChat(e.guid);
         message.send(format(Text("已关闭聊天功能 !")));
       }
     }
@@ -261,7 +254,7 @@ export default onResponse(selects, async (e, next) => {
     }
     const [, , action] = match;
     const enable = action === "开启";
-    await redis.set(`chat:tts:response:${e.guid}`, enable ? "1" : "0");
+    await redisClient.setTTSResponseSwitch(e.guid, enable);
     message.send(format(Text(`已${enable ? "开启" : "关闭"}语音回复功能 !`)));
     return;
   }
@@ -277,7 +270,7 @@ export default onResponse(selects, async (e, next) => {
     }
     const [, , action] = match;
     const enable = action === "开启";
-    await redis.set(`chat:tools:response:${e.guid}`, enable ? "1" : "0");
+    await redisClient.setToolSwitch(e.guid, enable);
     message.send(
       format(
         Text(
@@ -305,7 +298,7 @@ export default onResponse(selects, async (e, next) => {
       );
       return;
     }
-    await redis.set(`chat:image:bed`, bedName.trim());
+    await redisClient.switchImageBed(e.guid, bedName.trim());
     message.send(format(Text(`已切换图床至 ${bedName.trim()} !`)));
     return;
   }
@@ -324,19 +317,19 @@ export default onResponse(selects, async (e, next) => {
       return;
     }
     const [, , aiName, modelName] = match;
-    const aiList = await getAIList();
+    const aiList = await redisClient.getAIList();
     if (!aiList.includes(aiName.trim())) {
       message.send(format(Text(`未找到 AI ${aiName.trim()} !`)));
       return;
     }
-    await switchAI(e.guid, aiName.trim());
-    const aiInfo = await getAIConfig(e.guid);
+    await redisClient.switchAI(e.guid, aiName.trim());
+    const aiInfo = await redisClient.getAIConfig(e.guid);
     if (!aiInfo.model) {
       message.send(format(Text(`切换失败，未找到 AI ${aiName.trim()} !`)));
       return;
     }
     aiInfo.model = modelName.trim();
-    await addAI(
+    await redisClient.addAI(
       e.guid,
       aiName.trim(),
       aiInfo.host,
@@ -362,13 +355,13 @@ export default onResponse(selects, async (e, next) => {
       return;
     }
     const [, , modelName] = match;
-    const aiInfo = await getAIConfig(e.guid);
+    const aiInfo = await redisClient.getAIConfig(e.guid);
     if (!aiInfo.model) {
       message.send(format(Text(`当前没有可用的 AI 配置！`)));
       return;
     }
     aiInfo.model = modelName.trim();
-    redis.set(`ai:config:${e.guid}`, JSON.stringify(aiInfo));
+    await redisClient.setAIConfig(e.guid, aiInfo);
     message.send(
       format(Text(`已将当前 AI 的模型修改为 ${modelName.trim()} !`)),
     );
@@ -390,7 +383,7 @@ export default onResponse(selects, async (e, next) => {
     }
     const [, , action] = match;
     const enable = action === "开启";
-    await redis.set(`chat:complex:response:${e.guid}`, enable ? "1" : "0");
+    await redisClient.setComplexOutput(e.guid, enable);
     message.send(format(Text(`已${enable ? "开启" : "关闭"}复杂输出功能 !`)));
     return;
   }
@@ -399,9 +392,9 @@ export default onResponse(selects, async (e, next) => {
   if (
     /(\/|#)(关闭|禁止|不可以|不允许|开启|可以|允许)(涩涩|色色)$/i.test(e.msg)
   ) {
-    // if (!e.IsMaster || String(e.UserId) != "3501869534") {
-    //   return;
-    // }
+    if (!e.IsMaster || String(e.UserId) != "3501869534") {
+      return;
+    }
     const match = e.msg.match(
       /(\/|#)(关闭|禁止|不可以|不允许|开启|可以|允许)(涩涩|色色)$/i,
     );
@@ -415,7 +408,7 @@ export default onResponse(selects, async (e, next) => {
     console.log("涩涩action", action);
 
     const enable = /(关闭|禁止|不可以|不允许)/.test(action) ? false : true;
-    await redis.set(`chat:r18:response:${e.guid}`, enable ? "1" : "0");
+    await redisClient.setR18Switch(e.guid, enable);
     message.send(format(Text(`已${enable ? "允许" : "禁止"}涩涩功能 !`)));
     return;
   }
@@ -433,6 +426,26 @@ export default onResponse(selects, async (e, next) => {
     } else {
       message.send(format(Text("未获取到 Ollama 模型列表！")));
     }
+    return;
+  }
+
+  // 设置主动搭话
+  if (/(\/|#)(关闭|开启)主动(搭话|回复)$/i.test(e.msg)) {
+    const match = e.msg.match(/(\/|#)(关闭|开启)主动(搭话|回复)$/i);
+    if (!match) {
+      message.send(
+        format(
+          Text(
+            "格式错误，请按照 格式：/开启主动搭话 或 /关闭主动搭话 进行设置",
+          ),
+        ),
+      );
+      return;
+    }
+    const [, , action] = match;
+    const enable = action === "开启";
+    await redisClient.setProactiveSwitch(e.guid, enable);
+    message.send(format(Text(`已${enable ? "开启" : "关闭"}主动搭话功能 !`)));
     return;
   }
 
