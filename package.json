@@ -12,8 +12,7 @@
     "review": "npx alemonc start",
     "start": "npx pm2 startOrRestart pm2.config.cjs",
     "stop": "npx pm2 stop pm2.config.cjs",
-    "delete": "npx pm2 delete pm2.config.cjs",
-    "update": "npm publish"
+    "delete": "npx pm2 delete pm2.config.cjs"
   },
   "devDependencies": {
     "@alemonjs/bubble": "^2.1.9",
@@ -26,20 +25,6 @@
     "lvyjs": "^0.2.25",
     "pm2": "^5",
     "tailwindcss": "3"
-  },
-  "export": {
-    ".": "./lib/index.js",
-    "./package": "./package.json",
-    "./desktop": "./lib/desktop.js"
-  },
-  "exports": {
-    ".": "./lib/index.js",
-    "./package": "./package.json",
-    "./desktop": "./lib/desktop.js"
-  },
-  "publishConfig": {
-    "registry": "https://registry.npmjs.org",
-    "access": "public"
   },
   "repository": {
     "type": "gitee",
