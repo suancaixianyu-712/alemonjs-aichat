@@ -349,6 +349,15 @@ class db {
   async setProactiveSwitch(guid: string, enable: boolean): Promise<void> {
     await this.redis.set(`ai:proactive:switch:${guid}`, enable ? "1" : "0");
   }
+
+  /** 深度思考 */
+  async getDeepThoughtSwitch(guid: string): Promise<string> {
+    return (await this.redis.get(`ai:deep_thought:switch:${guid}`)) || "0";
+  }
+
+  async setDeepThoughtSwitch(guid: string, enable: boolean): Promise<void> {
+    await this.redis.set(`ai:deep_thought:switch:${guid}`, enable ? "1" : "0");
+  }
 }
 
 const configValue = getConfigValue();

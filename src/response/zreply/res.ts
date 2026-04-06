@@ -28,7 +28,7 @@ let ttsClient: TTSClient;
 let currentModel = "派蒙-默认"; // 默认音色
 
 export default onResponse(selects, async (e, next) => {
-  console.log("e.UserId", e.UserId, e.bot.user_id);
+  console.log("e.UserId", e.UserId, e.bot);
 
   // 如果是命令则跳过
   if (
@@ -45,7 +45,15 @@ export default onResponse(selects, async (e, next) => {
   const isOpenTTSReply = await redisClient.getTTSResponseSwitch(e.guid); // TTS回复开关
   const isOpenR18 = await redisClient.getR18Switch(e.guid); // R18开关
   const proactiveSwitch = await redisClient.getProactiveSwitch(e.guid); // 主动搭话开关
-  console.log("isOpenR18", isOpenR18, "proactiveSwitch", proactiveSwitch);
+  const deepThoughtSwitch = await redisClient.getDeepThoughtSwitch(e.guid); // 深度思考开关
+  console.log(
+    "isOpenR18",
+    isOpenR18,
+    "proactiveSwitch",
+    proactiveSwitch,
+    "deepThoughtSwitch",
+    deepThoughtSwitch,
+  );
 
   const skills = loadSkills(); // 加载技能列表
   // 创建消息
@@ -151,6 +159,7 @@ ${botName}:[]
 当前群号:${e.guid}
 当前群名称:${e.GroupName || "无"}
 当前聊天平台:${e.Platform}
+${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
 `;
 
   // 如果没有配置AI,则不处理
@@ -237,7 +246,7 @@ ${botName}:[]
   // 过滤掉下载失败的图片
   const validImageUrls = imageurls.filter((img) => img !== null);
 
-  console.log("validImageUrls", validImageUrls);
+  // console.log("validImageUrls", validImageUrls);
 
   // 处理艾特
   if (e.at && e.at.length > 0) {
@@ -298,271 +307,280 @@ ${botName}:[]
   console.log("处理后的消息", JSON.stringify(usermessage, null, 2));
   console.log("好感度列表", affections);
 
-  const openai = new OpenAi({
-    baseURL: config.host,
-    apiKey: config.key,
-    timeout: 300000,
-  });
+  try {
+    const openai = new OpenAi({
+      baseURL: config.host,
+      apiKey: config.key,
+      timeout: 300000,
+    });
 
-  let messages = [
-    {
-      role: "system",
-      content: systemPrompt,
-    },
-    {
-      role: "system",
-      content: config.systemPrompt || "",
-    },
-    ...historyMessages,
-    { ...usermessage },
-  ];
+    let messages = [
+      {
+        role: "system",
+        content: systemPrompt,
+      },
+      {
+        role: "system",
+        content: config.systemPrompt || "",
+      },
+      ...historyMessages,
+      { ...usermessage },
+    ];
 
-  const isTool = await redisClient.getToolSwitch(e.guid);
+    const isTool = await redisClient.getToolSwitch(e.guid);
 
-  const createParams = {
-    model: config.model,
-    messages: messages,
-  };
+    const createParams = {
+      model: config.model,
+      messages: messages,
+    };
 
-  if (isTool === "1") {
-    createParams["tools"] = tools;
-    createParams["tool_choice"] = "auto";
-  }
-
-  createParams["stream"] = true;
-  const stream = (await openai.chat.completions.create(createParams)) as any;
-
-  let fullContent = "";
-  let toolCalls: any[] = [];
-
-  for await (const chunk of stream) {
-    const delta = chunk.choices?.[0]?.delta;
-    if (!delta) continue;
-
-    if (delta.content) {
-      fullContent += delta.content;
+    if (isTool === "1") {
+      createParams["tools"] = tools;
+      createParams["tool_choice"] = "auto";
+    }
+    if (deepThoughtSwitch === "0") {
+      createParams["verbosity"] = "low";
     }
 
-    if (delta.tool_calls) {
-      for (const tc of delta.tool_calls) {
-        if (tc.index !== undefined) {
-          if (!toolCalls[tc.index]) {
-            toolCalls[tc.index] = {
-              id: tc.id || "",
-              type: "function",
-              function: { name: "", arguments: "" },
-            };
+    createParams["stream"] = true;
+
+    const stream = (await openai.chat.completions.create(createParams)) as any;
+
+    let fullContent = "";
+    let toolCalls: any[] = [];
+
+    for await (const chunk of stream) {
+      const delta = chunk.choices?.[0]?.delta;
+      if (!delta) continue;
+
+      if (delta.content) {
+        fullContent += delta.content;
+      }
+
+      if (delta.tool_calls) {
+        for (const tc of delta.tool_calls) {
+          if (tc.index !== undefined) {
+            if (!toolCalls[tc.index]) {
+              toolCalls[tc.index] = {
+                id: tc.id || "",
+                type: "function",
+                function: { name: "", arguments: "" },
+              };
+            }
+            if (tc.id) toolCalls[tc.index].id = tc.id;
+            if (tc.function?.name)
+              toolCalls[tc.index].function.name += tc.function.name;
+            if (tc.function?.arguments)
+              toolCalls[tc.index].function.arguments += tc.function.arguments;
           }
-          if (tc.id) toolCalls[tc.index].id = tc.id;
-          if (tc.function?.name)
-            toolCalls[tc.index].function.name += tc.function.name;
-          if (tc.function?.arguments)
-            toolCalls[tc.index].function.arguments += tc.function.arguments;
         }
       }
     }
-  }
 
-  let res: any = {
-    choices: [
-      {
-        message: {
-          role: "assistant",
-          content: fullContent || null,
-          tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
+    let res: any = {
+      choices: [
+        {
+          message: {
+            role: "assistant",
+            content: fullContent || null,
+            tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
+          },
         },
-      },
-    ],
-  };
+      ],
+    };
 
-  if (!res.choices || res.choices.length === 0) {
-    log("AI未返回内容");
-    return;
-  }
-
-  messages.push(usermessage);
-  await redisClient.addAIChatHistory(e.guid, usermessage);
-
-  // 检查是否有工具调用需要处理
-  while (res.choices[0].message?.tool_calls?.length) {
-    const responseMessage = res.choices[0].message as any;
-
-    // 先处理对话
-    messages.push(responseMessage);
-    await redisClient.addAIChatHistory(e.guid, responseMessage);
-
-    console.log("模型决定调用工具：", responseMessage.tool_calls);
-    for (const toolCall of responseMessage.tool_calls) {
-      const functionName = toolCall.function.name;
-      const functionArgs = JSON.parse(toolCall.function.arguments);
-
-      const functionToCall = availableTools[functionName];
-
-      if (!functionToCall) {
-        console.error(`未找到函数：${functionName}`);
-        continue;
-      }
-
-      // 执行本地函数
-      const functionResult = await functionToCall(functionArgs);
-
-      // 把工具执行结果作为 tool role 消息加回对话
-      messages.push({
-        role: "tool",
-        tool_call_id: toolCall.id,
-        name: functionName,
-        content: JSON.stringify(functionResult),
-      });
-
-      // 记录工具调用结果
-      await redisClient.addAIChatHistory(e.guid, {
-        role: "tool",
-        tool_call_id: toolCall.id,
-        name: functionName,
-        content: JSON.stringify(functionResult),
-      });
-    }
-
-    // 重新请求
-    res = await openai.chat.completions.create({
-      model: config.model,
-      messages: messages,
-      tools,
-      tool_choice: "auto",
-    });
-
-    // 检查是否还有工具调用需要处理
     if (!res.choices || res.choices.length === 0) {
       log("AI未返回内容");
       return;
     }
-  }
 
-  // 如果没有工具调用，处理最终回复
-  let reply = res.choices?.[0]?.message?.content?.trim() || `${botName}:[]`;
-  if (reply === `${botName}:[]`) {
-    log("AI选择不回复");
+    messages.push(usermessage);
+    await redisClient.addAIChatHistory(e.guid, usermessage);
+
+    // 检查是否有工具调用需要处理
+    while (res.choices[0].message?.tool_calls?.length) {
+      const responseMessage = res.choices[0].message as any;
+
+      // 先处理对话
+      messages.push(responseMessage);
+      await redisClient.addAIChatHistory(e.guid, responseMessage);
+
+      console.log("模型决定调用工具：", responseMessage.tool_calls);
+      for (const toolCall of responseMessage.tool_calls) {
+        const functionName = toolCall.function.name;
+        const functionArgs = JSON.parse(toolCall.function.arguments);
+
+        const functionToCall = availableTools[functionName];
+
+        if (!functionToCall) {
+          console.error(`未找到函数：${functionName}`);
+          continue;
+        }
+
+        // 执行本地函数
+        const functionResult = await functionToCall(functionArgs);
+
+        // 把工具执行结果作为 tool role 消息加回对话
+        messages.push({
+          role: "tool",
+          tool_call_id: toolCall.id,
+          name: functionName,
+          content: JSON.stringify(functionResult),
+        });
+
+        // 记录工具调用结果
+        await redisClient.addAIChatHistory(e.guid, {
+          role: "tool",
+          tool_call_id: toolCall.id,
+          name: functionName,
+          content: JSON.stringify(functionResult),
+        });
+      }
+
+      // 重新请求
+      res = await openai.chat.completions.create({
+        model: config.model,
+        messages: messages,
+        tools,
+        tool_choice: "auto",
+      });
+
+      // 检查是否还有工具调用需要处理
+      if (!res.choices || res.choices.length === 0) {
+        log("AI未返回内容");
+        return;
+      }
+    }
+
+    // 如果没有工具调用，处理最终回复
+    let reply = res.choices?.[0]?.message?.content?.trim() || `${botName}:[]`;
+    if (reply === `${botName}:[]`) {
+      log("AI选择不回复");
+      return;
+    }
+
+    console.log("AI回复:\n", reply);
+
+    // 处理消息
+    // 提取ai发送的消息有多少条
+    const replyMessages = reply.split(new RegExp(`${botName}:`, "g")).slice(1);
+
+    const replymessages: { text: string; images: string[] }[] = [];
+    const ttsMessages: { text: string; model: string }[] = [];
+
+    for (const replyMessage of replyMessages) {
+      // 从消息中提取图片
+      const imageRegex = /<img=(.*?)>/g;
+      let match;
+      const imgUrls: string[] = [];
+      while ((match = imageRegex.exec(replyMessage)) !== null) {
+        imgUrls.push(match[1]);
+      }
+
+      // 处理好感度变化（通用和特定用户）
+      const affectionRegex = /<([^<>]*?)好感([+-]\d+)>/g;
+      let affectionMatch: RegExpExecArray | null;
+      while ((affectionMatch = affectionRegex.exec(replyMessage)) !== null) {
+        const nickname = affectionMatch[1] || (e.UserName as string);
+        const change = parseInt(affectionMatch[2], 10);
+        if (!isNaN(change) && change !== 0) {
+          console.log(`检测到对${nickname}的好感变化: ${change}`);
+          await redisClient.incrementAffectionLevel(e.guid, nickname, change);
+        }
+      }
+
+      // 处理语音回复
+      const ttsRegex = /<(tts|音色)=([^>]+)>/gi;
+      let ttsMatch: RegExpExecArray | null;
+
+      while ((ttsMatch = ttsRegex.exec(replyMessage)) !== null) {
+        console.log("检测到语音回复");
+
+        const isTTS = ttsMatch[1].toLowerCase() === "tts";
+        const content = ttsMatch[2].trim();
+        if (isTTS) {
+          ttsMessages.push({ text: content, model: currentModel });
+        } else {
+          currentModel = content;
+        }
+      }
+
+      // 组合消息,添加到replymessages数组中
+      replymessages.push({
+        text: replyMessage.replace(imageRegex, "").replace(ttsRegex, "").trim(),
+        images: imgUrls,
+      });
+    }
+    // 记录对话
+    await redisClient.addAIChatHistory(e.guid, res.choices?.[0].message);
+
+    // 发送消息
+    if (isOpenTTSReply === "1") {
+      // 提前发送语音消息避免等待时间过长
+      ttsClient = new TTSClient();
+      console.log("发送语音", ttsMessages);
+
+      for (const ttsMessage of ttsMessages) {
+        sendTTSMessage(ttsMessage.text, e, ttsClient, ttsMessage.model);
+      }
+    }
+
+    // 处理消息
+    for (let i = 0; i < replymessages.length; i++) {
+      const { text, images } = replymessages[i];
+      const components: any[] = i === 0 ? [Mention(e.UserId)] : [];
+
+      components.push(Text(text));
+
+      for (const img of images) {
+        const isNetworkImage = /^https?:\/\//.test(img);
+        let finalImg: string | null = img;
+
+        // 👉 scbbs 平台处理（下载再上传）
+        if (e.Platform == "scbbs" && isNetworkImage) {
+          const uploadedUrl = await uploadImageToR2(
+            img.replace(
+              "https://imgen.x.ai",
+              value.xaiImgProxy || "https://imgen.x.ai",
+            ),
+          );
+          finalImg = uploadedUrl || null;
+        }
+
+        // 👉 审核逻辑（只在开启时执行）
+        if (isOpenR18 !== "1" && finalImg) {
+          try {
+            if (res?.conclusion === "不合规") {
+              components.push(ImageFile(errorimg));
+              continue;
+            }
+          } catch (err) {}
+        }
+
+        // 👉 正常图片逻辑
+        if (finalImg) {
+          const imageComponent = isNetworkImage
+            ? ImageURL(finalImg)
+            : ImageFile(finalImg);
+          components.push(imageComponent);
+        } else {
+          // 上传失败 fallback
+          components.push(ImageFile(errorimg));
+        }
+      }
+
+      // 随机 1-3 秒延迟
+      const delay = Math.random() * 2000 + 1000;
+      await new Promise((resolve) => setTimeout(resolve, delay));
+
+      await message.send(format(...components));
+    }
     return;
+  } catch (error) {
+    console.error("AI回复出错", error);
+    message.send(format(Text("AI回复出错了呢~\n" + error)));
+    next();
   }
-
-  console.log("AI回复:\n", reply);
-
-  // 处理消息
-  // 提取ai发送的消息有多少条
-  const replyMessages = reply.split(new RegExp(`${botName}:`, "g")).slice(1);
-
-  const replymessages: { text: string; images: string[] }[] = [];
-  const ttsMessages: { text: string; model: string }[] = [];
-
-  for (const replyMessage of replyMessages) {
-    // 从消息中提取图片
-    const imageRegex = /<img=(.*?)>/g;
-    let match;
-    const imgUrls: string[] = [];
-    while ((match = imageRegex.exec(replyMessage)) !== null) {
-      imgUrls.push(match[1]);
-    }
-
-    // 处理好感度变化（通用和特定用户）
-    const affectionRegex = /<([^<>]*?)好感([+-]\d+)>/g;
-    let affectionMatch: RegExpExecArray | null;
-    while ((affectionMatch = affectionRegex.exec(replyMessage)) !== null) {
-      const nickname = affectionMatch[1] || (e.UserName as string);
-      const change = parseInt(affectionMatch[2], 10);
-      if (!isNaN(change) && change !== 0) {
-        console.log(`检测到对${nickname}的好感变化: ${change}`);
-        await redisClient.incrementAffectionLevel(e.guid, nickname, change);
-      }
-    }
-
-    // 处理语音回复
-    const ttsRegex = /<(tts|音色)=([^>]+)>/gi;
-    let ttsMatch: RegExpExecArray | null;
-
-    while ((ttsMatch = ttsRegex.exec(replyMessage)) !== null) {
-      console.log("检测到语音回复");
-
-      const isTTS = ttsMatch[1].toLowerCase() === "tts";
-      const content = ttsMatch[2].trim();
-      if (isTTS) {
-        ttsMessages.push({ text: content, model: currentModel });
-      } else {
-        currentModel = content;
-      }
-    }
-
-    // 组合消息,添加到replymessages数组中
-    replymessages.push({
-      text: replyMessage.replace(imageRegex, "").replace(ttsRegex, "").trim(),
-      images: imgUrls,
-    });
-  }
-  // 记录对话
-  await redisClient.addAIChatHistory(e.guid, res.choices?.[0].message);
-
-  // 发送消息
-  if (isOpenTTSReply === "1") {
-    // 提前发送语音消息避免等待时间过长
-    ttsClient = new TTSClient();
-    console.log("发送语音", ttsMessages);
-
-    for (const ttsMessage of ttsMessages) {
-      sendTTSMessage(ttsMessage.text, e, ttsClient, ttsMessage.model);
-    }
-  }
-
-  // 处理消息
-  for (let i = 0; i < replymessages.length; i++) {
-    const { text, images } = replymessages[i];
-    const components: any[] = i === 0 ? [Mention(e.UserId)] : [];
-
-    components.push(Text(text));
-
-    for (const img of images) {
-      const isNetworkImage = /^https?:\/\//.test(img);
-      let finalImg: string | null = img;
-
-      // 👉 scbbs 平台处理（下载再上传）
-      if (e.Platform == "scbbs" && isNetworkImage) {
-        const uploadedUrl = await uploadImageToR2(
-          img.replace(
-            "https://imgen.x.ai",
-            value.xaiImgProxy || "https://imgen.x.ai",
-          ),
-        );
-        finalImg = uploadedUrl || null;
-      }
-
-      // 👉 审核逻辑（只在开启时执行）
-      if (isOpenR18 !== "1" && finalImg) {
-        try {
-          if (res?.conclusion === "不合规") {
-            components.push(ImageFile(errorimg));
-            continue;
-          }
-        } catch (err) {}
-      }
-
-      // 👉 正常图片逻辑
-      if (finalImg) {
-        const imageComponent = isNetworkImage
-          ? ImageURL(finalImg)
-          : ImageFile(finalImg);
-        components.push(imageComponent);
-      } else {
-        // 上传失败 fallback
-        components.push(ImageFile(errorimg));
-      }
-    }
-
-    // 随机 1-3 秒延迟
-    const delay = Math.random() * 2000 + 1000;
-    await new Promise((resolve) => setTimeout(resolve, delay));
-
-    await message.send(format(...components));
-  }
-
-  return;
 });
 
 export async function sendTTSMessage(

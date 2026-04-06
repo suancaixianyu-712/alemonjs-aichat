@@ -7,7 +7,7 @@ const selects = onSelects(["message.create", "private.message.create"]);
 // 中间件
 export default onMiddleware(selects, async (event, next) => {
   const config = getConfigValue().aiChat || {};
-  // console.log("原始事件:", event.value);
+  console.log("原始事件:", event.value);
 
   // 新增字段
   event["user_id"] = event.UserId; // 用户QQ号
@@ -56,12 +56,41 @@ export default onMiddleware(selects, async (event, next) => {
     console.log("onebot");
 
     // 获取客户端
-    const [client] = useClient(event, API);
+    const [onebotClient] = useClient(event, API);
 
-    const botInfo = await client.getLoginInfo();
+    try {
+      const botInfo = await onebotClient.getLoginInfo();
+      if (!botInfo || !botInfo[0] || botInfo[0].code == 4000) {
+        event["ClientError"] =
+          "onebot平台连接错误, 影响:无法发送语音,无法获取自己的信息,无法获取at用户的信息,这是alemonjs的锅";
+        throw new Error("获取机器人信息失败，数据格式不正确");
+      }
+      event["bot"] = botInfo[0].data ?? {
+        nickname: "小喵酱",
+        user_id: event.BotId,
+      }; // 机器人信息
+    } catch (error) {
+      console.error("获取机器人信息失败，使用默认信息", error);
+      event["bot"] = {
+        nickname: "小喵酱",
+        user_id: event.BotId,
+      }; // 机器人信息
+    }
 
-    event["self_id"] = event.value.self_id; // 机器人QQ号
+    event["self_id"] = event.BotId; // 机器人QQ号
     event["originalMsg"] = event.value.message; // 原始消息内容
+
+    // 判断是否为群管理员
+    event["isAdmin"] =
+      event.value.sender.role === "admin" ||
+      event.value.sender.role === "owner";
+
+    event["nickname"] =
+      event.value.sender.role === "admin"
+        ? "[管理员]" + event["nickname"]
+        : event.value.sender.role === "owner"
+          ? "[群主]" + event["nickname"]
+          : event["nickname"]; // 群管理员或群主添加前缀
 
     // 处理at消息
     event["at"] = await Promise.all(
@@ -70,45 +99,62 @@ export default onMiddleware(selects, async (event, next) => {
           (item: { type: string; data: { qq: number } }) => item.type === "at",
         )
         .map(async (item: { type: string; data: { qq: number } }) => {
-          const atInfo = await client.send({
-            action: "get_stranger_info",
-            params: { user_id: item.data.qq, no_cache: true },
-          });
+          console.log("item", item);
+          try {
+            const atInfo = await onebotClient.send({
+              action: "get_stranger_info",
+              params: { user_id: item.data.qq, no_cache: true },
+            });
 
-          return {
-            type: "at",
-            data: { qq: item.data.qq, nickname: atInfo[0].data.nickname },
-          };
+            if (!atInfo || !atInfo[0] || atInfo[0].code == 4000) {
+              throw new Error("获取QQ昵称失败，数据格式不正确");
+            }
+
+            return {
+              type: "at",
+              data: { qq: item.data.qq, nickname: atInfo[0].data.nickname },
+            };
+          } catch (error) {
+            console.error(`获取QQ ${item.data.qq} 的昵称失败`, error);
+            return {
+              type: "at",
+              data: {
+                qq: item.data.qq,
+                nickname: `[${String(item.data.qq) == event.BotId ? event["bot"].nickname : "无法获取昵称"}](${item.data.qq})`,
+              },
+            };
+          }
         }),
     );
 
     // 是否at机器人
-    event["atBot"] = event["at"].find((item) => item.data.qq == event.self_id);
+    event["atBot"] = event["at"].find((item) => item.data.qq == event.BotId);
 
     // 处理图片消息
     event["img"] = event.value.message
       .filter((item) => item.type === "image" || item.type === "Image")
       .map((item) => item.data.url);
 
-    // 判断是否为群管理员
-    event["isAdmin"] =
-      event.value.sender.role === "admin" ||
-      event.value.sender.role === "owner";
-    event["bot"] = botInfo[0].data; // 机器人信息
-
     // 处理回复消息
     const replyData = event.value.message.find((item) => item.type === "reply");
     if (replyData) {
-      const msg = await client.getMsg({
+      const msg = await onebotClient.getMsg({
         message_id: Number(replyData.data.id),
       });
 
-      console.log("msg[0].data;", JSON.stringify(msg[0].data, null, 2));
-      if (msg && msg[0] && msg[0].data) {
-        event["reply"] = msg[0].data;
-        if (msg[0].data.sender.user_id == event.self_id) {
-          event["atBot"] = true;
+      try {
+        if (!msg || !msg[0] || msg[0].code == 4000) {
+          throw new Error("获取回复消息失败，数据格式不正确");
         }
+        console.log("msg[0].data;", JSON.stringify(msg[0].data, null, 2));
+        if (msg && msg[0] && msg[0].data) {
+          event["reply"] = msg[0].data;
+          if (msg[0].data.sender.user_id == event.BotId) {
+            event["atBot"] = true;
+          }
+        }
+      } catch (error) {
+        console.error("获取回复消息失败，数据格式不正确", error);
       }
     }
   }
