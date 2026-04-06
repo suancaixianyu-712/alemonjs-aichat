@@ -10,3 +10,4 @@ yarn.lock
 ._*
 .DS_Store
 /alemonjs-SKILL
+/packages

@@ -15,9 +15,9 @@
     "delete": "npx pm2 delete pm2.config.cjs"
   },
   "devDependencies": {
-    "@alemonjs/bubble": "^2.1.9",
+    "@alemonjs/bubble": "^2.1.10",
     "@alemonjs/db": "^0.0.16",
-    "@alemonjs/onebot": "^2.1.13",
+    "@alemonjs/onebot": "^2.1.14",
     "@types/node": "^22",
     "alemonjs": "2.1.56",
     "cssnano": "^7",
@@ -39,10 +39,14 @@
     "@aws-sdk/client-s3": "^3.975.0",
     "@aws-sdk/s3-request-presigner": "^3.975.0",
     "ai": "^6.0.105",
-    "alemonjs-aichat": "^1.0.18",
+    "alemonjs-aichat": "^1.0.21",
     "mime-types": "^3.0.2",
     "openai": "^6.16.0",
     "sharp": "^0.34.5",
     "zod": "^4.3.6"
-  }
+  },
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ]
 }
