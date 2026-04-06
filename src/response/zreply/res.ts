@@ -406,26 +406,63 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
       await redisClient.addAIChatHistory(e.guid, responseMessage);
 
       console.log("模型决定调用工具：", responseMessage.tool_calls);
+      const useToolsMessage = responseMessage.tool_calls.map((toolCall) => {
+        return `工具调用: ${toolCall.function.name}(${toolCall.function.arguments})`;
+      });
+      const msgId = await message.send(
+        format(Text(useToolsMessage.join("\n"))),
+      );
+      // 30秒后撤回消息
+      setTimeout(() => {
+        message.delete({ messageId: msgId[0].data.message_id });
+      }, 30000);
       for (const toolCall of responseMessage.tool_calls) {
         const functionName = toolCall.function.name;
-        const functionArgs = JSON.parse(toolCall.function.arguments);
+        let functionArgs: any = {};
+
+        try {
+          functionArgs = toolCall.function.arguments
+            ? JSON.parse(toolCall.function.arguments)
+            : {};
+        } catch (err) {
+          console.error(`工具参数解析失败：${functionName}`, err);
+          functionArgs = {};
+        }
 
         const functionToCall = availableTools[functionName];
+        let functionResult: any;
 
         if (!functionToCall) {
           console.error(`未找到函数：${functionName}`);
-          continue;
+          functionResult = {
+            ok: false,
+            error: `未找到函数：${functionName}`,
+          };
+        } else {
+          try {
+            // 执行本地函数
+            functionResult = await functionToCall(functionArgs);
+          } catch (err: any) {
+            console.error(`工具执行失败：${functionName}`, err);
+            functionResult = {
+              ok: false,
+              error: err?.message || String(err) || "工具执行失败",
+            };
+          }
         }
 
-        // 执行本地函数
-        const functionResult = await functionToCall(functionArgs);
+        const toolContent = JSON.stringify(
+          typeof functionResult === "undefined"
+            ? { ok: true, result: null }
+            : functionResult,
+        );
 
         // 把工具执行结果作为 tool role 消息加回对话
         messages.push({
           role: "tool",
           tool_call_id: toolCall.id,
           name: functionName,
-          content: JSON.stringify(functionResult),
+          content: toolContent,
         });
 
         // 记录工具调用结果
@@ -433,7 +470,7 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
           role: "tool",
           tool_call_id: toolCall.id,
           name: functionName,
-          content: JSON.stringify(functionResult),
+          content: toolContent,
         });
       }
 
