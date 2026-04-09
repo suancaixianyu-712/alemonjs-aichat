@@ -449,6 +449,55 @@ export default onResponse(selects, async (e, next) => {
     return;
   }
 
+  // 设置深度思考开关
+  if (/(\/|#)(开启|关闭)深度思考$/i.test(e.msg)) {
+    const match = e.msg.match(/(\/|#)(开启|关闭)深度思考$/i);
+    if (!match) {
+      message.send(
+        format(
+          Text(
+            "格式错误，请按照 格式：/开启深度思考 或 /关闭深度思考 进行设置",
+          ),
+        ),
+      );
+      return;
+    }
+    const [, , action] = match;
+    const enable = action === "开启";
+    await redisClient.setDeepThoughtSwitch(e.guid, enable);
+    message.send(format(Text(`已${enable ? "开启" : "关闭"}深度思考功能 !`)));
+    return;
+  }
+
+  // 设置ai的RAPI模式开关
+  if (/(\/|#)(设置|修改)(ai)?(.*)rapi模式(开启|关闭)$/i.test(e.msg)) {
+    const match = e.msg.match(
+      /(\/|#)(设置|修改)(ai)?(.*)rapi模式(开启|关闭)$/i,
+    );
+    if (!match) {
+      message.send(
+        format(
+          Text(
+            "格式错误，请按照 格式：/设置 rapi模式 开启 或 /设置 rapi模式 关闭 进行设置",
+          ),
+        ),
+      );
+      return;
+    }
+    const [, , , , aiName, action] = match;
+    const enable = action === "开启";
+    if (aiName.trim()) {
+      await redisClient.switchModelRAPI(aiName.trim(), enable);
+      message.send(
+        format(
+          Text(
+            `已${enable ? "开启" : "关闭"} AI ${aiName.trim()} 的 RAPI 模式 !`,
+          ),
+        ),
+      );
+    }
+  }
+
   // 无匹配则继续下一个响应器
   next();
 });

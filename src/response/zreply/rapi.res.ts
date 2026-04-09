@@ -1,0 +1,678 @@
+import { API } from "@alemonjs/onebot";
+import { emojiMap } from "@src/emoji";
+import { uploadImageToR2 } from "@src/s3";
+import {
+  ImageFile,
+  ImageURL,
+  Mention,
+  Text,
+  useClient,
+  useMessage,
+} from "alemonjs";
+import { log } from "console";
+import OpenAi from "openai";
+import { getConfigValue } from "alemonjs";
+import { TTSClient } from "@src/api/tts";
+import { getTimeString } from "@src/api/format";
+import { availableTools, tools } from "@src/api/aitools";
+import { loadSkills } from "@src/api/loadSkill";
+import redisClient from "@src/config";
+import errorimg from "@src/assets/error.png";
+import { imageReview } from "@src/api/review";
+
+const value = getConfigValue().aiChat || {};
+
+export const selects = onSelects(["message.create", "private.message.create"]);
+let ttsClient: TTSClient;
+
+let currentModel = "派蒙-默认"; // 默认音色
+
+// ====================== 新版会话 ID 存储 ======================
+const sessionKey: Record<string, string> = {}; // 按群/用户ID保存会话ID
+// ============================================================
+
+export default onResponse(selects, async (e, next) => {
+  console.log("e.UserId", e.UserId, e.bot);
+
+  // 如果是命令则跳过
+  if (
+    e.msg.startsWith("/") ||
+    e.msg.startsWith("#") ||
+    e.UserId == e.bot.user_id
+  ) {
+    next();
+    return;
+  }
+
+  const complexOutputIsOpen = await redisClient.getComplexOutput(e.guid); // 复杂输出
+  const affectionIsOpen = await redisClient.getAffectionSwitch(e.guid); // 好感度开关
+  const isOpenTTSReply = await redisClient.getTTSResponseSwitch(e.guid); // TTS回复开关
+  const isOpenR18 = await redisClient.getR18Switch(e.guid); // R18开关
+  const proactiveSwitch = await redisClient.getProactiveSwitch(e.guid); // 主动搭话开关
+  const deepThoughtSwitch = await redisClient.getDeepThoughtSwitch(e.guid); // 深度思考开关
+  console.log(
+    "isOpenR18",
+    isOpenR18,
+    "proactiveSwitch",
+    proactiveSwitch,
+    "deepThoughtSwitch",
+    deepThoughtSwitch,
+  );
+
+  const skills = loadSkills(); // 加载技能列表
+  // 创建消息
+  const [message] = useMessage(e);
+  const config = await redisClient.getAIConfig(e.guid);
+  const historyMessages = await redisClient.getAIChatHistory(e.guid);
+  const affections = await redisClient.getAffectionLevelAll(e.guid);
+  const imgs: string[] = [];
+  let rawMessage = e.value.raw_message || e.raw_message || e.msg;
+  const botName = e.bot.nickname || "小咸鱼";
+  const systemPrompt = `
+# AI助手回复规范
+请严格按照以下规范进行回复, 不要添加任何不必要的内容, 也不要删除或修改规范中的任何内容, 以确保回复能够被正确解析和处理
+
+## 技能
+在遇到用户需要执行特定操作时,先获取对应的技能,如果有可用技能,获取该技能,并严格按照技能文档要求的格式调用, 不要添加任何多余的内容, 也不要删除或修改规范中的任何内容, 以确保技能能够被正确解析和处理
+当没有技能可以应对需求时, 就自行挑选合适的工具函数来完成用户的需求
+---
+技能列表:
+${skills.map((skill) => `- ${skill.name}: ${skill.description}`).join("\n")}
+---
+
+## 关于回复格式:
+### 用户发言
+- 格式: [私聊]用户昵称(用户id)(发送时间):消息内容
+当场景为私聊时, 用户昵称前方会出现[私聊]标识
+### 你的回复格式
+格式:
+${botName}:消息内容
+
+消息叠加:
+你可以使用多个叠加, 来模拟发送多条消息, 让聊天显得更真实, 例如:
+${botName}:早上好
+${botName}:吃过早饭了吗
+
+${
+  complexOutputIsOpen === "1"
+    ? `
+发送图片:
+你可以使用<img=图片链接>的方式来发送图片, 允许发送多张图, 例如:
+${botName}:画好了<img=https://example.com/landmarks.jpg>
+支持发送网络图片和相对路径图片, 例如:
+${botName}:这是本地图片<img=./localimage.jpg>
+${botName}:这是网络图片<img=https://example.com/image.jpg>
+注意: 如果有用户问你能不能看动图时, 你要回答只能看到第一帧
+`
+    : ""
+}
+
+${
+  complexOutputIsOpen === "1" && isOpenTTSReply === "1"
+    ? `\n语音回复:
+此能力只能在onebot平台使用, 其他平台请勿使用, 否则会回复失败
+你可以使用语音回复来让你的回复更生动, 例如:
+${botName}:你好呀~<tts=你好呀~>
+可以通过调用GetTTSModels工具函数获取音色列表, 可使用<tts=内容,音色=派蒙-情感>的格式来指定音色,设置一次后, 后面的回复将使用相同的音色, 例如:
+${botName}:这是派蒙的声音哦~<音色=派蒙-默认><tts=这是派蒙的默认声音哦>
+${botName}:现在还是派蒙的声音哦~<tts=现在还是派蒙的声音哦>
+注意: 语音回复会增加回复时间, 请合理使用
+注意: 不可使用列表中不存在的音色, 否则会回复失败
+注意: 在设置音色时只需要指定模的角色名字和情感, 例如模型是"星穹铁道-中文-花火", 则音色应该设置为"花火-情感", 而不是"星穹铁道-中文-花火-情感"
+注意: 使用语音必须用${botName}:开头, 否则不会处理, 例如:
+<tts=你好> 这是错误的格式, 不会被处理
+${botName}:<tts=你好> 这是正确的格式, 会被处理
+
+`
+    : "语音回复: 当前不可用"
+}
+
+${
+  isOpenR18 === "1"
+    ? ""
+    : `
+R18内容:
+当用户发送的消息中包含敏感词时, 提醒用户注意言辞, 并且不回答用户的问题, 务必遵守国家法律法规
+`
+}
+
+
+${
+  affectionIsOpen === "1" && complexOutputIsOpen === "1"
+    ? `好感度系统:
+好感度主要影响回复该用户的语气, 对低好感度的用户破口大骂, 对高好感度的用户温柔以待
+例如增加:
+${botName}:主人你对我真好<好感+1>
+例如减少:
+${botName}:滚一边去吧,傻b<好感-2>
+
+其他情况, 例如指定修改对某个用户的好感:
+${botName}:原来ta是这样的人, 人家以后再也不理ta了<用户昵称好感-1>
+假设对方昵称为'哈基米':
+${botName}:原来ta是这样的人, 人家以后再也不理ta了<哈基米好感-1>`
+    : ""
+}
+
+拒绝回复:
+在讨论中如果你觉得不适合回复或觉得与你无关又或者不感兴趣, 可以直接回复"[]"来拒绝本次回复, 例如:
+${botName}:[]
+
+基础状态信息:
+这里的信息会实时变化,根据需要进行获取使用
+当前群时间:${getTimeString()}
+当前群号:${e.guid}
+当前群名称:${e.GroupName || "无"}
+当前聊天平台:${e.Platform}
+当前框架:alemonjs
+${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
+`;
+
+  // 如果没有配置AI,则不处理
+  if (
+    config.host.trim() === "" ||
+    config.key.trim() === "" ||
+    config.model.trim() === ""
+  ) {
+    return;
+  }
+
+  console.log("e.reply", e.reply);
+
+  // 发消息的人是机器人自己, 则不处理
+  if (e.UserId == e.bot.user_id) {
+    next();
+    return;
+  }
+
+  // 当e.at不存在时,只给20%概率继续执行, 当e.at存在时,概率为40%,当e.atBot存在时,概率为100%
+  const rand = Math.random();
+
+  if (e.Name !== "private.message.create") {
+    if (proactiveSwitch !== "1" && e.at && !e.atBot) {
+      console.log("未开启主动搭话, 跳过AI回复");
+      next();
+      return;
+    }
+    if ((!e.at && rand > 0.1) || (e.at && !e.atBot && rand > 0.2)) {
+      console.log("跳过AI回复");
+      next();
+      return;
+    }
+  }
+
+  // 处理回复图片
+  if (complexOutputIsOpen === "1") {
+    if (e.reply) {
+      const replyImages = e.reply.message
+        .filter((item) => item.type === "image")
+        .map((item) => item.data.url);
+      imgs.push(...replyImages);
+      const replyAt = e.reply.message
+        .filter((item) => item.type === "at")
+        .map((item) => item.data);
+      const replyContent = e.reply.message
+        .filter((item) => item.type === "text")
+        .map((item) => item.data.text)
+        .join("");
+
+      if (replyAt.length > 0) {
+        for (const atItem of replyAt) {
+          const qq = atItem.qq;
+          const nickname = atItem.nickname || "未知昵称";
+          const cqAt = `[CQ:at,qq=${qq}]`;
+          rawMessage = rawMessage.replace(cqAt, `@${nickname}`);
+        }
+      }
+
+      rawMessage = rawMessage.replace(/\[CQ:image,[^\]]+\]/g, "[图片]");
+      rawMessage = `[回复:${replyContent}]` + "\n" + rawMessage;
+    }
+
+    // 处理图片
+    if (e.img && e.img.length > 0) {
+      console.log("有图片");
+
+      for (const imgUrl of e.img) {
+        imgs.push(imgUrl);
+      }
+    }
+  }
+
+  console.log("开始回复");
+
+  // 下载图片并转换为 Base64
+  const imageurls = await Promise.all(
+    imgs.map(async (imageUrl) => {
+      return await uploadImageToR2(imageUrl);
+    }),
+  );
+  // 过滤掉下载失败的图片
+  const validImageUrls = imageurls.filter((img) => img !== null);
+
+  // 处理艾特
+  if (e.at && e.at.length > 0) {
+    console.log("有艾特");
+    for (const atItem of e.at) {
+      const qq = atItem.data.qq;
+      const nickname = atItem.data.nickname || "未知昵称";
+      const cqAt = `[CQ:at,qq=${qq}]`;
+      rawMessage = rawMessage.replace(cqAt, `@${nickname}`);
+    }
+  }
+
+  let index = 0; // 用于跟踪当前访问的 validImageUrls 的索引
+  rawMessage = rawMessage.replace(/\[CQ:image,[^\]]+\]/g, () => {
+    const imageUrl = validImageUrls[index];
+    index++; // 每次匹配后索引加1
+    return imageUrl ? `![图片${index}](${imageUrl})` : "[图片]";
+  });
+
+  if (/\[CQ:reply,[^\]]+\]/.test(rawMessage)) {
+    rawMessage = rawMessage.replace(/\[CQ:reply,[^\]]+\]/g, "");
+    validImageUrls.map((url) => {
+      rawMessage += `\n![图片](${url})`;
+    });
+  }
+
+  // 处理表情,转为[emojiMap[id]]
+  rawMessage = rawMessage.replace(
+    /\[CQ:face,id=(\d+),[^\]]+\]/g,
+    (_match, p1) => {
+      return `[${emojiMap[p1]}]`;
+    },
+  );
+
+  console.log("处理后的消息内容:\n", rawMessage);
+
+  const usermessage = {
+    role: "user",
+    content: [
+      ...validImageUrls.map((url) => ({
+        type: "image_url",
+        image_url: {
+          url: url,
+        },
+      })),
+      {
+        type: "text",
+        text:
+          complexOutputIsOpen === "1"
+            ? JSON.stringify({
+                [`${e.nickname}(${getTimeString()})`]: rawMessage,
+              })
+            : `${e.nickname}(${getTimeString()}): ${rawMessage}`,
+      },
+    ],
+  };
+
+  console.log("处理后的消息", JSON.stringify(usermessage, null, 2));
+  console.log("好感度列表", affections);
+
+  try {
+    const openai = new OpenAi({
+      baseURL: config.host,
+      apiKey: config.key,
+      timeout: 300000,
+    });
+
+    let messages = [
+      {
+        role: "system",
+        content: systemPrompt + `\n性格约束:${config.systemPrompt}`,
+      },
+      ...historyMessages,
+      { ...usermessage },
+    ];
+
+    const isTool = await redisClient.getToolSwitch(e.guid);
+
+    // ====================== 新版请求参数 ======================
+    let createParams: any = {
+      model: config.model,
+      stream: true,
+    };
+
+    // 如果有会话ID，直接带上（新版复用会话）
+    if (sessionKey[e.guid]) {
+      createParams.session_id = sessionKey[e.guid];
+    } else {
+      // 没有会话ID才传完整消息
+      createParams.messages = messages;
+    }
+
+    // 工具开关
+    if (isTool === "1") {
+      createParams.tools = tools;
+      createParams.tool_choice = "auto";
+    }
+
+    // 深度思考开关
+    if (deepThoughtSwitch === "0") {
+      createParams.verbosity = "low";
+    }
+    // ==========================================================
+
+    // ====================== 新版流式请求 ======================
+    const stream = await openai.chat.completions.create(createParams);
+    // ==========================================================
+
+    let fullContent = "";
+    let toolCalls: any[] = [];
+
+    for await (const chunk of stream) {
+      // 保存会话 ID（你的要求）
+      if (chunk.session_id) {
+        sessionKey[e.guid] = chunk.session_id;
+      }
+
+      const delta = chunk.choices?.[0]?.delta;
+      if (!delta) continue;
+
+      if (delta.content) {
+        fullContent += delta.content;
+      }
+
+      if (delta.tool_calls) {
+        for (const tc of delta.tool_calls) {
+          if (tc.index !== undefined) {
+            if (!toolCalls[tc.index]) {
+              toolCalls[tc.index] = {
+                id: tc.id || "",
+                type: "function",
+                function: { name: "", arguments: "" },
+              };
+            }
+            if (tc.id) toolCalls[tc.index].id = tc.id;
+            if (tc.function?.name)
+              toolCalls[tc.index].function.name += tc.function.name;
+            if (tc.function?.arguments)
+              toolCalls[tc.index].function.arguments += tc.function.arguments;
+          }
+        }
+      }
+    }
+
+    let res: any = {
+      choices: [
+        {
+          message: {
+            role: "assistant",
+            content: fullContent || null,
+            tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
+          },
+        },
+      ],
+    };
+
+    if (!res.choices || res.choices.length === 0) {
+      log("AI未返回内容");
+      return;
+    }
+
+    messages.push(usermessage);
+    await redisClient.addAIChatHistory(e.guid, usermessage);
+
+    // 检查是否有工具调用需要处理
+    while (res.choices[0].message?.tool_calls?.length) {
+      const responseMessage = res.choices[0].message as any;
+
+      // 先处理对话
+      messages.push(responseMessage);
+      await redisClient.addAIChatHistory(e.guid, responseMessage);
+
+      console.log("模型决定调用工具：", responseMessage.tool_calls);
+      const useToolsMessage = responseMessage.tool_calls.map((toolCall) => {
+        return `工具调用: ${toolCall.function.name}(${toolCall.function.arguments})`;
+      });
+      const msgId = await message.send(
+        format(Text(useToolsMessage.join("\n"))),
+      );
+      // 30秒后撤回消息
+      setTimeout(() => {
+        message.delete({ messageId: msgId[0].data.message_id });
+      }, 30000);
+      for (const toolCall of responseMessage.tool_calls) {
+        const functionName = toolCall.function.name;
+        let functionArgs: any = {};
+
+        try {
+          functionArgs = toolCall.function.arguments
+            ? JSON.parse(toolCall.function.arguments)
+            : {};
+        } catch (err) {
+          console.error(`工具参数解析失败：${functionName}`, err);
+          functionArgs = {};
+        }
+
+        const functionToCall = availableTools[functionName];
+        let functionResult: any;
+
+        if (!functionToCall) {
+          console.error(`未找到函数：${functionName}`);
+          functionResult = {
+            ok: false,
+            error: `未找到函数：${functionName}`,
+          };
+        } else {
+          try {
+            // 执行本地函数
+            functionResult = await functionToCall(functionArgs);
+          } catch (err: any) {
+            console.error(`工具执行失败：${functionName}`, err);
+            functionResult = {
+              ok: false,
+              error: err?.message || String(err) || "工具执行失败",
+            };
+          }
+        }
+
+        const toolContent = JSON.stringify(
+          typeof functionResult === "undefined"
+            ? { ok: true, result: null }
+            : functionResult,
+        );
+
+        // 把工具执行结果作为 tool role 消息加回对话
+        messages.push({
+          role: "tool",
+          tool_call_id: toolCall.id,
+          name: functionName,
+          content: toolContent,
+        });
+
+        // 记录工具调用结果
+        await redisClient.addAIChatHistory(e.guid, {
+          role: "tool",
+          tool_call_id: toolCall.id,
+          name: functionName,
+          content: toolContent,
+        });
+      }
+
+      // ====================== 新版工具循环请求 ======================
+      res = await openai.chat.completions.create({
+        model: config.model,
+        session_id: sessionKey[e.guid], // 必须带会话ID
+        tools,
+        tool_choice: "auto",
+      });
+      // ==============================================================
+
+      // 检查是否还有工具调用需要处理
+      if (!res.choices || res.choices.length === 0) {
+        log("AI未返回内容");
+        return;
+      }
+    }
+
+    // 如果没有工具调用，处理最终回复
+    let reply = res.choices?.[0]?.message?.content?.trim() || `${botName}:[]`;
+    if (reply === `${botName}:[]`) {
+      log("AI选择不回复");
+      return;
+    }
+
+    console.log("AI回复:\n", reply);
+
+    // 处理消息
+    // 提取ai发送的消息有多少条
+    const replyMessages = reply.split(new RegExp(`${botName}:`, "g")).slice(1);
+
+    const replymessages: { text: string; images: string[] }[] = [];
+    const ttsMessages: { text: string; model: string }[] = [];
+
+    for (const replyMessage of replyMessages) {
+      // 从消息中提取图片
+      const imageRegex = /<img=(.*?)>/g;
+      let match;
+      const imgUrls: string[] = [];
+      while ((match = imageRegex.exec(replyMessage)) !== null) {
+        imgUrls.push(match[1]);
+      }
+
+      // 处理好感度变化（通用和特定用户）
+      const affectionRegex = /<([^<>]*?)好感([+-]\d+)>/g;
+      let affectionMatch: RegExpExecArray | null;
+      while ((affectionMatch = affectionRegex.exec(replyMessage)) !== null) {
+        const nickname = affectionMatch[1] || (e.UserName as string);
+        const change = parseInt(affectionMatch[2], 10);
+        if (!isNaN(change) && change !== 0) {
+          console.log(`检测到对${nickname}的好感变化: ${change}`);
+          await redisClient.incrementAffectionLevel(e.guid, nickname, change);
+        }
+      }
+
+      // 处理语音回复
+      const ttsRegex = /<(tts|音色)=([^>]+)>/gi;
+      let ttsMatch: RegExpExecArray | null;
+
+      while ((ttsMatch = ttsRegex.exec(replyMessage)) !== null) {
+        console.log("检测到语音回复");
+
+        const isTTS = ttsMatch[1].toLowerCase() === "tts";
+        const content = ttsMatch[2].trim();
+        if (isTTS) {
+          ttsMessages.push({ text: content, model: currentModel });
+        } else {
+          currentModel = content;
+        }
+      }
+
+      // 组合消息,添加到replymessages数组中
+      replymessages.push({
+        text: replyMessage.replace(imageRegex, "").replace(ttsRegex, "").trim(),
+        images: imgUrls,
+      });
+    }
+    // 记录对话
+    await redisClient.addAIChatHistory(e.guid, res.choices?.[0].message);
+
+    // 发送消息
+    if (isOpenTTSReply === "1") {
+      // 提前发送语音消息避免等待时间过长
+      ttsClient = new TTSClient();
+      console.log("发送语音", ttsMessages);
+
+      for (const ttsMessage of ttsMessages) {
+        sendTTSMessage(ttsMessage.text, e, ttsClient, ttsMessage.model);
+      }
+    }
+
+    // 处理消息
+    for (let i = 0; i < replymessages.length; i++) {
+      const { text, images } = replymessages[i];
+      const components: any[] = i === 0 ? [Mention(e.UserId)] : [];
+
+      components.push(Text(text));
+
+      for (const img of images) {
+        const isNetworkImage = /^https?:\/\//.test(img);
+        let finalImg: string | null = img;
+
+        // 👉 scbbs 平台处理（下载再上传）
+        if (e.Platform == "scbbs" && isNetworkImage) {
+          const uploadedUrl = await uploadImageToR2(
+            img.replace(
+              "https://imgen.x.ai",
+              value.xaiImgProxy || "https://imgen.x.ai",
+            ),
+          );
+          finalImg = uploadedUrl || null;
+        }
+
+        // 👉 审核逻辑（只在开启时执行）
+        if (isOpenR18 !== "1" && finalImg) {
+          try {
+            if (res?.conclusion === "不合规") {
+              components.push(ImageFile(errorimg));
+              continue;
+            }
+          } catch (err) {}
+        }
+
+        // 👉 正常图片逻辑
+        if (finalImg) {
+          const imageComponent = isNetworkImage
+            ? ImageURL(finalImg)
+            : ImageFile(finalImg);
+          components.push(imageComponent);
+        } else {
+          // 上传失败 fallback
+          components.push(ImageFile(errorimg));
+        }
+      }
+
+      // 随机 1-3 秒延迟
+      const delay = Math.random() * 2000 + 1000;
+      await new Promise((resolve) => setTimeout(resolve, delay));
+
+      await message.send(format(...components));
+    }
+    return;
+  } catch (error) {
+    console.error("AI回复出错", error);
+    message.send(format(Text("AI回复出错了呢~\n" + error)));
+    // 出错清空会话，防止异常
+    delete sessionKey[e.guid];
+    next();
+  }
+});
+
+export async function sendTTSMessage(
+  message: any,
+  e: any,
+  ttsClient: TTSClient,
+  modelAndEmotion: string,
+) {
+  const [model, emotion] = modelAndEmotion.split("-");
+  console.log("message", message, "model", model, "emotion", emotion);
+
+  await ttsClient.setModel(model || "派蒙", emotion || "默认");
+  // 发送TTS语音
+  ttsClient.getAudio(message).then(async (audio) => {
+    console.log("audio", audio);
+
+    if (audio) {
+      try {
+        if (e.Platform == "onebot") {
+          const [client] = useClient(e, API);
+
+          await client.sendMessage({
+            message_type: e.value.message_type,
+            group_id: e.value.group_id ?? undefined,
+            message: [
+              {
+                type: "record",
+                data: {
+                  file: audio.audio_url,
+                },
+              },
+            ],
+          });
+        }
+      } catch (error) {
+        console.log(error);
+      }
+    }
+  });
+}

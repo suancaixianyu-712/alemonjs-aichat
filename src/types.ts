@@ -25,4 +25,5 @@ export interface AIConfig {
   temperature: number;
   max_tokens: number;
   systemPrompt: string;
+  rapi: boolean;
 }

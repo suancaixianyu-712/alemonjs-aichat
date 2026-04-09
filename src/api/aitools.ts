@@ -206,6 +206,23 @@ export const tools: ChatCompletionTool[] = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "EvalCode",
+      description: "执行JavaScript代码",
+      parameters: {
+        type: "object",
+        properties: {
+          code: {
+            type: "string",
+            description: "要执行的JavaScript代码",
+          },
+        },
+        required: ["code"],
+      },
+    },
+  },
 ];
 
 export const availableTools = {
@@ -660,6 +677,27 @@ export const availableTools = {
     });
   },
 
+  /**
+   * 执行eval
+   * @param code 代码字符串
+   * @returns 执行结果
+   */
+  EvalCode: async ({ code }) => {
+    try {
+      // eslint-disable-next-line no-eval
+      const result = eval(code);
+      return result;
+    } catch (error) {
+      console.error(`Error executing code: ${error}`);
+      return `Error: ${error}`;
+    }
+  },
+
+  /**
+   * 获取技能详情
+   * @param skillName 技能名称
+   * @returns 技能详情
+   */
   getSKILLDetail: async ({ skillName }) => {
     const skill = loadSkillDetail(skillName);
     return skill;

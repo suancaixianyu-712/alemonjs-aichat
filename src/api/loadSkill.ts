@@ -6,9 +6,13 @@ import { getConfigValue } from "alemonjs";
 const value = getConfigValue().aiChat || {};
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
 
-// 获取技能列表的简介和名称
-export const loadSkills = () => {
-  const skillsDir = path.join(currentDir, "../../skills");
+// 通用函数: 根据路径获取技能列表
+export const loadSkillsFromPath = (skillsDir: string) => {
+  if (!fs.existsSync(skillsDir)) {
+    console.warn(`技能目录 ${skillsDir} 不存在`);
+    return [];
+  }
+
   const skillFolders = fs.readdirSync(skillsDir).filter((file) => {
     const skillPath = path.join(skillsDir, file);
     return fs.statSync(skillPath).isDirectory();
@@ -38,9 +42,27 @@ export const loadSkills = () => {
     }
   });
 
-  console.log(`加载技能: ${skills.length}个`);
-
   return skills;
+};
+
+// 获取技能列表的简介和名称
+export const loadSkills = () => {
+  const skillsDir = path.join(currentDir, "../../skills");
+  const skills = loadSkillsFromPath(skillsDir);
+  const externalSkills = loadExternalSkills();
+  const allSkills = [...skills, ...externalSkills];
+
+  // 根据name和description去重
+  const uniqueSkills = allSkills.filter(
+    (skill, index, self) =>
+      index ===
+      self.findIndex(
+        (s) => s.name === skill.name && s.description === skill.description,
+      ),
+  );
+
+  console.log(`加载技能: ${uniqueSkills.length}个`);
+  return uniqueSkills;
 };
 
 // 获取某个技能的详情, 通过技能名称匹配对应文件夹下的所有md文件,将内容一并返回
@@ -73,4 +95,21 @@ export const loadSkillDetail = (skillName: string) => {
     name: skillName,
     details,
   };
+};
+
+// 加载外部skills, 通过配置文件中的skills_dir字段指定技能目录,读取该目录下的技能文件夹,并将其内容解析成对象返回
+export const loadExternalSkills = () => {
+  if (Array.isArray(value.skills_dir)) {
+    // 如果是数组,加载所有目录下的技能
+    const allSkills = value.skills_dir.flatMap((dir: string) => {
+      return loadSkillsFromPath(dir);
+    });
+    console.log(`加载外部技能: ${allSkills.length}个`);
+    return allSkills;
+  }
+
+  const skillsDir = value.skills_dir || path.join(currentDir, "../../skills");
+  const skills = loadSkillsFromPath(skillsDir);
+  console.log(`加载外部技能: ${skills.length}个`);
+  return skills;
 };

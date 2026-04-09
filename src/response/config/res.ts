@@ -16,6 +16,7 @@ export default onResponse(selects, async (e, next) => {
     const affectionIsOpen = await redisClient.getAffectionSwitch(e.guid); // 好感度开关
     const isOpenTTSReply = await redisClient.getTTSResponseSwitch(e.guid); // TTS回复开关
     const toolsIsOpen = await redisClient.getToolSwitch(e.guid); // 工具开关
+    const deepThinkingIsOpen = await redisClient.getDeepThoughtSwitch(e.guid); // 深度思考开关
     const aiList = await redisClient.getAIList();
 
     // 发送消息
@@ -27,6 +28,7 @@ export default onResponse(selects, async (e, next) => {
         Text(`复杂输出: ${complexResponse == "1" ? "开启" : "关闭"}\n`),
         Text(`好感度开关: ${affectionIsOpen == "1" ? "开启" : "关闭"}\n`),
         Text(`TTS回复开关: ${isOpenTTSReply == "1" ? "开启" : "关闭"}\n`),
+        Text(`深度思考: ${deepThinkingIsOpen == "1" ? "默认" : "关闭"}\n`),
         Text(`模型: ${config.model || "未设置"}\n`),
         Text(`提示词: ${config.systemPrompt || "未设置"}\n`),
         Text(`AI数量: ${aiList.length ? aiList.length : "暂无AI配置"}`),

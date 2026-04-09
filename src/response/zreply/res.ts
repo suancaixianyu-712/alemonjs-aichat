@@ -39,6 +39,11 @@ export default onResponse(selects, async (e, next) => {
     next();
     return;
   }
+  const config = await redisClient.getAIConfig(e.guid);
+  // if (config.rapi) {
+  //   next();
+  //   return;
+  // }
 
   const complexOutputIsOpen = await redisClient.getComplexOutput(e.guid); // 复杂输出
   const affectionIsOpen = await redisClient.getAffectionSwitch(e.guid); // 好感度开关
@@ -58,7 +63,6 @@ export default onResponse(selects, async (e, next) => {
   const skills = loadSkills(); // 加载技能列表
   // 创建消息
   const [message] = useMessage(e);
-  const config = await redisClient.getAIConfig(e.guid);
   const historyMessages = await redisClient.getAIChatHistory(e.guid);
   const affections = await redisClient.getAffectionLevelAll(e.guid);
   const imgs: string[] = [];
@@ -159,6 +163,7 @@ ${botName}:[]
 当前群号:${e.guid}
 当前群名称:${e.GroupName || "无"}
 当前聊天平台:${e.Platform}
+当前框架:alemonjs
 ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
 `;
 
@@ -317,11 +322,7 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
     let messages = [
       {
         role: "system",
-        content: systemPrompt,
-      },
-      {
-        role: "system",
-        content: config.systemPrompt || "",
+        content: systemPrompt + `\n性格约束:${config.systemPrompt}`,
       },
       ...historyMessages,
       { ...usermessage },
@@ -329,7 +330,7 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
 
     const isTool = await redisClient.getToolSwitch(e.guid);
 
-    const createParams = {
+    const createParams: any = {
       model: config.model,
       messages: messages,
     };

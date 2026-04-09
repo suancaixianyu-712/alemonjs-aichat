@@ -13,6 +13,7 @@ class db {
     temperature: 0.7,
     max_tokens: 150,
     systemPrompt: "",
+    rapi: false,
   };
 
   constructor(redisConfig?: RedisOptions) {
@@ -159,6 +160,18 @@ class db {
     aiConfig.systemPrompt = currentConfig.systemPrompt;
     await this.setAIConfig(guid, aiConfig);
     return aiConfig;
+  }
+
+  /** 切换AI的RAPI模式 */
+  async switchModelRAPI(aiName: string, enable: boolean): Promise<void> {
+    const aiConfigStr = await this.redis.get(`ai:list:${aiName}`);
+    if (!aiConfigStr) {
+      console.log("切换失败, 无此模型");
+      return;
+    }
+    const aiConfig = JSON.parse(aiConfigStr) as AIConfig;
+    aiConfig.rapi = enable;
+    await this.setAIList(aiName, aiConfig);
   }
 
   /** 获取提示词列表 */
