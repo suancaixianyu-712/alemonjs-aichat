@@ -3,23 +3,27 @@ aiChat:
   searchApiKey: '63706fc3e6827a90e8219913297b510ff053d5238b24f64251a066e4ecea7408'
   xaiImgProxy: 'http://127.0.0.1:3002/ximgen'
   ttsServer:
-    host: ""
+    host: "http://1.95.85.178:8005"
   redis:
     host: ''
     port: 6379
     password: ''
   baidu:
-    ak: ''
-    sk: ''
+    ak: 'wrzZ0DFaoROq2UBdipOkS5Sv'
+    sk: 'jqUjVh21FRrCMg6WlPiOTxH5ccnSSddM'
+  skills_dir: ['./skills']
 
 login: onebot
+port: 17118
 
 apps:
-  - alemonjs-aichat
-
+  - aichat
+  # - alemonjs-aichat
+ 
 onebot:
-  url: 'ws://127.0.0.1:3001' # 正向url
-  token: '' # access_token
+  url: 'ws://1.95.85.178:3001' # 正向url
+  # url: 'ws://192.168.28.97:3001' # 正向url
+  token: 'xianyu' # access_token
   reverse_enable: false # 启用后正向连接配置失效，地址：ws://127.0.0.1:17158
   reverse_port: 17158 # 返向连接服务端口，启用反向连接后生效
-  master_id: [] # 主人QQ号列表，启用反向连接后生效
+  master_id: ['3501869534'] # 主人QQ号列表，启用反向连接后生效
