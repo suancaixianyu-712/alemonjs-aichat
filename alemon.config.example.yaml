@@ -1,0 +1,32 @@
+# alemon.config.yaml
+
+# 插件配置项，具体配置项说明见插件文档
+aiChat:
+  searchApiKey: '63706fc3e6827a90e8219913297b510ff053d5238b24f64251a066e4ecea7408'
+  xaiImgProxy: 'http://127.0.0.1:3002/ximgen'
+  ttsServer:
+    host: "http://127.0.0.1:8005"
+  redis:
+    host: '127.0.0.1'
+    port: 6379
+    password: ''
+  baidu:
+    ak: ''
+    sk: ''
+  skills_dir: ['./skills']
+
+apps:
+  - alemonjs-aichat
+
+# 登录方式
+# 具体支持的登录方式见https://alemonjs.com/docs/environment
+login: onebot
+ 
+# 连接onebot平台
+# 详细配置请参考https://github.com/lemonade-lab/alemonjs/blob/main/packages/onebot/README.md
+onebot:
+  url: 'ws://127.0.0.1:3001' # 正向url
+  token: '' # access_token
+  reverse_enable: false # 启用后正向连接配置失效，地址：ws://127.0.0.1:17158
+  reverse_port: 17158 # 返向连接服务端口，启用反向连接后生效
+  master_id: ['3501869534'] # 主人QQ号列表
