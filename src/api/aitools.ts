@@ -174,7 +174,7 @@ export const tools: ChatCompletionTool[] = [
   {
     type: "function",
     function: {
-      name: "RunCommand",
+      name: "exec",
       description:
         "执行终端命令, 请勿执行高危险性指令, 例如rm -rf /等, 否则可能会导致服务器数据丢失或系统崩溃. 你可以使用这个工具来执行一些简单的命令, 例如查看当前目录下的文件ls, 查看系统状态top等. 当你想要执行一个命令时, 请提供具体的命令文本, 例如'ls -la'或'top -n 1'. 执行结果将会返回给你, 但请注意, 由于安全限制, 某些命令可能无法执行或返回受限的结果",
       parameters: {
@@ -654,10 +654,10 @@ export const availableTools = {
 
   /**
    * 运行cmd命令
-   * @param command 命令字符串
+   * @param exec 命令字符串
    * @returns 命令执行结果
    */
-  RunCommand: async ({ command }) => {
+  exec: async ({ command }) => {
     const { exec } = await import("child_process");
     return new Promise((resolve) => {
       exec(command, (error, stdout, stderr) => {

@@ -21,13 +21,14 @@ export default onResponse(selects, async (e, next) => {
 
   // 测试
   if (test.test(e.msg)) {
-    // 1. 获取技能列表（简要信息）
-    const skills = loadSkills();
-    console.log(skills);
-
-    log(JSON.stringify(e, null, 2));
-
     message.send(format(Text("测试消息")));
+
+    // 1. 获取技能列表（简要信息）
+    // const skills = loadSkills();
+    // console.log(skills);
+
+    // log(JSON.stringify(e, null, 2));
+
     // let img =
     //   "https://imgen.x.ai/xai-imgen/xai-tmp-imgen-597ead9b-8db9-4f43-a501-ee4f32d9b4d0.jpeg";
 
@@ -405,9 +406,18 @@ export default onResponse(selects, async (e, next) => {
       return;
     }
     const [, , action] = match;
-    console.log("涩涩action", action);
-
     const enable = /(关闭|禁止|不可以|不允许)/.test(action) ? false : true;
+    if (!value.baidu?.ak && !value.baidu?.sk && !enable) {
+      message.send(
+        format(
+          Text(
+            "未配置百度AI审核接口，无法停止涩涩！请在配置文件中添加百度AI的AK和SK。",
+          ),
+        ),
+      );
+      return;
+    }
+
     await redisClient.setR18Switch(e.guid, enable);
     message.send(format(Text(`已${enable ? "允许" : "禁止"}涩涩功能 !`)));
     return;
@@ -498,6 +508,68 @@ export default onResponse(selects, async (e, next) => {
     }
   }
 
-  // 无匹配则继续下一个响应器
+  // 设置仅艾特触发
+  if (/(\/|#)(开启|关闭)仅艾特触发$/i.test(e.msg)) {
+    const match = e.msg.match(/(\/|#)(开启|关闭)仅艾特触发$/i);
+    if (!match) {
+      message.send(
+        format(
+          Text(
+            "格式错误，请按照 格式：/开启仅艾特触发 或 /关闭仅艾特触发 进行设置",
+          ),
+        ),
+      );
+      return;
+    }
+    const [, , action] = match;
+    const enable = action === "开启";
+    await redisClient.setAtTriggerSwitch(e.guid, enable);
+    message.send(format(Text(`已${enable ? "开启" : "关闭"}仅艾特触发功能 !`)));
+    return;
+  }
+
+  // 获取所有ai工具列表
+  if (/(\/|#)工具列表$/i.test(e.msg)) {
+    const tools = await redisClient.getAllToolStatus(e.guid);
+    const toolList = Object.entries(tools)
+      .map(([tool, status]) => `${tool}: ${status === "0" ? "开启" : "关闭"}`)
+      .join("\n");
+    message.send(format(Text(`当前工具列表及状态：\n${toolList}`)));
+
+    return;
+  }
+
+  // 控制工具开关
+  if (/(\/|#)(开启|关闭)工具 (.*)$/i.test(e.msg)) {
+    if (!e.IsMaster || String(e.UserId) != "3501869534") {
+      return;
+    }
+    const match = e.msg.match(/(\/|#)(开启|关闭)工具 (.*)$/i);
+    if (!match) {
+      message.send(
+        format(
+          Text(
+            "格式错误，请按照 格式：/开启工具 <工具名称> 或 /关闭工具 <工具名称> 进行设置",
+          ),
+        ),
+      );
+      return;
+    }
+    const [, , action, toolName] = match;
+    const enable = action === "开启";
+
+    if (enable) {
+      redisClient.enableTool(e.guid, toolName.trim());
+    } else {
+      {
+        redisClient.disableTool(e.guid, toolName.trim());
+      }
+    }
+    message.send(
+      format(Text(`已${enable ? "开启" : "关闭"}工具 ${toolName.trim()} !`)),
+    );
+    return;
+  }
+
   next();
 });

@@ -1,13 +1,12 @@
 import { getConfigValue, useClient } from "alemonjs";
 import { API } from "@alemonjs/onebot";
-import { API as BubbleAPI } from "@alemonjs/bubble";
-// import { API as ScbbsAPI } from "@alemonjs/scbbs";
+import redisClient from "@src/config";
 
 const selects = onSelects(["message.create", "private.message.create"]);
 // 中间件
 export default onMiddleware(selects, async (event, next) => {
   const config = getConfigValue().aiChat || {};
-  console.log("原始事件:", event.value);
+  // console.log("原始事件:", event.value);
 
   // 新增字段
   event["user_id"] = event.UserId; // 用户QQ号
@@ -159,60 +158,63 @@ export default onMiddleware(selects, async (event, next) => {
     }
   }
 
-  // if (event.Platform == "scbbs") {
-  //   const [client] = useClient(event, ScbbsAPI);
+  if (event.Platform == "scbbs") {
+    const ScbbsAPI = await import("@alemonjs/scbbs");
 
-  //   event["msg"] = `${event["msg"]}`; // 消息内容包含at机器人昵称
-  //   event["self_id"] = event.value.toUser.id; // 机器人ID
-  //   event["originalMsg"] = event.value.content; // 原始消息内容
+    const [client] = useClient(event, ScbbsAPI);
 
-  //   event["atBot"] =
-  //     event.name === "private.message.create" && event.Platform == "scbbs";
+    event["msg"] = `${event["msg"]}`; // 消息内容包含at机器人昵称
+    event["self_id"] = event.value.toUser.id; // 机器人ID
+    event["originalMsg"] = event.value.content; // 原始消息内容
 
-  //   // 处理图片消息
-  //   event["img"] = (event.value.content || [])
-  //     .filter((item: { type: string }) => item.type === "image")
-  //     .map((item: { data: { url: string } }) =>
-  //       item.data.url.replace("!/fwfh/368x238", ""),
-  //     );
+    event["atBot"] =
+      event.name === "private.message.create" && event.Platform == "scbbs";
 
-  //   // 判断是否为群管理员
-  //   event["isAdmin"] =
-  //     event.value.author.roles?.filter(
-  //       (role: { id: number }) => role.id == 1 || role.id == 2,
-  //     ).length > 0;
-  //   event["bot"] = {
-  //     nickname: event.value.toUser.nickname,
-  //     user_id: event.value.toUser.id,
-  //   }; // 机器人信息
-  //   event["raw_message"] = event.value.content
-  //     .map((item: { type: string; data: any }) => {
-  //       if (item.type === "text") {
-  //         return item.data.text;
-  //       } else if (item.type === "image") {
-  //         return `[CQ:image,${item.data.url}]`;
-  //       } else if (item.type === "at") {
-  //         return `[CQ:at,qq=${item.data.id}]`;
-  //       } else {
-  //         return `[${item.type.toUpperCase()}]`;
-  //       }
-  //     })
-  //     .join("");
+    // 处理图片消息
+    event["img"] = (event.value.content || [])
+      .filter((item: { type: string }) => item.type === "image")
+      .map((item: { data: { url: string } }) =>
+        item.data.url.replace("!/fwfh/368x238", ""),
+      );
 
-  //   if (event.replyId && event.replyId !== "-1") {
-  //     const replyMsg = await client.getMessage(event.replyId);
-  //     console.log("获取回复", replyMsg);
+    // 判断是否为群管理员
+    event["isAdmin"] =
+      event.value.author.roles?.filter(
+        (role: { id: number }) => role.id == 1 || role.id == 2,
+      ).length > 0;
+    event["bot"] = {
+      nickname: event.value.toUser.nickname,
+      user_id: event.value.toUser.id,
+    }; // 机器人信息
+    event["raw_message"] = event.value.content
+      .map((item: { type: string; data: any }) => {
+        if (item.type === "text") {
+          return item.data.text;
+        } else if (item.type === "image") {
+          return `[CQ:image,${item.data.url}]`;
+        } else if (item.type === "at") {
+          return `[CQ:at,qq=${item.data.id}]`;
+        } else {
+          return `[${item.type.toUpperCase()}]`;
+        }
+      })
+      .join("");
 
-  //     if (replyMsg) {
-  //       event["reply"] = replyMsg[0].data;
-  //       if (replyMsg[0].data.fromUserId == event.self_id) {
-  //         event["atBot"] = true;
-  //       }
-  //     }
-  //   }
-  // }
+    if (event.replyId && event.replyId !== "-1") {
+      const replyMsg = await client.getMessage(event.replyId);
+      console.log("获取回复", replyMsg);
+
+      if (replyMsg) {
+        event["reply"] = replyMsg[0].data;
+        if (replyMsg[0].data.fromUserId == event.self_id) {
+          event["atBot"] = true;
+        }
+      }
+    }
+  }
 
   if (event.Platform == "bubble") {
+    const BubbleAPI = await import("@alemonjs/bubble");
     const CDN_URL = "https://bubble-oss-files.alemonjs.com/";
     const [client] = useClient(event, BubbleAPI);
 
@@ -301,8 +303,14 @@ export default onMiddleware(selects, async (event, next) => {
     }
   }
 
-  // console.log("处理后的事件", JSON.stringify(event, null, 2));
+  const atTriggerSwitch = await redisClient.getAtTriggerSwitch(
+    event.ChannelId ?? event.UserId,
+  );
+  if (atTriggerSwitch === "1" && event.Platform !== "testone") {
+    if (!event["atBot"] && event.name !== "private.message.create") {
+      return;
+    }
+  }
 
-  // 常用于兼容其他框架或增强event功能
   next();
 });

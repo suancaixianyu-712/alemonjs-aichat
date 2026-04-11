@@ -15,16 +15,37 @@ export default function App() {
         <LinkStyleSheet src={css_output} />
       </head>
       <body className="bg-cover p-4" style={{ backgroundImage: `url(${img})` }}>
-        <h2 className="text-2xl text-white font-bold italic drop-shadow-md">
-          {help.title}
-        </h2>
-        <div className="flex gap-2 mb-4 text-white italic drop-shadow-md">
-          <span className="text-[#e8deba] ">
-            {help.name} {help.version}
-          </span>{" "}
-          <span className="text-gray-400">by</span>{" "}
-          <span className="text-[#e8deba] ">{help.by}</span>
+        <div className="relative mb-6">
+          {/* 装饰性背景光晕 */}
+          <div className="absolute -left-4 -top-4 w-24 h-24 bg-purple-400/20 rounded-full blur-2xl -z-0"></div>
+
+          {/* 主标题 */}
+          <h2 className="relative text-3xl font-bold bg-gradient-to-r from-amber-300 via-yellow-200 to-amber-300 bg-clip-text text-transparent drop-shadow-lg tracking-wide">
+            {help.title}
+          </h2>
+
+          {/* 标题底部装饰线 */}
+          <div className="mt-2 flex items-center gap-2">
+            <div className="h-0.5 w-12 bg-gradient-to-r from-amber-400 to-purple-400 rounded-full"></div>
+            <div className="h-0.5 w-20 bg-white/30 rounded-full"></div>
+          </div>
+
+          {/* 副标题信息 - 使用高亮白色 */}
+          <div className="flex items-center gap-2 mt-3 text-sm">
+            <span className="px-2 py-0.5 bg-amber-500/20 rounded-md text-amber-200 font-mono text-xs border border-amber-400/30">
+              {help.name}
+            </span>
+            <span className="text-amber-300 text-xs font-mono font-medium">
+              {help.version}
+            </span>
+            <span className="text-white/50 text-xs">•</span>
+            <span className="text-white/60 text-xs">by</span>
+            <span className="text-amber-200 text-xs font-medium tracking-wide">
+              {help.by}
+            </span>
+          </div>
         </div>
+
         {help.list.map((item, index) => (
           <div
             key={index}

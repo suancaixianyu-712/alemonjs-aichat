@@ -1,13 +1,13 @@
 import { Image, Text, useMessage } from "alemonjs";
-import { renderComponentToBuffer } from "jsxp";
-import Help from "@src/image/conponent/help";
+import { renderComponentIsHtmlToBuffer } from "jsxp";
+import Help from "@src/image/conponent/Help";
 import redisClient from "@src/config";
 
 export const selects = onSelects(["message.create", "private.message.create"]);
 export default onResponse(selects, async (e) => {
   // 创建
   const [message] = useMessage(e);
-  const img = await renderComponentToBuffer("help", Help, {});
+  const img = await renderComponentIsHtmlToBuffer(Help, {});
   if (img) message.send(format(Image(img)));
   const config = await redisClient.getAIConfig(e.guid);
   if (

@@ -61,13 +61,37 @@ export const loadSkills = () => {
       ),
   );
 
-  console.log(`加载技能: ${uniqueSkills.length}个`);
+  // console.log(`加载技能: ${uniqueSkills.length}个`);
   return uniqueSkills;
 };
 
 // 获取某个技能的详情, 通过技能名称匹配对应文件夹下的所有md文件,将内容一并返回
 export const loadSkillDetail = (skillName: string) => {
-  const skillsDir = path.join(currentDir, "../../skills");
+  // 首先检查本地skills目录
+  const localSkillsDir = path.join(currentDir, "../../skills");
+  let result = loadSkillDetailFromPath(localSkillsDir, skillName);
+
+  // 如果本地没有找到,检查外部skills目录
+  if (!result && value.skills_dir) {
+    const externalDirs = Array.isArray(value.skills_dir)
+      ? value.skills_dir
+      : [value.skills_dir];
+
+    for (const dir of externalDirs) {
+      result = loadSkillDetailFromPath(dir, skillName);
+      if (result) break;
+    }
+  }
+
+  return result;
+};
+
+// 从指定路径加载技能详情
+const loadSkillDetailFromPath = (skillsDir: string, skillName: string) => {
+  if (!fs.existsSync(skillsDir)) {
+    return null;
+  }
+
   const skillFolders = fs.readdirSync(skillsDir).filter((file) => {
     const skillPath = path.join(skillsDir, file);
     return fs.statSync(skillPath).isDirectory();
@@ -104,12 +128,12 @@ export const loadExternalSkills = () => {
     const allSkills = value.skills_dir.flatMap((dir: string) => {
       return loadSkillsFromPath(dir);
     });
-    console.log(`加载外部技能: ${allSkills.length}个`);
+    // console.log(`加载外部技能: ${allSkills.length}个`);
     return allSkills;
   }
 
   const skillsDir = value.skills_dir || path.join(currentDir, "../../skills");
   const skills = loadSkillsFromPath(skillsDir);
-  console.log(`加载外部技能: ${skills.length}个`);
+  // console.log(`加载外部技能: ${skills.length}个`);
   return skills;
 };

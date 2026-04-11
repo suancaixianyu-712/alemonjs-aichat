@@ -4,6 +4,7 @@ node_modules
 /logs
 /lib
 /log
+/packages
 *.logs
 *.log
 yarn.lock

@@ -2,7 +2,6 @@ import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import fs from "fs/promises";
 import path from "path";
 import mime from "mime-types";
-import { redis } from "./redis";
 import sharp from "sharp"; // 需要安装: npm install sharp
 import { getConfigValue } from "alemonjs";
 const value = getConfigValue().aiChat || {};
@@ -256,27 +255,15 @@ export const uploadImageToR2 = async (
     processOptions,
   );
 
-  // 3. 获取R2配置
-  const config = (await redis.get(`chat:image:bed`)) || "R2";
-
-  const R2_CONFIG =
-    config == "R2"
-      ? {
-          accessKeyId: "f8f0d360d3156a1667c527c5ea4b18d7",
-          secretAccessKey:
-            "365f44cf6079054ad99923dd32966d0aba4e4d2d24726cadcd0102a7c2e7bc08",
-          bucket: "images",
-          publicDomain: "https://r2img.ccxk.top",
-          endpoint:
-            "https://b24a196dc2ee578845bb555d53812508.r2.cloudflarestorage.com",
-        }
-      : {
-          accessKeyId: "pCLV51yDLbntzsfUkgBSjo5fJSor3nr5",
-          secretAccessKey: "5672e62135be31808f1afbd35862839e",
-          bucket: "schub-image",
-          publicDomain: "https://s3img.suancaixianyu.cn",
-          endpoint: "https://s3.api.upyun.com",
-        };
+  const R2_CONFIG = {
+    accessKeyId: "f8f0d360d3156a1667c527c5ea4b18d7",
+    secretAccessKey:
+      "365f44cf6079054ad99923dd32966d0aba4e4d2d24726cadcd0102a7c2e7bc08",
+    bucket: "images",
+    publicDomain: "https://r2img.ccxk.top",
+    endpoint:
+      "https://b24a196dc2ee578845bb555d53812508.r2.cloudflarestorage.com",
+  };
 
   // 4. 创建S3客户端
   const s3Client = new S3Client({

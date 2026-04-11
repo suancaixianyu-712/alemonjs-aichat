@@ -75,6 +75,8 @@ export default onResponse(selects, async (e, next) => {
 ## 技能
 在遇到用户需要执行特定操作时,先获取对应的技能,如果有可用技能,获取该技能,并严格按照技能文档要求的格式调用, 不要添加任何多余的内容, 也不要删除或修改规范中的任何内容, 以确保技能能够被正确解析和处理
 当没有技能可以应对需求时, 就自行挑选合适的工具函数来完成用户的需求
+
+调用执行脚本类型的工具时, 务必确保脚本安全, 不得执行对服务器有伤害的脚本
 ---
 技能列表:
 ${skills.map((skill) => `- ${skill.name}: ${skill.description}`).join("\n")}
@@ -336,7 +338,7 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
     };
 
     if (isTool === "1") {
-      createParams["tools"] = tools;
+      createParams["tools"] = await redisClient.getAvailableTools(e.guid);
       createParams["tool_choice"] = "auto";
     }
     if (deepThoughtSwitch === "0") {
@@ -441,8 +443,17 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
           };
         } else {
           try {
-            // 执行本地函数
-            functionResult = await functionToCall(functionArgs);
+            if (
+              (await redisClient.getToolStatus(e.guid, functionName)) === "1"
+            ) {
+              console.error(`工具被禁用：${functionName}`);
+              functionResult = {
+                ok: false,
+                error: `工具被禁用：${functionName}`,
+              };
+            } else {
+              functionResult = await functionToCall(functionArgs);
+            }
           } catch (err: any) {
             console.error(`工具执行失败：${functionName}`, err);
             functionResult = {
@@ -616,7 +627,9 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
     return;
   } catch (error) {
     console.error("AI回复出错", error);
-    message.send(format(Text("AI回复出错了呢~\n" + error)));
+    // 清理聊天记录
+    await redisClient.clearLastNChatHistory(e.guid, 5);
+    message.send(format(Text("AI回复出错了, 已清理聊天记录~\n" + error)));
     next();
   }
 });

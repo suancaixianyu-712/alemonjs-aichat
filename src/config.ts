@@ -1,6 +1,7 @@
 import Redis, { RedisOptions } from "ioredis";
 import { getConfigValue } from "alemonjs";
 import { AIConfig } from "./types";
+import { availableTools, tools } from "./api/aitools";
 
 class db {
   redis: Redis;
@@ -151,7 +152,7 @@ class db {
   async switchAI(guid: string, name: string): Promise<AIConfig | null> {
     const aiConfigStr = await this.redis.get(`ai:list:${name}`);
     if (!aiConfigStr) {
-      console.log("切换失败, 无此模型");
+      console.log("切换失败, 无此AI");
       await this.setAIConfig(guid, db.defaultAIConfig);
       return null;
     }
@@ -159,14 +160,22 @@ class db {
     const currentConfig = await this.getAIConfig(guid);
     aiConfig.systemPrompt = currentConfig.systemPrompt;
     await this.setAIConfig(guid, aiConfig);
+
+    // 记录当前切换的ai名字
+    await this.redis.set(`ai:currentAI:${guid}`, name);
     return aiConfig;
+  }
+
+  /** 获取当前使用的AI名称 */
+  async getCurrentAI(guid: string): Promise<string> {
+    return (await this.redis.get(`ai:currentAI:${guid}`)) || "";
   }
 
   /** 切换AI的RAPI模式 */
   async switchModelRAPI(aiName: string, enable: boolean): Promise<void> {
     const aiConfigStr = await this.redis.get(`ai:list:${aiName}`);
     if (!aiConfigStr) {
-      console.log("切换失败, 无此模型");
+      console.log("切换失败, 无此AI");
       return;
     }
     const aiConfig = JSON.parse(aiConfigStr) as AIConfig;
@@ -254,6 +263,15 @@ class db {
     await this.redis.del(`ai:history:${guid}`);
   }
 
+  /** 清理最后的N条聊天记录 */
+  async clearLastNChatHistory(guid: string, n: number): Promise<void> {
+    const history = await this.getAIChatHistory(guid);
+    while (history.length > n) {
+      history.shift();
+    }
+    await this.setAIChatHistory(guid, history);
+  }
+
   /** 获取好感度 */
   async getAffectionLevel(guid: string, userKey: string): Promise<number> {
     const levelStr = await this.redis.get(`ai:affection:${guid}:${userKey}`);
@@ -322,24 +340,13 @@ class db {
 
   /** 设置语音回复开关 */
   async setTTSResponseSwitch(guid: string, enable: boolean): Promise<void> {
-    await this.redis.set(`chat:tts:response:${guid}`, enable ? "1" : "0");
+    await this.redis.set(`ai:tts:response:${guid}`, enable ? "1" : "0");
   }
 
   /** 获取语音回复开关 */
   async getTTSResponseSwitch(guid: string): Promise<string> {
-    const switchStr =
-      (await this.redis.get(`chat:tts:response:${guid}`)) || "0";
+    const switchStr = (await this.redis.get(`ai:tts:response:${guid}`)) || "0";
     return switchStr;
-  }
-
-  /** 设置 bot id */
-  async setBotID(id: string): Promise<void> {
-    await this.redis.set("bot:id", id);
-  }
-
-  /** 获取 bot id */
-  async getBotID(): Promise<string | null> {
-    return await this.redis.get("bot:id");
   }
 
   /** 添加图片URL */
@@ -368,8 +375,82 @@ class db {
     return (await this.redis.get(`ai:deep_thought:switch:${guid}`)) || "0";
   }
 
+  /** 设置深度思考开关 */
   async setDeepThoughtSwitch(guid: string, enable: boolean): Promise<void> {
     await this.redis.set(`ai:deep_thought:switch:${guid}`, enable ? "1" : "0");
+  }
+
+  /** 仅艾特触发 */
+  async getAtTriggerSwitch(guid: string): Promise<string> {
+    return (await this.redis.get(`ai:at_trigger:switch:${guid}`)) || "1";
+  }
+
+  /** 设置仅艾特触发开关 */
+  async setAtTriggerSwitch(guid: string, enable: boolean): Promise<void> {
+    await this.redis.set(`ai:at_trigger:switch:${guid}`, enable ? "1" : "0");
+  }
+
+  /** 禁用工具 */
+  async disableTool(guid: string, toolName: string): Promise<void> {
+    await this.redis.set(`ai:tool:disable:${guid}:${toolName}`, "1");
+  }
+
+  /** 启用工具 */
+  async enableTool(guid: string, toolName: string): Promise<void> {
+    await this.redis.del(`ai:tool:disable:${guid}:${toolName}`);
+  }
+
+  /** 获取工具状态 */
+  async getToolStatus(guid: string, toolName: string): Promise<string> {
+    const status =
+      (await this.redis.get(`ai:tool:disable:${guid}:${toolName}`)) || "0";
+    return status;
+  }
+
+  /** 获取所有工具状态 */
+  async getAllToolStatus(guid: string): Promise<Record<string, string>> {
+    const status: Record<string, string> = {};
+    for (const tool of tools) {
+      const toolName = tool.type === "function" ? tool.function.name : "";
+      status[toolName] = await this.getToolStatus(guid, toolName);
+    }
+    return status;
+  }
+
+  // 获取所有可用工具,返回完整工具
+  async getAvailableTools(guid: string): Promise<any[]> {
+    const toolStatus = await this.getAllToolStatus(guid);
+    const availableTools = tools.filter((tool) => {
+      const toolName = tool.type === "function" ? tool.function.name : "";
+      return !toolStatus[toolName] || toolStatus[toolName] === "0";
+    });
+    return availableTools;
+  }
+
+  /** 装载工具 */
+  async loadTools(guid: string): Promise<string[]> {
+    const toolStatus = await this.getAllToolStatus(guid);
+    const allTools = tools.map((tool) =>
+      tool.type === "function" ? tool.function.name : "",
+    );
+    // 默认禁用的危险工具
+    const defaultDisabledTools = ["exec", "EvalCode"];
+    // 给工具添加默认状态
+    const toolsWithStatus = allTools.map((tool) => ({
+      name: tool,
+      disabled:
+        (toolStatus[tool] && toolStatus[tool] === "1") ||
+        (!toolStatus[tool] && defaultDisabledTools.includes(tool)),
+    }));
+    // 存储工具状态
+    for (const tool of toolsWithStatus) {
+      if (tool.disabled) {
+        await this.disableTool(guid, tool.name);
+      } else {
+        await this.enableTool(guid, tool.name);
+      }
+    }
+    return toolsWithStatus.map((tool) => tool.name);
   }
 }
 

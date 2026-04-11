@@ -61,6 +61,9 @@ export default defineRouter([
       /(\/|#)(关闭|开启)主动(搭话|回复)$/i,
       /(\/|#)(开启|关闭)深度思考$/i,
       /(\/|#)(设置|修改)(ai)?(.*)rapi模式(开启|关闭)$/i,
+      /(\/|#)(开启|关闭)仅艾特触发$/i,
+      /(\/|#)工具列表$/i,
+      /(\/|#)(开启|关闭)工具 (.*)$/i,
       /(\/|#)测试$/i,
     ),
     handler: lazy(() => import("../response/setting/res")),
@@ -89,10 +92,4 @@ export default defineRouter([
     regular: /.*/,
     handler: lazy(() => import("../response/zreply/res")),
   },
-
-  // fallback: zreply - 最低优先级，处理普通对话
-  // {
-  //   regular: /.*/,
-  //   handler: lazy(() => import("../response/zreply/rapi.res")),
-  // },
 ]);

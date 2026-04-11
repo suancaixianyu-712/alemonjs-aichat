@@ -1,5 +1,7 @@
 import redisClient from "@src/config";
-import { Text, useMessage } from "alemonjs";
+import AiConfig from "@src/image/conponent/AiConfig";
+import { Text, useMessage, Image } from "alemonjs";
+import { renderComponentIsHtmlToBuffer } from "jsxp";
 export const selects = onSelects(["message.create", "private.message.create"]);
 
 // inline regex used directly in condition checks
@@ -17,23 +19,45 @@ export default onResponse(selects, async (e, next) => {
     const isOpenTTSReply = await redisClient.getTTSResponseSwitch(e.guid); // TTS回复开关
     const toolsIsOpen = await redisClient.getToolSwitch(e.guid); // 工具开关
     const deepThinkingIsOpen = await redisClient.getDeepThoughtSwitch(e.guid); // 深度思考开关
+    const atTriggerSwitch = await redisClient.getAtTriggerSwitch(e.guid); // 仅艾特触发
+    const currentAI = await redisClient.getCurrentAI(e.guid); // 当前AI名称
     const aiList = await redisClient.getAIList();
 
     // 发送消息
-    message.send(
-      format(
-        Text(`当前AI配置：\n`),
-        Text(`总开关: ${config.model != "" ? "开启" : "关闭"}\n`),
-        Text(`工具: ${toolsIsOpen == "1" ? "开启" : "关闭"}\n`),
-        Text(`复杂输出: ${complexResponse == "1" ? "开启" : "关闭"}\n`),
-        Text(`好感度开关: ${affectionIsOpen == "1" ? "开启" : "关闭"}\n`),
-        Text(`TTS回复开关: ${isOpenTTSReply == "1" ? "开启" : "关闭"}\n`),
-        Text(`深度思考: ${deepThinkingIsOpen == "1" ? "默认" : "关闭"}\n`),
-        Text(`模型: ${config.model || "未设置"}\n`),
-        Text(`提示词: ${config.systemPrompt || "未设置"}\n`),
-        Text(`AI数量: ${aiList.length ? aiList.length : "暂无AI配置"}`),
-      ),
-    );
+
+    const img = await renderComponentIsHtmlToBuffer(AiConfig, {
+      switch: config.model != "",
+      tools: toolsIsOpen == "1",
+      complex: complexResponse == "1",
+      affection: affectionIsOpen == "1",
+      tts: isOpenTTSReply == "1",
+      deep: deepThinkingIsOpen == "1",
+      model: config.model,
+      prompt: config.systemPrompt,
+      atTrigger: atTriggerSwitch == "1",
+      aiList: aiList,
+      currentAI: currentAI,
+    });
+    if (img) {
+      message.send(format(Image(img)));
+    } else {
+      message.send(
+        format(
+          Text(`当前AI配置：\n`),
+          Text(`总开关: ${config.model != "" ? "开启" : "关闭"}\n`),
+          Text(`工具: ${toolsIsOpen == "1" ? "开启" : "关闭"}\n`),
+          Text(`复杂输出: ${complexResponse == "1" ? "开启" : "关闭"}\n`),
+          Text(`好感度开关: ${affectionIsOpen == "1" ? "开启" : "关闭"}\n`),
+          Text(`TTS回复开关: ${isOpenTTSReply == "1" ? "开启" : "关闭"}\n`),
+          Text(`深度思考: ${deepThinkingIsOpen == "1" ? "默认" : "关闭"}\n`),
+          Text(`仅艾特触发: ${atTriggerSwitch == "1" ? "开启" : "关闭"}\n`),
+          Text(`模型: ${config.model || "未设置"}\n`),
+          Text(`提示词: ${config.systemPrompt || "未设置"}\n`),
+          Text(`当前AI: ${currentAI || "未设置"}\n`),
+          Text(`AI数量: ${aiList.length ? aiList.length : "暂无AI配置"}`),
+        ),
+      );
+    }
   }
 
   // 查看AI列表
