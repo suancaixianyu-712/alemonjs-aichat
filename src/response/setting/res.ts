@@ -540,38 +540,6 @@ export default onResponse(selects, async (e, next) => {
     return;
   }
 
-  // 控制工具开关
-  if (/(\/|#)(开启|关闭)工具(.*)$/i.test(e.msg)) {
-    if (!e.IsMaster || String(e.UserId) != "3501869534") {
-      return;
-    }
-    const match = e.msg.match(/(\/|#)(开启|关闭)工具(.*)$/i);
-    if (!match) {
-      message.send(
-        format(
-          Text(
-            "格式错误，请按照 格式：/开启工具 <工具名称> 或 /关闭工具 <工具名称> 进行设置",
-          ),
-        ),
-      );
-      return;
-    }
-    const [, , action, toolName] = match;
-    const enable = action === "开启";
-
-    if (enable) {
-      redisClient.enableTool(e.guid, toolName.trim());
-    } else {
-      {
-        redisClient.disableTool(e.guid, toolName.trim());
-      }
-    }
-    message.send(
-      format(Text(`已${enable ? "开启" : "关闭"}工具 ${toolName.trim()} !`)),
-    );
-    return;
-  }
-
   // 控制工具提示开关
   if (/(\/|#)(开启|关闭)工具(调用)?提示$/i.test(e.msg)) {
     if (!e.IsMaster || String(e.UserId) != "3501869534") {
@@ -645,5 +613,36 @@ export default onResponse(selects, async (e, next) => {
     return;
   }
 
+  // 控制工具开关
+  if (/(\/|#)(开启|关闭)工具(.*)$/i.test(e.msg)) {
+    if (!e.IsMaster || String(e.UserId) != "3501869534") {
+      return;
+    }
+    const match = e.msg.match(/(\/|#)(开启|关闭)工具(.*)$/i);
+    if (!match) {
+      message.send(
+        format(
+          Text(
+            "格式错误，请按照 格式：/开启工具 <工具名称> 或 /关闭工具 <工具名称> 进行设置",
+          ),
+        ),
+      );
+      return;
+    }
+    const [, , action, toolName] = match;
+    const enable = action === "开启";
+
+    if (enable) {
+      redisClient.enableTool(e.guid, toolName.trim());
+    } else {
+      {
+        redisClient.disableTool(e.guid, toolName.trim());
+      }
+    }
+    message.send(
+      format(Text(`已${enable ? "开启" : "关闭"}工具 ${toolName.trim()} !`)),
+    );
+    return;
+  }
   next();
 });
