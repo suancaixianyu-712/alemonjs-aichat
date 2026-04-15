@@ -1,8 +1,7 @@
 import { defineRouter, lazy } from "alemonjs";
 import { Regular } from "alemonjs/utils";
 
-// 路由优先级：exact -> prefix -> regular
-export default defineRouter([
+export const children = [
   // help
   {
     regular: /(\/|#)(ai)?(指令|帮助|菜单|功能)$/i,
@@ -52,7 +51,6 @@ export default defineRouter([
       /(\/|#)(开启|启用|关闭|禁用)好感度$/i,
       /(\/|#)(开启|关闭)(全部)?聊天$/i,
       /(\/|#)(开启|关闭)语音回复$/i,
-      /(\/|#)(开启|关闭)(MCP)?工具$/i,
       /(\/|#)切换图床(.*)$/i,
       /(\/|#)修改 ?(.+) ?模型 ?(.+)$/i,
       /(\/|#)(关闭|开启)复杂(输出|回复)$/i,
@@ -63,7 +61,11 @@ export default defineRouter([
       /(\/|#)(设置|修改)(ai)?(.*)rapi模式(开启|关闭)$/i,
       /(\/|#)(开启|关闭)仅艾特触发$/i,
       /(\/|#)工具列表$/i,
-      /(\/|#)(开启|关闭)工具 (.*)$/i,
+      /(\/|#)(开启|关闭)(MCP)?工具$/i,
+      /(\/|#)(开启|关闭)工具(.*)$/i,
+      /(\/|#)(开启|关闭)工具提示$/i,
+      /(\/|#)(开启|关闭)工具(调用)?提示撤回$/i,
+      /(\/|#)(开启|关闭)工具(调用)?提示详情$/i,
       /(\/|#)测试$/i,
     ),
     handler: lazy(() => import("../response/setting/res")),
@@ -88,8 +90,17 @@ export default defineRouter([
   },
 
   // fallback: zreply - 最低优先级，处理普通对话
+  // {
+  //   regular: /.*/,
+  //   handler: lazy(() => import("../response/zreply/res")),
+  // },
+];
+
+// 路由优先级：exact -> prefix -> regular
+export default defineRouter([
   {
-    regular: /.*/,
-    handler: lazy(() => import("../response/zreply/res")),
+    selects: ["message.create", "private.message.create"],
+    handler: lazy(() => import("../response/mw")),
+    children: children,
   },
 ]);

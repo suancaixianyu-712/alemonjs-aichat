@@ -35,6 +35,9 @@ class db {
     await this.redis.set(`ai:prompt_optimization:${guid}`, value);
   }
 
+  /** --------------------------------------------------------- */
+  /** 工具相关配置 */
+
   /** 获取工具开关状态 */
   async getToolSwitch(guid: string): Promise<string | null> {
     return (await this.redis.get(`ai:tool:switch:${guid}`)) || "1";
@@ -44,6 +47,49 @@ class db {
   async setToolSwitch(guid: string, enable: boolean): Promise<void> {
     await this.redis.set(`ai:tool:switch:${guid}`, enable ? "1" : "0");
   }
+
+  /** 工具调用时是否发送提示 */
+  async getToolPromptSwitch(guid: string): Promise<string | null> {
+    return (await this.redis.get(`ai:tool_prompt:switch:${guid}`)) || "0";
+  }
+
+  /** 设置工具调用提示开关状态 */
+  async setToolPromptSwitch(guid: string, enable: boolean): Promise<void> {
+    await this.redis.set(`ai:tool_prompt:switch:${guid}`, enable ? "1" : "0");
+  }
+
+  /** 工具调用时发送的提示是否撤回 */
+  async getToolPromptRevokeSwitch(guid: string): Promise<string | null> {
+    return (
+      (await this.redis.get(`ai:tool_prompt_revoke:switch:${guid}`)) || "0"
+    );
+  }
+
+  /** 设置工具调用提示撤回开关状态 */
+  async setToolPromptRevokeSwitch(
+    guid: string,
+    enable: boolean,
+  ): Promise<void> {
+    await this.redis.set(
+      `ai:tool_prompt_revoke:switch:${guid}`,
+      enable ? "1" : "0",
+    );
+  }
+
+  /** 工具调用时发送的提示是否显示传参 */
+  async getToolPromptArgsSwitch(guid: string): Promise<string | null> {
+    return (await this.redis.get(`ai:tool_prompt_args:switch:${guid}`)) || "0";
+  }
+
+  /** 设置工具调用提示显示传参开关状态 */
+  async setToolPromptArgsSwitch(guid: string, enable: boolean): Promise<void> {
+    await this.redis.set(
+      `ai:tool_prompt_args:switch:${guid}`,
+      enable ? "1" : "0",
+    );
+  }
+
+  /** --------------------------------------------------------- */
 
   /** 获取复杂输出开关状态 */
   async getComplexOutput(guid: string): Promise<string | null> {
@@ -245,7 +291,7 @@ class db {
   /** 添加聊天历史 */
   async addAIChatHistory(guid: string, data: any): Promise<any[]> {
     const history = await this.getAIChatHistory(guid);
-    while (history.length >= 40) history.shift();
+    // while (history.length >= 40) history.shift();
     history.push(data);
     await this.setAIChatHistory(guid, history);
     return history;

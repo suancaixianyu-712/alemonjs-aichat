@@ -6,6 +6,15 @@ import sharp from "sharp"; // 需要安装: npm install sharp
 import { getConfigValue } from "alemonjs";
 const value = getConfigValue().aiChat || {};
 
+const R2_CONFIG = {
+  accessKeyId: "f8f0d360d3156a1667c527c5ea4b18d7",
+  secretAccessKey:
+    "365f44cf6079054ad99923dd32966d0aba4e4d2d24726cadcd0102a7c2e7bc08",
+  bucket: "images",
+  publicDomain: "https://r2img.ccxk.top",
+  endpoint: "https://b24a196dc2ee578845bb555d53812508.r2.cloudflarestorage.com",
+};
+
 /**
  * 图片处理选项
  */
@@ -255,16 +264,6 @@ export const uploadImageToR2 = async (
     processOptions,
   );
 
-  const R2_CONFIG = {
-    accessKeyId: "f8f0d360d3156a1667c527c5ea4b18d7",
-    secretAccessKey:
-      "365f44cf6079054ad99923dd32966d0aba4e4d2d24726cadcd0102a7c2e7bc08",
-    bucket: "images",
-    publicDomain: "https://r2img.ccxk.top",
-    endpoint:
-      "https://b24a196dc2ee578845bb555d53812508.r2.cloudflarestorage.com",
-  };
-
   // 4. 创建S3客户端
   const s3Client = new S3Client({
     region: "auto",
@@ -300,6 +299,70 @@ export const uploadImageToR2 = async (
     `上传成功: [原始: ${originalContentType}, 转换后: ${contentType}${animatedMessage}]`,
   );
 
+  return publicUrl;
+};
+
+/**
+ * 上传音频或视频文件到 Cloudflare R2，支持本地路径和远程URL
+ * @param {string} filePath - 本地文件路径
+ * @param {string} [key] - 可选，自定义文件名（不含路径），默认用时间戳+随机
+ */
+export const uploadMediaToR2 = async (
+  filePath: string,
+  key?: string,
+): Promise<string> => {
+  // 1. 读取文件数据（支持本地路径和远程URL）
+  let buffer: Buffer;
+  let contentType: string;
+  let originalFileName: string;
+
+  if (filePath.startsWith("http://") || filePath.startsWith("https://")) {
+    // 远程 URL
+    const response = await fetch(filePath);
+    if (!response.ok) throw new Error(`下载文件失败: ${response.statusText}`);
+
+    buffer = Buffer.from(await response.arrayBuffer());
+    contentType =
+      response.headers.get("content-type") ||
+      mime.lookup(filePath) ||
+      "application/octet-stream";
+    originalFileName =
+      path.basename(new URL(filePath).pathname) || `media-${Date.now()}`;
+  } else {
+    // 本地路径
+    buffer = await fs.readFile(filePath);
+    contentType = mime.lookup(filePath) || "application/octet-stream";
+    originalFileName = path.basename(filePath);
+  }
+
+  // 2. 创建S3客户端
+  const s3Client = new S3Client({
+    region: "auto",
+    endpoint: R2_CONFIG.endpoint,
+    credentials: {
+      accessKeyId: R2_CONFIG.accessKeyId,
+      secretAccessKey: R2_CONFIG.secretAccessKey,
+    },
+    maxAttempts: 3,
+  });
+
+  // 3. 生成对象key
+  const extension = path.extname(originalFileName) || "";
+  const objectKey = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}${extension}`;
+
+  // 4. 上传
+  const command = new PutObjectCommand({
+    Bucket: R2_CONFIG.bucket,
+    Key: objectKey,
+    Body: buffer,
+    ContentType: contentType,
+  });
+
+  await s3Client.send(command);
+
+  // 5. 返回公共URL
+  const publicUrl = `${R2_CONFIG.publicDomain}/${objectKey}`;
+  console.log(`上传成功: ${publicUrl} (Content-Type: ${contentType})`);
   return publicUrl;
 };
 

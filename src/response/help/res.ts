@@ -1,6 +1,6 @@
 import { Image, Text, useMessage } from "alemonjs";
 import { renderComponentIsHtmlToBuffer } from "jsxp";
-import Help from "@src/image/conponent/Help";
+import Help from "@src/image/conponent/help";
 import redisClient from "@src/config";
 
 export const selects = onSelects(["message.create", "private.message.create"]);

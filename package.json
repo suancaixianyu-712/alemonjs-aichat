@@ -1,6 +1,6 @@
 {
   "name": "alemonjs-aichat",
-  "version": "1.0.25",
+  "version": "1.0.27",
   "description": "alemonjs-aichat",
   "author": "suancaixianyu",
   "license": "MIT",
@@ -41,16 +41,11 @@
     "registry": "https://registry.npmjs.org",
     "access": "public"
   },
-  "private": true,
-  "workspaces": [
-    "packages/*"
-  ],
   "dependencies": {
     "@ai-sdk/xai": "^3.0.60",
     "@aws-sdk/client-s3": "^3.975.0",
     "@aws-sdk/s3-request-presigner": "^3.975.0",
     "ai": "^6.0.105",
-    "alemonjs-aichat": "^1.0.25",
     "mime-types": "^3.0.2",
     "node-fetch": "^3.3.2",
     "openai": "^6.34.0",

@@ -1,6 +1,8 @@
 import { getConfigValue, useClient } from "alemonjs";
 import { API } from "@alemonjs/onebot";
 import redisClient from "@src/config";
+import { CApiReply } from "@src/response/zreply/capi";
+import { RApiReply } from "@src/response/zreply/rapi";
 
 const selects = onSelects(["message.create", "private.message.create"]);
 // 中间件
@@ -9,15 +11,13 @@ export default onMiddleware(selects, async (event, next) => {
   // console.log("原始事件:", event.value);
 
   // 新增字段
+  event["Xianyu"] = true; // 默认继续执行后续的处理函数
   event["user_id"] = event.UserId; // 用户QQ号
   event["msg"] = event.MessageText; // 消息内容
   event["guid"] = event.ChannelId ?? event.UserId; // 群号或用户QQ号
   event["uidkey"] = `${event["guid"]}:${event.UserName}(${event.UserId})`; // 唯一标识
   event["nickname"] =
-    `${event.name == "private.message.create" ? "[私信]" : ""}${event.UserName}(${event.UserId})`; // 昵称(用户名+QQ号)
-
-  // console.log('event["nickname"]', event["nickname"]);
-  // console.log("event.IsMaster", event.UserId, config.master_id, event.IsMaster);
+    `${event.name === "private.message.create" ? "[私信]" : ""}${event.UserName}(${event.UserId})`; // 昵称(用户名+QQ号)
 
   if (event.Platform == "testone") {
     // 处理图片消息
@@ -308,7 +308,24 @@ export default onMiddleware(selects, async (event, next) => {
   );
   if (atTriggerSwitch === "1" && event.Platform !== "testone") {
     if (!event["atBot"] && event.name !== "private.message.create") {
-      return;
+      event["Xianyu"] = false; // 跳过所有指令,继续执行后续的处理函数
+    }
+  }
+
+  if (event["Xianyu"]) {
+    // 执行ai回复, 方便ai控制后续指令
+    const aiconfig = await redisClient.getAIConfig(event.guid);
+    if (aiconfig && aiconfig.model && aiconfig.key) {
+      const ReplyRes = await CApiReply(event);
+      console.log("res", ReplyRes);
+      if (ReplyRes) {
+        event["Xianyu"] = ReplyRes.next; // 根据AI回复决定是否继续执行后续的处理函数
+
+        if (ReplyRes.commands && ReplyRes.commands.length > 0) {
+          event.MessageText = ReplyRes.commands[0];
+          event["msg"] = ReplyRes.commands[0];
+        }
+      }
     }
   }
 

@@ -531,6 +531,7 @@ export default onResponse(selects, async (e, next) => {
   // 获取所有ai工具列表
   if (/(\/|#)工具列表$/i.test(e.msg)) {
     const tools = await redisClient.getAllToolStatus(e.guid);
+    log("工具列表：", Object.entries(tools));
     const toolList = Object.entries(tools)
       .map(([tool, status]) => `${tool}: ${status === "0" ? "开启" : "关闭"}`)
       .join("\n");
@@ -540,11 +541,11 @@ export default onResponse(selects, async (e, next) => {
   }
 
   // 控制工具开关
-  if (/(\/|#)(开启|关闭)工具 (.*)$/i.test(e.msg)) {
+  if (/(\/|#)(开启|关闭)工具(.*)$/i.test(e.msg)) {
     if (!e.IsMaster || String(e.UserId) != "3501869534") {
       return;
     }
-    const match = e.msg.match(/(\/|#)(开启|关闭)工具 (.*)$/i);
+    const match = e.msg.match(/(\/|#)(开启|关闭)工具(.*)$/i);
     if (!match) {
       message.send(
         format(
@@ -567,6 +568,79 @@ export default onResponse(selects, async (e, next) => {
     }
     message.send(
       format(Text(`已${enable ? "开启" : "关闭"}工具 ${toolName.trim()} !`)),
+    );
+    return;
+  }
+
+  // 控制工具提示开关
+  if (/(\/|#)(开启|关闭)工具(调用)?提示$/i.test(e.msg)) {
+    if (!e.IsMaster || String(e.UserId) != "3501869534") {
+      return;
+    }
+    const match = e.msg.match(/(\/|#)(开启|关闭)工具(调用)?提示$/i);
+    if (!match) {
+      message.send(
+        format(
+          Text(
+            "格式错误，请按照 格式：/开启工具提示 或 /关闭工具提示 进行设置",
+          ),
+        ),
+      );
+      return;
+    }
+    const [, , action] = match;
+    const enable = action === "开启";
+    await redisClient.setToolPromptSwitch(e.guid, enable);
+    message.send(format(Text(`已${enable ? "开启" : "关闭"}工具提示功能 !`)));
+    return;
+  }
+
+  // 控制工具提示撤回开关
+  if (/(\/|#)(开启|关闭)工具(调用)?提示撤回$/i.test(e.msg)) {
+    if (!e.IsMaster || String(e.UserId) != "3501869534") {
+      return;
+    }
+    const match = e.msg.match(/(\/|#)(开启|关闭)工具(调用)?提示撤回$/i);
+    if (!match) {
+      message.send(
+        format(
+          Text(
+            "格式错误，请按照 格式：/开启工具提示撤回 或 /关闭工具提示撤回 进行设置",
+          ),
+        ),
+      );
+      return;
+    }
+    const [, , action] = match;
+    const enable = action === "开启";
+    await redisClient.setToolPromptRevokeSwitch(e.guid, enable);
+    message.send(
+      format(Text(`已${enable ? "开启" : "关闭"}工具提示撤回功能 !`)),
+    );
+    return;
+  }
+
+  // 控制工具调用提示详情开关
+  if (/(\/|#)(开启|关闭)工具(调用)?提示详情$/i.test(e.msg)) {
+    if (!e.IsMaster || String(e.UserId) != "3501869534") {
+      return;
+    }
+    const match = e.msg.match(/(\/|#)(开启|关闭)工具(调用)?提示详情$/i);
+    if (!match) {
+      message.send(
+        format(
+          Text(
+            "格式错误，请按照 格式：/开启工具提示详情 或 /关闭工具提示详情 进行设置",
+          ),
+        ),
+      );
+      return;
+    }
+    const [, , action] = match;
+    const enable = action === "开启";
+    await redisClient.setToolPromptArgsSwitch(e.guid, enable);
+    message.send(
+      format(Text(`已${enable ? "开启" : "关闭"}工具提示详情功能 !`)),
     );
     return;
   }

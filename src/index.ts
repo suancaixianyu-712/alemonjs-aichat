@@ -13,19 +13,11 @@ export default defineChildren({
     logger.info({
       message: "本地测试启动",
     });
-    redis
-      .get("ai:list")
-      .then((value) => {
-        logger.info({
-          message: "Redis连接成功，测试键值已获取",
-          value: value,
-        });
-      })
-      .catch((error) => {
-        logger.error({
-          message: "Redis连接失败",
-          error: error.message,
-        });
+    redis.get("ai:list").catch((error) => {
+      logger.error({
+        message: "Redis连接失败, 大部分功能将无法使用",
+        error: error.message,
       });
+    });
   },
 });

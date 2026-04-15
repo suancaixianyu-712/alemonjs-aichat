@@ -2,6 +2,7 @@ import { API } from "@alemonjs/onebot";
 import { emojiMap } from "@src/emoji";
 import { uploadImageToR2 } from "@src/s3";
 import {
+  Events,
   ImageFile,
   ImageURL,
   Mention,
@@ -40,11 +41,6 @@ export default onResponse(selects, async (e, next) => {
     return;
   }
   const config = await redisClient.getAIConfig(e.guid);
-  // if (config.rapi) {
-  //   next();
-  //   return;
-  // }
-
   const complexOutputIsOpen = await redisClient.getComplexOutput(e.guid); // 复杂输出
   const affectionIsOpen = await redisClient.getAffectionSwitch(e.guid); // 好感度开关
   const isOpenTTSReply = await redisClient.getTTSResponseSwitch(e.guid); // TTS回复开关
@@ -636,7 +632,8 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
 
 export async function sendTTSMessage(
   message: any,
-  e: any,
+  e: Events["message.create"] | Events["private.message.create"],
+
   ttsClient: TTSClient,
   modelAndEmotion: string,
 ) {

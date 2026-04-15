@@ -5,6 +5,7 @@ import { uploadImageToR2 } from "../s3";
 import { TTSClient } from "./tts";
 import { ChatCompletionTool } from "openai/resources";
 import { loadSkillDetail } from "./loadSkill";
+import help from "@src/data/help.json";
 
 const value = getConfigValue().aiChat || {};
 
@@ -220,6 +221,18 @@ export const tools: ChatCompletionTool[] = [
           },
         },
         required: ["code"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "GetCommand",
+      description:
+        "获取当前框架可用的指令, 查看当前框架每个命令的使用方法和说明. 当用户需要获取指令列表时, 可以调用这个工具来获取当前框架可用的指令列表. 例如, 当用户输入'帮助'或'指令列表'等类似的关键词时, 你可以调用这个工具来获取指令列表并回复给用户. 指令列表会包含每个指令的文本和说明, 例如: [{ command: '帮助', description: '获取帮助信息' }, { command: '看看配置', description: '查看当前AI配置' }]",
+      parameters: {
+        type: "object",
+        properties: {},
       },
     },
   },
@@ -701,5 +714,14 @@ export const availableTools = {
   getSKILLDetail: async ({ skillName }) => {
     const skill = loadSkillDetail(skillName);
     return skill;
+  },
+
+  /**
+   * 获取Help命令列表
+   * @returns Help命令列表
+   * 命令列表格式: [{ command: "命令文本", description: "命令说明" }]
+   */
+  GetCommand: async () => {
+    return help;
   },
 };

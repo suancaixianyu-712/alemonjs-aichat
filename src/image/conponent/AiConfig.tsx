@@ -72,8 +72,11 @@ export default function App(data: {
   prompt: string;
   atTrigger: boolean;
   currentAI: string;
-
   aiList: string[];
+  toolList: Record<string, string>;
+  toolPromptSwitch: boolean;
+  toolPromptRevokeSwitch: boolean;
+  toolPromptArgsSwitch: boolean;
 }) {
   return (
     <html>
@@ -124,7 +127,6 @@ export default function App(data: {
             {/* 开关状态组 - 使用网格布局更清晰 */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <StatusItem label="总开关" value={data.switch} />
-              <StatusItem label="工具" value={data.tools} />
               <StatusItem label="复杂输出" value={data.complex} />
               <StatusItem label="好感度开关" value={data.affection} />
               <StatusItem label="语音回复开关" value={data.tts} />
@@ -132,12 +134,25 @@ export default function App(data: {
               <StatusItem label="仅艾特触发" value={data.atTrigger} />
             </div>
 
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 border-t border-white/10 pt-2">
+              <StatusItem label="工具总开关" value={data.tools} />
+              <StatusItem label="工具提示" value={data.toolPromptSwitch} />
+              <StatusItem
+                label="工具提示撤回"
+                value={data.toolPromptRevokeSwitch}
+              />
+              <StatusItem
+                label="工具提示传参"
+                value={data.toolPromptArgsSwitch}
+              />
+            </div>
+
             {/* 模型信息 */}
             <div className="pt-2 border-t border-white/10">
               <div className="flex items-center justify-between py-2">
                 <span className=" text-white/60">当前使用模型</span>
                 <span className="px-3 py-1 bg-blue-500/20 rounded-full  font-mono text-blue-300 border border-blue-500/30">
-                  {data.currentAI || "未设置"} / {data.model || "未设置"}
+                  {data.currentAI || "无法获取"} / {data.model || "未设置"}
                 </span>
               </div>
 
@@ -167,6 +182,30 @@ export default function App(data: {
                   )}
                 </div>
               </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-gradient-to-br from-gray-900/90 to-black/80 backdrop-blur-md rounded-2xl border border-white/20 shadow-xl overflow-hidden mb-4 text-white">
+          <div className="px-5 py-3 bg-white/5 border-b border-white/10 backdrop-blur-sm">
+            <p className="text-base font-medium tracking-wide flex items-center gap-2">
+              <span className="w-1.5 h-1.5 bg-green-400 rounded-full"></span>
+              工具列表
+            </p>
+          </div>
+          <div className="p-5 space-y-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {Object.entries(data.toolList).length ? (
+                Object.entries(data.toolList).map(([tool, status]) => (
+                  <StatusItem
+                    key={`tool-${tool}`}
+                    label={tool}
+                    value={status === "0"}
+                  />
+                ))
+              ) : (
+                <span className=" text-white/40 italic">暂无工具配置</span>
+              )}
             </div>
           </div>
         </div>

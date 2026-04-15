@@ -6,6 +6,7 @@ import {
   useMessage,
   Video,
   Mention,
+  Audio,
 } from "alemonjs";
 import OpenAi from "openai";
 import { sendTTSMessage } from "../zreply/res";
@@ -14,6 +15,7 @@ import { TTSClient } from "@src/api/tts";
 import redisClient from "@src/config";
 import { imageReview } from "@src/api/review";
 import { uploadImageToR2 } from "@src/s3";
+import { createTTSMessage } from "../zreply/tts";
 
 export const selects = onSelects(["message.create", "private.message.create"]);
 // inline regex will be used directly in condition checks
@@ -351,7 +353,14 @@ export default onResponse(selects, async (e) => {
       return;
     }
     const ttsclient = new TTSClient();
-    sendTTSMessage(content, e, ttsclient, `${speaker}-默认`);
+    const audioUrl = await createTTSMessage(
+      content,
+      ttsclient,
+      `${speaker}-默认`,
+    );
+    if (audioUrl !== "") {
+      await message.send(format(Audio(audioUrl)));
+    }
   }
 
   // 安装语音模型
