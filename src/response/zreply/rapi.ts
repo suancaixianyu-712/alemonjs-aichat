@@ -1,8 +1,39 @@
-import { Events, Format, useMessage } from "alemonjs";
+import {
+  Events,
+  useMessage,
+  format,
+  Text,
+  getConfigValue,
+  Audio,
+  Mention,
+  ImageFile,
+  ImageURL,
+} from "alemonjs";
 import OpenAi from "openai";
-import { getChatConfig, shouldSkipAIReply } from "./getChatConfig";
+import {
+  buildUserMessage,
+  getChatConfig,
+  shouldSkipAIReply,
+} from "./getChatConfig";
+import redisClient from "@src/config";
+import { availableTools } from "@src/api/aitools";
+import { TTSClient } from "@src/api/tts";
+import { createTTSMessage } from "./tts";
+import { uploadImageToR2 } from "@src/s3";
+import { imageReview } from "@src/api/review";
+import errorimg from "@src/assets/error.png";
+import {
+  handleTTS,
+  parseAIOutput,
+  parseAIReply,
+  renderMessages,
+  sendReplyMessages,
+} from "./tools";
+import { log } from "console";
 
-const Session = {};
+let currentModel = "派蒙-默认"; // 默认音色
+let ttsClient: TTSClient;
+const value = getConfigValue().aiChat || {};
 
 export const RApiReply = async (
   e: Events["message.create"] | Events["private.message.create"],
@@ -15,31 +46,179 @@ export const RApiReply = async (
   }
 
   const [message] = useMessage();
-  const format = Format.create();
 
-  try {
-    const openai = new OpenAi({
-      baseURL: cfg.config.host,
-      apiKey: cfg.config.key,
-      timeout: 300000,
-    });
-    const response = await openai.responses.create({
+  const openai = new OpenAi({
+    baseURL: cfg.config.host,
+    apiKey: cfg.config.key,
+    timeout: 300000,
+  });
+
+  const usermessage = await buildUserMessage(e, cfg, "rapi");
+
+  let previousResponseId: string | undefined =
+    (await redisClient.getSessionId(e.guid)) ?? undefined;
+
+  console.log(
+    "当前会话id:",
+    previousResponseId,
+    "\n消息构建成功:",
+    usermessage,
+  );
+  // ===============================
+  // 工具循环（RAPI版核心）
+  // ===============================
+  while (true) {
+    const stream = await openai.responses.create({
       model: cfg.config.model,
-      input: e.msg,
+      input: [usermessage as any],
+      instructions: cfg.RapiSystemPrompt,
+      previous_response_id: previousResponseId,
+      tools: cfg.toolConfig.rApiToolList as any,
       stream: true,
+      reasoning: {
+        effort: "minimal",
+      },
     });
 
     let fullText = "";
-    for await (const event of response) {
+    const toolCalls: any[] = [];
+    const toolCallMap = new Map<string, any>();
+
+    // ===============================
+    // 1. 解析流式输出
+    // ===============================
+    for await (const event of stream as any) {
+      // 文本输出
       if (event.type === "response.output_text.delta") {
-        fullText += event.delta;
-        format.addText(event.delta);
+        const text = event.delta ?? "";
+        fullText += text;
+      }
+
+      // 更稳妥：从 output_item.done 读取完整 function_call
+      if (
+        event.type === "response.output_item.done" &&
+        event.item?.type === "function_call"
+      ) {
+        const callId = event.item.call_id;
+        if (callId) {
+          toolCallMap.set(callId, {
+            id: callId,
+            name: event.item.name,
+            arguments: event.item.arguments ?? "{}",
+          });
+        }
+      }
+
+      // 兼容：部分模型会发 function_call_arguments.done
+      if (event.type === "response.function_call_arguments.done") {
+        const callId = event.call_id ?? event.item?.call_id;
+        if (callId) {
+          const prev = toolCallMap.get(callId) ?? {};
+          toolCallMap.set(callId, {
+            id: callId,
+            name: event.name ?? event.item?.name ?? prev.name,
+            arguments: event.arguments ?? prev.arguments ?? "{}",
+          });
+        }
+      }
+
+      // 更新 response id
+      if (event.type === "response.completed") {
+        previousResponseId = event.response?.id ?? previousResponseId;
+      }
+    }
+    if (fullText.trim() !== "") {
+      const output1 = parseAIOutput(fullText);
+      renderMessages(output1, message);
+    }
+
+    toolCalls.push(...toolCallMap.values());
+    console.log("fullText", fullText);
+
+    // ===============================
+    // 2. 没有工具调用 → 直接结束
+    // ===============================
+    if (!toolCalls.length) {
+      break;
+    }
+
+    console.log("模型触发工具调用：", toolCalls);
+
+    // ===============================
+    // 3. 执行工具
+    // ===============================
+    const toolOutputs: any[] = [];
+
+    for (const toolCall of toolCalls) {
+      const functionName = toolCall.name;
+
+      let functionArgs: any = {};
+      try {
+        functionArgs = toolCall.arguments ? JSON.parse(toolCall.arguments) : {};
+      } catch (err) {
+        functionArgs = {};
+      }
+
+      const functionToCall = availableTools[functionName];
+
+      let result: any;
+
+      if (!functionToCall) {
+        result = { ok: false, error: `未找到工具: ${functionName}` };
+      } else {
+        try {
+          result = await functionToCall(functionArgs);
+        } catch (err: any) {
+          result = { ok: false, error: err.message || String(err) };
+        }
+      }
+
+      toolOutputs.push({
+        type: "function_call_output",
+        call_id: toolCall.id,
+        output: JSON.stringify(result),
+      });
+
+      // 可选：工具提示
+      if (cfg.toolConfig.toolPromptSwitch === "1") {
       }
     }
 
-    console.log("fullText", fullText);
-    message.send({ format });
-  } catch (error) {
-    console.error("Error occurred:", error);
+    // ===============================
+    // 4. 回填工具结果，继续下一轮
+    // ===============================
+    const toolResponse = await openai.responses.create({
+      model: cfg.config.model,
+      previous_response_id: previousResponseId,
+      input: toolOutputs,
+      stream: true,
+    });
+
+    let newText = "";
+
+    for await (const event of toolResponse as any) {
+      if (event.type === "response.output_text.delta") {
+        newText += event.delta;
+      }
+
+      if (event.type === "response.completed") {
+        previousResponseId = event.response.id;
+      }
+    }
+
+    // 如果这一轮没有新的工具调用 → 结束
+    if (newText && toolOutputs.length > 0) {
+      log("工具回填后模型回复：", newText);
+      const output2 = parseAIOutput(newText);
+      renderMessages(output2, message);
+      break;
+    }
+  }
+
+  // ===============================
+  // 6. 存 session
+  // ===============================
+  if (previousResponseId) {
+    await redisClient.setSessionId(e.guid, previousResponseId);
   }
 };

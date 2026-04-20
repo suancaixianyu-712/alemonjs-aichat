@@ -2,10 +2,8 @@ import redisClient from "@src/config";
 import AiConfig from "@src/image/conponent/AiConfig";
 import { Text, useMessage, Image } from "alemonjs";
 import { renderComponentIsHtmlToBuffer } from "jsxp";
+import OpenAi from "openai";
 export const selects = onSelects(["message.create", "private.message.create"]);
-
-// inline regex used directly in condition checks
-const get = /^(\/|#)get (.+)$/i;
 
 export default onResponse(selects, async (e, next) => {
   // 创建
@@ -116,6 +114,7 @@ export default onResponse(selects, async (e, next) => {
   // 清空对话
   if (/^(\/|#)清空对话$/i.test(e.msg)) {
     await redisClient.clearAIChatHistory(e.guid);
+    await redisClient.deleteSessionId(e.guid);
     message.send(format(Text("对话已清空")));
   }
 
@@ -126,8 +125,8 @@ export default onResponse(selects, async (e, next) => {
   }
 
   // get请求一个地址
-  if (get.test(e.msg)) {
-    const match = e.msg.match(get);
+  if (/^(\/|#)get (.+)$/i.test(e.msg)) {
+    const match = e.msg.match(/^(\/|#)get (.+)$/i);
     if (!match) {
       message.send(format(Text("格式错误，请按照 格式：/get <url> 进行请求")));
       return;
@@ -139,6 +138,81 @@ export default onResponse(selects, async (e, next) => {
       message.send(format(Text(`GET ${url} 的响应：\n${text}`)));
     } catch (error) {
       message.send(format(Text(`请求 ${url} 失败：${error}`)));
+    }
+  }
+
+  // 新对话
+  if (/(\/|#)(开启)?(new|新对话|新会话)$/i.test(e.msg)) {
+    const match = e.msg.match(/^(\/|#)(开启)?(new|新对话|新会话)$/i);
+    if (!match) {
+      message.send(format(Text("格式错误，请按照 格式：/new 进行开启新对话")));
+      return;
+    }
+
+    // 压缩当前对话的上下文
+    const aiConfig = await redisClient.getAIConfig(e.guid);
+    if (aiConfig.model) {
+      // 让ai总结当前聊天内容, 将其存储到redis中作为历史对话的一部分
+      const openai = new OpenAi({
+        baseURL: aiConfig.host,
+        apiKey: aiConfig.key,
+        timeout: 300000,
+      });
+      const history = await redisClient.getAIChatHistory(e.guid);
+      const FilingID = Date.now();
+
+      const summaryPrompt = `system:请总结一下我们之前的聊天内容，要求总结内容能够涵盖之前聊天的主要信息和细节，字数控制在200字以内。总结内容将被用作未来对话的上下文，请确保总结内容的准确性和完整性。请务必按照特定格式总总结, 格式如下
+
+归档ID:${FilingID}
+摘要:<简单描述>
+详细信息:<详细描述>
+
+归档id为框架生成
+其中摘要部分要求简洁明了, 详细信息部分要求尽可能全面地涵盖之前聊天的内容, 包括重要的细节和信息点。请确保总结内容能够准确反映之前的聊天内容, 并且格式正确，以便我们在未来的对话中能够正确地使用这些总结内容。`;
+      const messages = [
+        ...history,
+        {
+          role: "user",
+          content: summaryPrompt,
+        },
+      ];
+
+      console.log("messages", messages);
+
+      try {
+        const response = await openai.chat.completions.create({
+          model: aiConfig.model,
+          messages,
+          temperature: 0.8,
+          stream: false,
+        });
+        const summary = response.choices[0].message.content;
+        if (summary) {
+          const AbstractMatch = summary.match(/摘要:(.*)详细信息:/s);
+          const DetailMatch = summary.match(/详细信息:(.*)/s);
+          const Abstract = AbstractMatch ? AbstractMatch[1].trim() : "无摘要";
+          const Detail = DetailMatch ? DetailMatch[1].trim() : "无详细信息";
+          await redisClient.setSummary(e.guid, FilingID.toString(), Abstract);
+          await redisClient.setSummaryDetail(
+            e.guid,
+            FilingID.toString(),
+            Detail,
+          );
+          await redisClient.clearAIChatHistory(e.guid);
+          await redisClient.addAIChatHistory(e.guid, {
+            role: "user",
+            content: `system:上一轮对话小结：${Abstract}\n详细信息：${Detail}`,
+          });
+          message.send(format(Text("已开启新对话")));
+        }
+      } catch (error) {
+        console.error("对话总结失败：", error);
+        message.send(
+          format(Text("新对话开启失败"), Text(`\n报错内容：${error}`)),
+        );
+      }
+    } else {
+      message.send(format(Text("当前无可用的AI配置，请先设置AI配置")));
     }
   }
 

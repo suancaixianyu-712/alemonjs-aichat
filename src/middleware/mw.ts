@@ -316,16 +316,21 @@ export default onMiddleware(selects, async (event, next) => {
     // 执行ai回复, 方便ai控制后续指令
     const aiconfig = await redisClient.getAIConfig(event.guid);
     if (aiconfig && aiconfig.model && aiconfig.key) {
-      const ReplyRes = await CApiReply(event);
-      console.log("res", ReplyRes);
-      if (ReplyRes) {
-        event["Xianyu"] = ReplyRes.next; // 根据AI回复决定是否继续执行后续的处理函数
-
-        if (ReplyRes.commands && ReplyRes.commands.length > 0) {
-          event.MessageText = ReplyRes.commands[0];
-          event["msg"] = ReplyRes.commands[0];
-        }
+      if (aiconfig.rapi) {
+        await RApiReply(event);
+      } else {
+        await CApiReply(event);
       }
+      // const ReplyRes = await RApiReply(event);
+      // console.log("res", ReplyRes);
+      // if (ReplyRes) {
+      //   event["Xianyu"] = ReplyRes.next; // 根据AI回复决定是否继续执行后续的处理函数
+
+      //   // if (ReplyRes.commands && ReplyRes.commands.length > 0) {
+      //   //   event.MessageText = ReplyRes.commands[0];
+      //   //   event["msg"] = ReplyRes.commands[0];
+      //   // }
+      // }
     }
   }
 

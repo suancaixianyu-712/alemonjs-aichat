@@ -6,6 +6,7 @@ const redisConfig = {
   host: value.redis?.host ?? "localhost",
   port: value.redis?.port ?? 6379,
   password: value.redis?.password ?? "",
+  username: value.redis?.user ?? "",
 };
 
 export const redis = new Redis(redisConfig);

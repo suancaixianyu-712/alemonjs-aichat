@@ -318,6 +318,78 @@ class db {
     await this.setAIChatHistory(guid, history);
   }
 
+  /** 存储摘要,全局共享 */
+  async setSummary(guid: string, id: string, summary: string): Promise<void> {
+    await this.redis.set(`ai:summary:${guid}:${id}`, `${summary}`);
+  }
+  /** 获取摘要 */
+  async getSummary(guid: string, id: string): Promise<string | null> {
+    return await this.redis.get(`ai:summary:${guid}:${id}`);
+  }
+  /** 获取所有摘要时间列表 */
+  async getSummaryList(): Promise<{ id: string; summary: string }[]> {
+    console.log("获取列表");
+
+    const keys = await this.redis.keys(`ai:summary:*`);
+    return Promise.all(
+      keys.map(async (key) => {
+        const parts = key.split(":");
+        const summary = await this.redis.get(key);
+        return {
+          id: `${parts[2]}:${parts[3]}`,
+          summary: summary ?? "",
+        };
+      }),
+    );
+  }
+
+  /** 删除摘要 */
+  async deleteSummary(guid: string, id: string): Promise<number> {
+    return await this.redis.del(`ai:summary:${guid}:${id}`);
+  }
+  /** 存储摘要中的详细内容 */
+  async setSummaryDetail(
+    guid: string,
+    id: string,
+    detail: string,
+  ): Promise<void> {
+    await this.redis.set(`ai:summary_detail:${guid}:${id}`, `${detail}`);
+  }
+  /** 获取摘要中的详细内容 */
+  async getSummaryDetail(guid: string, id: string): Promise<string | null> {
+    return await this.redis.get(`ai:summary_detail:${guid}:${id}`);
+  }
+  /** 删除摘要中的详细内容 */
+  async deleteSummaryDetail(guid: string, id: string): Promise<number> {
+    return await this.redis.del(`ai:summary_detail:${guid}:${id}`);
+  }
+
+  /** 存储用户数据 */
+  async setUserData(userKey: string, value: string): Promise<void> {
+    await this.redis.set(`ai:user:${userKey}`, value);
+  }
+  /** 获取用户数据 */
+  async getUserData(userKey: string): Promise<string | null> {
+    return await this.redis.get(`ai:user:${userKey}`);
+  }
+  /** 删除用户数据 */
+  async deleteUserData(userKey: string): Promise<number> {
+    return await this.redis.del(`ai:user:${userKey}`);
+  }
+
+  /** 设置会话id */
+  async setSessionId(guid: string, sessionId: string): Promise<void> {
+    await this.redis.set(`ai:session:${guid}`, sessionId);
+  }
+  /** 获取会话id */
+  async getSessionId(guid: string): Promise<string | null> {
+    return await this.redis.get(`ai:session:${guid}`);
+  }
+  /** 删除会话id */
+  async deleteSessionId(guid: string): Promise<number> {
+    return await this.redis.del(`ai:session:${guid}`);
+  }
+
   /** 获取好感度 */
   async getAffectionLevel(guid: string, userKey: string): Promise<number> {
     const levelStr = await this.redis.get(`ai:affection:${guid}:${userKey}`);

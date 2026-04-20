@@ -32,6 +32,7 @@ export const children = [
       /^(\/|#)清空对话$/i,
       /^(\/|#)清空(所有|全部)对话$/i,
       /^(\/|#)get (.+)$/i,
+      /(\/|#)(开启)?(new|新对话|新会话)$/i,
     ),
     handler: lazy(() => import("../response/config/res")),
   },
@@ -79,16 +80,6 @@ export const children = [
     ),
     handler: lazy(() => import("../response/affection/res")),
   },
-
-  // ollama
-  {
-    regular: Regular.or(
-      /(\/|#)ollama ?(模型列表|list)$/i,
-      /(\/|#)ollama ?(add|install|push|pull|安装模型) ?(.+)$/i,
-    ),
-    handler: lazy(() => import("../response/ollama/ollama")),
-  },
-
   // fallback: zreply - 最低优先级，处理普通对话
   // {
   //   regular: /.*/,

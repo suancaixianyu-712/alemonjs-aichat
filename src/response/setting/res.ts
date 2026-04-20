@@ -1,14 +1,6 @@
 import { availableTools } from "@src/api/aitools";
-import { loadSkills } from "@src/api/loadSkill";
 import redisClient from "@src/config";
-import { getImageBuffer, uploadImageToR2 } from "@src/s3";
-import {
-  ImageFile,
-  ImageURL,
-  Text,
-  useMessage,
-  getConfigValue,
-} from "alemonjs";
+import { Text, useMessage, getConfigValue } from "alemonjs";
 import { log } from "console";
 const value = getConfigValue().aiChat || {};
 
@@ -21,6 +13,20 @@ export default onResponse(selects, async (e, next) => {
 
   // 测试
   if (test.test(e.msg)) {
+    // console.log(
+    //   "测试调用",
+    //   await availableTools.MemoryOperation({
+    //     userID: e.UserId,
+    //     operation: "get",
+    //     dataType: "user",
+    //     data: "",
+    //   }),
+    // );
+    availableTools.exec({
+      command: "echo hello world",
+      userId: e.UserId,
+    });
+
     message.send(format(Text("测试消息")));
 
     // 1. 获取技能列表（简要信息）
@@ -423,22 +429,6 @@ export default onResponse(selects, async (e, next) => {
     return;
   }
 
-  // ollama获取模型列表
-  if (/(\/|#)ollama ?(模型列表|list)$/i.test(e.msg)) {
-    const models = await availableTools.OllamaListModels();
-    if (models.length > 0) {
-      message.send(
-        format(
-          Text("当前 Ollama 模型列表：\n"),
-          Text(models.map((m) => m.id).join("\n")),
-        ),
-      );
-    } else {
-      message.send(format(Text("未获取到 Ollama 模型列表！")));
-    }
-    return;
-  }
-
   // 设置主动搭话
   if (/(\/|#)(关闭|开启)主动(搭话|回复)$/i.test(e.msg)) {
     const match = e.msg.match(/(\/|#)(关闭|开启)主动(搭话|回复)$/i);
@@ -506,6 +496,32 @@ export default onResponse(selects, async (e, next) => {
         ),
       );
     }
+  }
+
+  // 设置当前ai的RAPI模式开关
+  if (/(\/|#)切换rapi模式(开启|关闭)$/i.test(e.msg)) {
+    const match = e.msg.match(/(\/|#)切换rapi模式(开启|关闭)$/i);
+    if (!match) {
+      message.send(
+        format(
+          Text(
+            "格式错误，请按照 格式：/切换rapi模式 开启 或 /切换rapi模式 关闭 进行设置",
+          ),
+        ),
+      );
+      return;
+    }
+    const [, , action] = match;
+    const enable = action === "开启";
+    const aiInfo = await redisClient.getAIConfig(e.guid);
+    if (!aiInfo.model) {
+      message.send(format(Text(`当前没有可用的 AI 配置！`)));
+      return;
+    }
+    await redisClient.setAIConfig(e.guid, { ...aiInfo, rapi: enable });
+    message.send(
+      format(Text(`已${enable ? "开启" : "关闭"}当前 AI 的 RAPI 模式 !`)),
+    );
   }
 
   // 设置仅艾特触发

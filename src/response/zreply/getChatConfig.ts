@@ -5,6 +5,47 @@ import { Events } from "alemonjs";
 import { emojiMap } from "@src/emoji";
 import { uploadImageToR2 } from "@src/s3";
 
+type ToolMode = "capi" | "rapi";
+
+/**
+ * 将 tools 在 CAPI / RAPI 之间转换
+ */
+export const normalizeTools = (tools: any[], mode: ToolMode) => {
+  if (!Array.isArray(tools)) return [];
+
+  // =========================
+  // CAPI：chat.completions
+  // =========================
+  if (mode === "capi") {
+    return tools.map((t) => ({
+      type: "function",
+      function: {
+        name: t.name ?? t.function?.name,
+        description: t.description ?? t.function?.description,
+        parameters: t.parameters ??
+          t.function?.parameters ?? {
+            type: "object",
+            properties: {},
+          },
+      },
+    }));
+  }
+
+  // =========================
+  // RAPI：responses API
+  // =========================
+  return tools.map((t) => ({
+    type: "function",
+    name: t.function?.name ?? t.name,
+    description: t.function?.description ?? t.description,
+    parameters: t.function?.parameters ??
+      t.parameters ?? {
+        type: "object",
+        properties: {},
+      },
+  }));
+};
+
 export const getChatConfig = async (
   e: Events["message.create"] | Events["private.message.create"],
 ) => {
@@ -33,7 +74,11 @@ export const getChatConfig = async (
     /** 工具开关 */
     toolSwitch: await redisClient.getToolSwitch(e.guid),
     /** 工具列表 */
-    toolList: await redisClient.getAvailableTools(e.guid),
+    cApiToolList: await redisClient.getAvailableTools(e.guid),
+    rApiToolList: normalizeTools(
+      await redisClient.getAvailableTools(e.guid),
+      "rapi",
+    ),
     /** 工具提示开关 */
     toolPromptSwitch: await redisClient.getToolPromptSwitch(e.guid),
     /** 工具提示撤回开关 */
@@ -65,6 +110,8 @@ export const getChatConfig = async (
   ### 用户发言
   - 格式: [私聊]用户昵称(用户id)(发送时间):消息内容
   当场景为私聊时, 用户昵称前方会出现[私聊]标识
+  当平台适配环境较好时,用户消息前面会包含消息id, 例如: [私聊]用户昵称(用户id)(发送时间)(msgid:消息id):消息内容
+  你发送的消息内容会被框架自动加上消息id, 以便你在需要撤回消息时使用
   ### 你的回复格式
   格式:
   ${botName}:消息内容
@@ -80,6 +127,25 @@ export const getChatConfig = async (
   ${botName}:<command=#ai帮助> 正在获取帮助指令, 请稍等
   用户:看看配置
   ${botName}:<command=#ai配置> 正在获取配置, 请稍等
+
+  #### 撤回消息:
+  你可以使用<revoke=消息id>来撤回消息, 例如:
+  [私聊]酸菜味小咸鱼(3501869534)(10:00)(msgid:ans65c2):帮我撤回这条消息
+  ${botName}:<revoke=ans65c2> 已经帮你撤回了哦
+
+  ### 艾特:
+  当你需要艾特用户时, 可以使用<at=用户id>的方式来艾特, 例如:
+  ${botName}:<at=3501869534> 你来啦~
+
+  ${
+    toolConfig.toolPromptSwitch === "1"
+      ? `
+  #### 获取用户信息
+  在聊天开始时, 你可以通过MemoryOperation工具获取用户的基本信息, 包括用户的兴趣爱好, 重要事件等, 以便更好地了解用户并提供个性化的回复.
+  在聊天过程中, 你也可以随时通过MemoryOperation工具修改对这个人的印象, 例如当用户说了一些让你不开心的话时, 你可以调用这个工具来记录用户的行为, 以便在后续的对话中调整你的回复策略
+  `
+      : ""
+  }
 
   ${
     complexOutputIsOpen === "1"
@@ -124,7 +190,6 @@ export const getChatConfig = async (
   `
   }
   
-  
   ${
     affectionIsOpen === "1" && complexOutputIsOpen === "1"
       ? `#### 好感度系统:
@@ -140,7 +205,7 @@ export const getChatConfig = async (
   ${botName}:原来ta是这样的人, 人家以后再也不理ta了<哈基米好感-1>`
       : ""
   }
-  
+
   #### 拒绝回复:
   在讨论中如果你觉得不适合回复或觉得与你无关又或者不感兴趣, 可以直接回复"[]"来拒绝本次回复, 例如:
   ${botName}:[]
@@ -153,6 +218,36 @@ export const getChatConfig = async (
   当前聊天平台:${e.Platform}
   当前框架:alemonjs
   ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
+  `;
+
+  const RapiSystemPrompt = `
+请严格按照以下规范进行回复, 以确保回复能够被正确解析和处理
+1. 文本消息：
+${botName}::text<<<EOF
+文本内容
+EOF
+
+2. 图片消息：
+${botName}::image 图片URL
+
+3. 语音消息：
+${botName}::audio 内容
+
+4. 指定音色语音：
+${botName}::audio voice=音色 内容
+
+=====================
+【硬性规则】
+=====================
+
+- 不允许使用任何其他格式
+- 不允许输出解释说明
+- 不允许夹杂 markdown
+- tool调用前可以先输出一行说明
+- 每一条输出必须独立一行
+- 允许多段输出叠加, 例如:
+${botName}::text 这是第一条消息
+${botName}::text 这是第二条消息
   `;
 
   return {
@@ -170,12 +265,13 @@ export const getChatConfig = async (
     proactiveSwitch,
     /** 深度思考开关 */
     deepThoughtSwitch,
-    /** @触发开关 */
+    /** @ 触发开关 */
     atTriggerSwitch,
     /** 机器人昵称 */
     botName,
     /** 系统提示词 */
     systemPrompt,
+    RapiSystemPrompt,
     /** 技能列表 */
     skills,
     /** 历史消息 */
@@ -236,19 +332,22 @@ export const shouldSkipAIReply = async (
   return false;
 };
 
+type BuildMode = "capi" | "rapi";
+
 /**
- * 打包消息内容, 将文本和图片进行处理, 构建成适合AI模型输入的格式
- * @param e 消息事件
- * @param cfg AI配置
+ * 打包消息内容（兼容 CAPI / RAPI）
  */
 export const buildUserMessage = async (
   e: Events["message.create"] | Events["private.message.create"],
   cfg: any,
+  mode: BuildMode = "capi",
 ) => {
   const imgs: string[] = [];
   let rawMessage = e.value.raw_message || e.raw_message || e.msg;
 
-  // ===== 回复处理 =====
+  // =========================
+  // 回复处理
+  // =========================
   if (cfg.complexOutputIsOpen === "1" && e.reply) {
     const replyImages = e.reply.message
       .filter((item) => item.type === "image")
@@ -261,16 +360,19 @@ export const buildUserMessage = async (
       .map((item) => item.data.text)
       .join("");
 
-    rawMessage = rawMessage.replace(/\[CQ:image,[^\]]+\]/g, "[图片]");
     rawMessage = `[回复:${replyContent}]\n${rawMessage}`;
   }
 
-  // ===== 图片 =====
+  // =========================
+  // 图片
+  // =========================
   if (cfg.complexOutputIsOpen === "1" && e.img?.length) {
     imgs.push(...e.img);
   }
 
-  // ===== AT处理 =====
+  // =========================
+  // AT 处理
+  // =========================
   if (e.at?.length) {
     for (const atItem of e.at) {
       const qq = atItem.data.qq;
@@ -279,47 +381,66 @@ export const buildUserMessage = async (
     }
   }
 
-  // ===== 上传图片 =====
+  // =========================
+  // 上传图片
+  // =========================
   const imageurls = await Promise.all(imgs.map((url) => uploadImageToR2(url)));
-
   const validImageUrls = imageurls.filter(Boolean);
 
-  // ===== 替换图片占位 =====
+  // =========================
+  // CQ 图片替换
+  // =========================
   let index = 0;
   rawMessage = rawMessage.replace(/\[CQ:image,[^\]]+\]/g, () => {
     const url = validImageUrls[index++];
-    return url ? `![图片](${url})` : "[图片]";
+    return url ? url : "[图片]";
   });
 
-  // ===== 表情 =====
+  // =========================
+  // 表情
+  // =========================
   rawMessage = rawMessage.replace(
     /\[CQ:face,id=(\d+),[^\]]+\]/g,
     (_, id) => `[${emojiMap[id]}]`,
   );
 
-  // ===== 构建 usermessage =====
-  const usermessage = {
+  const text = `${e.nickname}(${getTimeString()}): ${rawMessage}`;
+
+  // =========================
+  // 🔥 CAPI (chat.completions)
+  // =========================
+  if (mode === "capi") {
+    return {
+      role: "user",
+      content: [
+        ...validImageUrls.map((url) => ({
+          type: "image_url",
+          image_url: { url },
+        })),
+        {
+          type: "text",
+          text,
+        },
+      ],
+      rawMessage,
+      validImageUrls,
+    };
+  }
+
+  // =========================
+  // 🔥 RAPI (responses API)
+  // =========================
+  return {
     role: "user",
     content: [
       ...validImageUrls.map((url) => ({
-        type: "image_url",
-        image_url: { url },
+        type: "input_image",
+        image_url: url,
       })),
       {
-        type: "text",
-        text:
-          cfg.complexOutputIsOpen === "1"
-            ? JSON.stringify({
-                [`${e.nickname}(${getTimeString()})`]: rawMessage,
-              })
-            : `${e.nickname}(${getTimeString()}): ${rawMessage}`,
+        type: "input_text",
+        text,
       },
     ],
-  };
-
-  return {
-    usermessage,
-    rawMessage,
-    validImageUrls,
   };
 };

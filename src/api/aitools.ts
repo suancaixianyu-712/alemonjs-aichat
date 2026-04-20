@@ -6,6 +6,12 @@ import { TTSClient } from "./tts";
 import { ChatCompletionTool } from "openai/resources";
 import { loadSkillDetail } from "./loadSkill";
 import help from "@src/data/help.json";
+import redisClient from "@src/config";
+import { isPrivateIP, validateURL } from "./security";
+import { spawn } from "child_process";
+import * as dns from "node:dns/promises";
+import path from "node:path";
+import { getWorkspace } from "./workspace";
 
 const value = getConfigValue().aiChat || {};
 
@@ -181,6 +187,10 @@ export const tools: ChatCompletionTool[] = [
       parameters: {
         type: "object",
         properties: {
+          userId: {
+            type: "string",
+            description: "执行命令的用户ID",
+          },
           command: {
             type: "string",
             description: "要执行的终端命令",
@@ -207,23 +217,23 @@ export const tools: ChatCompletionTool[] = [
       },
     },
   },
-  {
-    type: "function",
-    function: {
-      name: "EvalCode",
-      description: "执行JavaScript代码",
-      parameters: {
-        type: "object",
-        properties: {
-          code: {
-            type: "string",
-            description: "要执行的JavaScript代码",
-          },
-        },
-        required: ["code"],
-      },
-    },
-  },
+  // {
+  //   type: "function",
+  //   function: {
+  //     name: "EvalCode",
+  //     description: "执行JavaScript代码",
+  //     parameters: {
+  //       type: "object",
+  //       properties: {
+  //         code: {
+  //           type: "string",
+  //           description: "要执行的JavaScript代码",
+  //         },
+  //       },
+  //       required: ["code"],
+  //     },
+  //   },
+  // },
   {
     type: "function",
     function: {
@@ -236,9 +246,128 @@ export const tools: ChatCompletionTool[] = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "MemoryOperation",
+      description:
+        "这个工具用于获取或修改对于用户的记忆数据, 包括用户形象, 用户偏好, 历史对话等. 你可以使用这个工具来存储一些需要长期记忆的信息, 例如用户的兴趣爱好, 重要事件等. 当你想要获取或修改这些信息时, 可以调用这个工具并提供具体的操作指令和数据. 例如, 在聊天过程中他对你的态度,以及他喜欢的东西等,可以通过这个工具及时记录下来, 也可以通过这个工具获取之前的对话记录,便于继续之前的话题",
+      parameters: {
+        type: "object",
+        properties: {
+          userID: {
+            type: "string",
+            description: "要获取或修改的用户数据的用户ID",
+          },
+          operation: {
+            type: "string",
+            description:
+              "要执行的操作类型，例如'get'表示获取数据，'set'表示修改数据",
+            enum: ["get", "set"],
+          },
+          dataType: {
+            type: "string",
+            description:
+              "要获取或修改的数据类型，例如'user'表示用户相关,获取或修改用户数据，'chatHistory'表示历史对话,历史对话只能获取不能修改",
+            enum: ["user", "chatHistory"],
+          },
+          data: {
+            type: "string",
+            description:
+              "要获取或修改的数据内容, 例如当operation为'set'时,dataType为'user'时, data应该是要存储的数据内容, 例如用户喜欢的颜色是蓝色, 则data可以是'favoriteColor:blue', 当operation为'get'时, dataType为'user'时, data就不需要传入值, 它会返回之前存储的数据, 当operation为'get'时, dataType为'chatHistory'时, data不传入值获取摘要列表, 传入id获取对应的摘要详情",
+          },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "ping",
+      description: `
+检测目标主机是否可达。
+
+【限制】
+- 仅允许公网域名
+- 禁止 IP 地址（防止内网扫描）
+- 自动限制次数（例如 3 次）
+
+`,
+      parameters: {
+        type: "object",
+        properties: {
+          host: { type: "string" },
+        },
+        required: ["host"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "http_request",
+      description: `
+发送 HTTP 请求以获取网页或 API 数据。
+
+【能力范围】
+- 支持 GET / POST 请求
+- 返回文本或 JSON 内容
+- 自动处理常见编码
+
+【限制】
+- 禁止访问云元数据地址（如 169.254.169.254）
+- 请求超时限制为 5 秒
+- 响应大小限制（例如 1MB）
+
+【使用建议】
+- 优先使用此工具获取网页内容，而不是使用 shell
+- 适合抓取网页、调用 API、获取数据
+`,
+      parameters: {
+        type: "object",
+        properties: {
+          url: { type: "string" },
+          method: { type: "string", enum: ["GET", "POST"] },
+          body: { type: "string" },
+        },
+        required: ["url"],
+      },
+    },
+  },
 ];
 
 export const availableTools = {
+  MemoryOperation: async ({ userID, operation, dataType, data }) => {
+    if (operation === "set") {
+      if (dataType === "user") {
+        // 存储用户数据到redis, key为user:${userID}:data, value为data
+        await redisClient.setUserData(userID, data);
+        return { success: true };
+      }
+      if (dataType === "chatHistory") {
+        return "历史对话数据只能获取不能修改";
+      }
+    }
+    if (operation === "get") {
+      if (dataType === "user") {
+        // 从redis获取用户数据, key为user:${userID}:data
+        const userData = await redisClient.getUserData(userID);
+        return { success: true, data: userData };
+      }
+      if (dataType === "chatHistory") {
+        // 从redis获取聊天历史, key为chatHistory:${userID}
+        const [guid, id] = data?.split(":") || [];
+        if (guid && id) {
+          const chatHistory = await redisClient.getSummaryDetail(guid, id);
+          return { success: true, data: chatHistory };
+        } else {
+          const summaryList = await redisClient.getSummaryList();
+          return { success: true, data: summaryList };
+        }
+      }
+    }
+  },
+
   /**
    *  使用 Stable Diffusion 生成图片
    * @param {string} prompt - 正向提示词
@@ -623,88 +752,59 @@ export const availableTools = {
   },
 
   /**
-   * 获取 ollama 模型列表
-   * @returns ollama 模型列表
-   */
-  OllamaListModels: async () => {
-    const res = await fetch("http://localhost:11434/v1/models");
-    if (!res.ok) {
-      return null;
-    }
-    const data = await res.json();
-    return data.data;
-  },
-
-  /**
-   * 安装 ollama 模型
-   * @param modelName 模型名称
-   * @returns 安装结果
-   */
-  OllamaInstallModel: async (modelName: string) => {
-    try {
-      const res = await fetch("http://localhost:11434/v1/models", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: modelName,
-        }),
-      });
-      if (!res.ok) {
-        const err = await res.text();
-        console.log(err);
-        return { success: false, error: err };
-      }
-      const data = await res.json();
-      console.log("安装结果", data);
-      return { success: true };
-    } catch (error) {
-      console.error("Error installing Ollama model:", error);
-      return { success: false, error: error };
-    }
-  },
-
-  /**
    * 运行cmd命令
    * @param exec 命令字符串
    * @returns 命令执行结果
    */
-  exec: async ({ command }) => {
-    const { exec } = await import("child_process");
+  exec: async ({ userId, command }: { userId: string; command: string }) => {
+    const workspace = getWorkspace(userId);
+
     return new Promise((resolve) => {
-      exec(command, (error, stdout, stderr) => {
-        if (error) {
-          console.error(`Error executing command: ${error}`);
-          resolve(`Error: ${error.message}`);
-          return;
-        }
-        if (stderr) {
-          console.error(`Command stderr: ${stderr}`);
-          resolve(`Error: ${stderr}`);
-          return;
-        }
-        console.log(`Command stdout: ${stdout}`);
-        resolve(stdout);
-      });
+      const child = spawn("docker", [
+        "run",
+        "--rm",
+        "--memory=256m",
+        "--cpus=0.5",
+        "--pids-limit=64",
+        "--network=none",
+        "--read-only",
+        "-v",
+        `${workspace}:/workspace`,
+        "-w",
+        "/workspace",
+        "alpine",
+        "sh",
+        "-c",
+        command,
+      ]);
+
+      let output = "";
+
+      child.stdout.on("data", (d) => (output += d.toString()));
+      child.stderr.on("data", (d) => (output += d.toString()));
+
+      child.on("close", () => resolve(output));
     });
   },
 
-  /**
-   * 执行eval
-   * @param code 代码字符串
-   * @returns 执行结果
-   */
-  EvalCode: async ({ code }) => {
-    try {
-      // eslint-disable-next-line no-eval
-      const result = eval(code);
-      return result;
-    } catch (error) {
-      console.error(`Error executing code: ${error}`);
-      return `Error: ${error}`;
-    }
-  },
+  // /**
+  //  * 执行eval
+  //  * @param code 代码字符串
+  //  * @returns 执行结果
+  //  */
+  // EvalCode: async ({ code }) => {
+  //   try {
+  //     if (code.includes("exec") || code.includes("process")) {
+  //       return "代码中包含敏感词,无法执行";
+  //     }
+  //     // eslint-disable-next-line no-eval
+  //     const result = eval(code);
+  //     return result;
+  //   } catch (error) {
+  //     console.error(`Error executing code: ${error}`);
+  //     return `Error: ${error}`;
+  //   }
+  // },
 
   /**
    * 获取技能详情
@@ -723,5 +823,69 @@ export const availableTools = {
    */
   GetCommand: async () => {
     return help;
+  },
+
+  http_request: async ({
+    url,
+    method = "GET",
+    body,
+  }: {
+    url: string;
+    method?: string;
+    body?: string;
+  }) => {
+    await validateURL(url);
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+
+    try {
+      const res = await fetch(url, {
+        method,
+        body,
+        signal: controller.signal,
+        headers: {
+          "User-Agent": "AI-Agent/1.0",
+        },
+      });
+
+      const text = await res.text();
+
+      if (text.length > 1024 * 1024) {
+        return "Response too large";
+      }
+
+      return text;
+    } catch (e: any) {
+      return `Request failed: ${e.message}`;
+    } finally {
+      clearTimeout(timeout);
+    }
+  },
+
+  ping: async ({ host }: { host: string }) => {
+    // 禁止直接 IP
+    if (/^\d+\.\d+\.\d+\.\d+$/.test(host)) {
+      return "IP address not allowed";
+    }
+
+    const ips = await dns.lookup(host, { all: true });
+
+    for (const { address } of ips) {
+      if (isPrivateIP(address)) {
+        return "Target resolves to private IP";
+      }
+    }
+
+    return new Promise((resolve) => {
+      const child = spawn("ping", ["-c", "3", host]);
+
+      let output = "";
+
+      child.stdout.on("data", (d) => (output += d.toString()));
+      child.stderr.on("data", (d) => (output += d.toString()));
+
+      child.on("close", () => resolve(output));
+    });
   },
 };

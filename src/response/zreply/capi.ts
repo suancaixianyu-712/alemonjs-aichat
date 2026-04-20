@@ -14,7 +14,7 @@ import OpenAi from "openai";
 import { getConfigValue } from "alemonjs";
 import { TTSClient } from "@src/api/tts";
 import { getTimeString } from "@src/api/format";
-import { availableTools, tools } from "@src/api/aitools";
+import { availableTools } from "@src/api/aitools";
 import redisClient from "@src/config";
 import errorimg from "@src/assets/error.png";
 import { imageReview } from "@src/api/review";
@@ -46,7 +46,7 @@ export const CApiReply = async (
   // 创建消息
   const [message] = useMessage(e);
   const cfg = await getChatConfig(e);
-  const { usermessage } = await buildUserMessage(e, cfg);
+  const usermessage = await buildUserMessage(e, cfg, "capi");
 
   try {
     const openai = new OpenAi({
@@ -61,7 +61,7 @@ export const CApiReply = async (
         content: cfg.systemPrompt + `\n性格约束:${cfg.config.systemPrompt}`,
       },
       ...cfg.historyMessages,
-      { ...usermessage },
+      usermessage,
     ];
 
     const createParams: any = {
@@ -70,7 +70,7 @@ export const CApiReply = async (
     };
 
     if (cfg.toolConfig.toolSwitch === "1") {
-      createParams["tools"] = cfg.toolConfig.toolList;
+      createParams["tools"] = cfg.toolConfig.cApiToolList;
       createParams["tool_choice"] = "auto";
     }
     if (cfg.deepThoughtSwitch === "0") {
@@ -228,7 +228,7 @@ export const CApiReply = async (
       res = await openai.chat.completions.create({
         model: cfg.config.model,
         messages: messages,
-        tools,
+        tools: cfg.toolConfig.cApiToolList,
         tool_choice: "auto",
       });
 
@@ -255,9 +255,11 @@ export const CApiReply = async (
       .split(new RegExp(`${cfg.botName}:`, "g"))
       .slice(1);
 
-    const replymessages: { text: string; images: string[] }[] = [];
+    const replymessages: { text: string; images: string[]; at: string[] }[] =
+      [];
     const ttsMessages: { text: string; model: string }[] = [];
     const nextCommands: string[] = [];
+    const atTargets: string[] = [];
 
     for (const replyMessage of replyMessages) {
       // 从消息中提取图片
@@ -291,6 +293,27 @@ export const CApiReply = async (
         }
       }
 
+      // 处理撤回指令
+      const revokeRegex = /<revoke=(.*?)>/g;
+      let revokeMatch: RegExpExecArray | null;
+      while ((revokeMatch = revokeRegex.exec(replyMessage)) !== null) {
+        const revokeTarget = revokeMatch[1].trim();
+        if (revokeTarget) {
+          await message.delete({ messageId: revokeTarget });
+        }
+      }
+
+      // 处理艾特指令
+      const atRegex = /<at=(.*?)>/g;
+      let atMatch: RegExpExecArray | null;
+      while ((atMatch = atRegex.exec(replyMessage)) !== null) {
+        const atTarget = atMatch[1].trim();
+        if (atTarget) {
+          console.log(`检测到艾特指令: ${atTarget}`);
+          atTargets.push(atTarget);
+        }
+      }
+
       // 处理语音回复
       const ttsRegex = /<(tts|音色)=([^>]+)>/gi;
       let ttsMatch: RegExpExecArray | null;
@@ -313,8 +336,11 @@ export const CApiReply = async (
           .replace(imageRegex, "")
           .replace(ttsRegex, "")
           .replace(commandRegex, "")
+          .replace(revokeRegex, "")
+          .replace(atRegex, "")
           .trim(),
         images: imgUrls,
+        at: atTargets,
       });
     }
     // 记录对话
@@ -338,9 +364,9 @@ export const CApiReply = async (
       }
     }
 
-    // 处理消息
+    // 发送消息
     for (let i = 0; i < replymessages.length; i++) {
-      const { text, images } = replymessages[i];
+      const { text, images, at } = replymessages[i];
       const components: any[] = i === 0 ? [Mention(e.UserId)] : [];
 
       components.push(Text(text));
@@ -382,6 +408,10 @@ export const CApiReply = async (
           // 上传失败 fallback
           components.push(ImageFile(errorimg));
         }
+      }
+
+      for (const atTarget of at) {
+        components.push(Mention(atTarget));
       }
 
       // 随机 1-3 秒延迟
