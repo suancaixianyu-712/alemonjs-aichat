@@ -1,12 +1,24 @@
 
 ## 安装
 
+### 前置条件
+- nodejs 20+
+- yarn 1.22+
+- redis 5+
+
+安装依赖时更推荐使用yarn, 也可以使用npm, 但需要将命令中的`yarn`替换为`npm install`
+
+或者安装`yarn`:
+``` bash
+npm install -g yarn
+```
+
 ### 克隆仓库安装
 适合在没有部署alemonjs的环境中安装
 ``` bash
 # 克隆release分支
 git clone -b release https://gitee.com/suancaixianyu/alemonjs-aichat.git
-cd alemongjs-aichat
+cd alemonjs-aichat
 yarn
 ```
 
@@ -18,19 +30,19 @@ yarn add alemonjs-aichat
 
 ## 配置 `alemon.config.yaml`
 
-1. 将`alemon.config.example.yaml`重命名为`alemon.config.yaml`
+1. 将`alemon.config.example.yaml`复制重命名为`alemon.config.yaml`
 ``` bash
-mv alemon.config.example.yaml alemon.config.yaml
+cp alemon.config.example.yaml alemon.config.yaml
 ```
 如果你的目中已经有`alemon.config.yaml`请略过此步骤
 
-1. 启用`alemonjs-aichat`
+2. 启用`alemonjs-aichat`
 ``` yaml
 app: 
   - 'alemonjs-aichat'
 ```
 
-1. 配置redis
+3. 配置redis
 `alemon.config.yaml`
 ``` yaml
 redis:
@@ -71,6 +83,21 @@ aiChat:
     sk: ''
 ```
 使用指令`/不可以色色``/可以色色`开启或关闭图片审核功能, 默认开启, 但如果没有配置AK/SK, 则无法使用图片审核功能
+
+- onebot平台
+  
+在使用onebot平台时, 还需要安装onebot服务端, 例如[napcat](https://napneko.github.io/),使用napcat创建ws服务端, 并且在`alemon.config.yaml`中配置napcat的ws地址
+```yaml
+onebot:
+  url: 'ws://127.0.0.1:3001' # 正向url
+  token: '' # token
+  reverse_enable: false # 启用后正向连接配置失效，地址：ws://127.0.0.1:17158
+  reverse_port: 17158 # 返向连接服务端口，启用反向连接后生效
+  master_id: ['3501869534'] # 主人QQ号列表
+```
+
+- 其他平台
+详情请参考[Alemonjs连接平台](https://alemonjs.com/docs/environment)文档
 
 ## 使用
 指令`/ai帮助`查看使用方法
