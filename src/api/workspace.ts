@@ -1,7 +1,8 @@
 import fs from "fs";
 import path from "path";
 
-const BASE = "./public/sandbox/workspaces";
+// 👇 关键：用 __dirname 或 process.cwd() 转成绝对路径
+const BASE = path.resolve(process.cwd(), "public/sandbox/workspaces");
 
 export function getWorkspace(userId: string) {
   const dir = path.join(BASE, userId);
@@ -10,5 +11,5 @@ export function getWorkspace(userId: string) {
     fs.mkdirSync(dir, { recursive: true });
   }
 
-  return dir;
+  return dir; // 👈 现在返回的是绝对路径！
 }
