@@ -46,7 +46,20 @@ export const loadSkillsFromPath = (skillsDir: string) => {
 };
 
 // 获取技能列表的简介和名称
-export const loadSkills = () => {
+// 技能列表缓存
+let skillsCache: Array<{ name: string; description: string }> | null = null;
+
+// 可选: 手动清理缓存
+export const clearSkillsCache = () => {
+  skillsCache = null;
+};
+
+export const loadSkills = (forceReload = false) => {
+  // 命中缓存时直接返回,避免重复读取目录
+  if (!forceReload && skillsCache) {
+    return skillsCache;
+  }
+
   const skillsDir = path.join(currentDir, "../../skills");
   const skills = loadSkillsFromPath(skillsDir);
   const externalSkills = loadExternalSkills();
@@ -61,7 +74,7 @@ export const loadSkills = () => {
       ),
   );
 
-  // console.log(`加载技能: ${uniqueSkills.length}个`);
+  skillsCache = uniqueSkills;
   return uniqueSkills;
 };
 

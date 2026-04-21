@@ -53,10 +53,17 @@ export default onResponse(selects, async (e) => {
 
     console.log("imgs", imgs);
 
+    // 将图片上传到R2,避免图片被风控或者过期无法访问
+    const uploadedImgUrls: string[] = [];
+    for (const imgUrl of imgs) {
+      const uploadedUrl = await uploadImageToR2(imgUrl);
+      uploadedImgUrls.push(uploadedUrl);
+    }
+
     message.send(format(Text("开始修图喵~")));
 
     const res = await availableTools.Photoshop({
-      image_url: imgs,
+      image_url: uploadedImgUrls,
       instruction: content,
     });
 
