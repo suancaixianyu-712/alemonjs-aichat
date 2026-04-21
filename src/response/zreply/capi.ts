@@ -8,6 +8,7 @@ import {
   Text,
   Audio,
   useMessage,
+  Video,
 } from "alemonjs";
 import { log } from "console";
 import OpenAi from "openai";
@@ -24,12 +25,10 @@ import {
   shouldSkipAIReply,
 } from "./getChatConfig";
 import { createTTSMessage } from "./tts";
+import { parseAIReply } from "./tools";
 
 const value = getConfigValue().aiChat || {};
-
 export const selects = onSelects(["message.create", "private.message.create"]);
-let ttsClient: TTSClient;
-
 let currentModel = "派蒙-默认"; // 默认音色
 
 export const CApiReply = async (
@@ -247,190 +246,48 @@ export const CApiReply = async (
       return;
     }
 
-    console.log("AI回复:\n", reply);
+    console.log("AI回复原文:\n", reply);
 
     // 处理消息
     // 提取ai发送的消息有多少条
-    const replyMessages = reply
-      .split(new RegExp(`${cfg.botName}:`, "g"))
-      .slice(1);
+    const aireply = parseAIReply(reply, cfg, message, e);
+    console.log("aireply", aireply);
 
-    const replymessages: { text: string; images: string[]; at: string[] }[] =
-      [];
-    const ttsMessages: { text: string; model: string }[] = [];
-    const nextCommands: string[] = [];
-    const atTargets: string[] = [];
-
-    for (const replyMessage of replyMessages) {
-      // 从消息中提取图片
-      const imageRegex = /<img=(.*?)>/g;
-      let match;
-      const imgUrls: string[] = [];
-      while ((match = imageRegex.exec(replyMessage)) !== null) {
-        imgUrls.push(match[1].trim().replace(/\\/g, "\/"));
-      }
-
-      // 处理好感度变化（通用和特定用户）
-      const affectionRegex = /<([^<>]*?)好感([+-]\d+)>/g;
-      let affectionMatch: RegExpExecArray | null;
-      while ((affectionMatch = affectionRegex.exec(replyMessage)) !== null) {
-        const nickname = affectionMatch[1] || (e.UserName as string);
-        const change = parseInt(affectionMatch[2], 10);
-        if (!isNaN(change) && change !== 0) {
-          console.log(`检测到对${nickname}的好感变化: ${change}`);
-          await redisClient.incrementAffectionLevel(e.guid, nickname, change);
+    if (aireply) {
+      if (aireply.ttsMessages) {
+        for (const ttsMsg of aireply.ttsMessages) {
+          const ttsMessage = await createTTSMessage(
+            ttsMsg.text,
+            new TTSClient(),
+            ttsMsg.model ?? currentModel,
+          );
+          message.send(format(Audio(ttsMessage)));
         }
       }
-
-      // 处理ai将要执行的其他指令
-      const commandRegex = /<command=(.*?)>/g;
-      let commandMatch: RegExpExecArray | null;
-      while ((commandMatch = commandRegex.exec(replyMessage)) !== null) {
-        const command = commandMatch[1].trim();
-        if (command) {
-          console.log(`检测到AI指令: ${command}`);
-          nextCommands.push(command);
-        }
-      }
-
-      // 处理撤回指令
-      const revokeRegex = /<revoke=(.*?)>/g;
-      let revokeMatch: RegExpExecArray | null;
-      while ((revokeMatch = revokeRegex.exec(replyMessage)) !== null) {
-        const revokeTarget = revokeMatch[1].trim();
-        if (revokeTarget) {
-          await message.delete({ messageId: revokeTarget });
-        }
-      }
-
-      // 处理艾特指令
-      const atRegex = /<at=(.*?)>/g;
-      let atMatch: RegExpExecArray | null;
-      while ((atMatch = atRegex.exec(replyMessage)) !== null) {
-        const atTarget = atMatch[1].trim();
-        if (atTarget) {
-          console.log(`检测到艾特指令: ${atTarget}`);
-          atTargets.push(atTarget);
-        }
-      }
-
-      // 处理语音回复
-      const ttsRegex = /<(tts|音色)=([^>]+)>/gi;
-      let ttsMatch: RegExpExecArray | null;
-
-      while ((ttsMatch = ttsRegex.exec(replyMessage)) !== null) {
-        console.log("检测到语音回复");
-
-        const isTTS = ttsMatch[1].toLowerCase() === "tts";
-        const content = ttsMatch[2].trim();
-        if (isTTS) {
-          ttsMessages.push({ text: content, model: currentModel });
-        } else {
-          currentModel = content;
-        }
-      }
-
-      // 组合消息,添加到replymessages数组中
-      replymessages.push({
-        text: replyMessage
-          .replace(imageRegex, "")
-          .replace(ttsRegex, "")
-          .replace(commandRegex, "")
-          .replace(revokeRegex, "")
-          .replace(atRegex, "")
-          .trim(),
-        images: imgUrls,
-        at: atTargets,
-      });
-    }
-    // 记录对话
-    await redisClient.addAIChatHistory(e.guid, res.choices?.[0].message);
-
-    // 发送消息
-    if (cfg.isOpenTTSReply === "1") {
-      // 提前发送语音消息避免等待时间过长
-      ttsClient = new TTSClient();
-      console.log("发送语音", ttsMessages);
-
-      for (const ttsMessage of ttsMessages) {
-        const audioUrl = await createTTSMessage(
-          ttsMessage.text,
-          ttsClient,
-          ttsMessage.model,
-        );
-        if (audioUrl !== "") {
-          await message.send(format(Audio(audioUrl)));
-        }
-      }
-    }
-
-    // 发送消息
-    for (let i = 0; i < replymessages.length; i++) {
-      const { text, images, at } = replymessages[i];
-      const components: any[] = i === 0 ? [Mention(e.UserId)] : [];
-
-      components.push(Text(text));
-
-      for (const img of images) {
-        const isNetworkImage = /^https?:\/\//.test(img);
-        let finalImg: string | null = img;
-
-        // 👉 scbbs 平台处理（下载再上传）
-        if (e.Platform == "scbbs" && isNetworkImage) {
-          const uploadedUrl = await uploadImageToR2(
-            img.replace(
-              "https://imgen.x.ai",
-              value.xaiImgProxy || "https://imgen.x.ai",
+      if (aireply.replyMessages) {
+        for (const msg of aireply.replyMessages) {
+          message.send(
+            format(
+              Text(msg.text),
+              ...(msg.images || []).map((img) => {
+                return /^https?:\/\//.test(img)
+                  ? ImageURL(img)
+                  : ImageFile(img);
+              }),
+              ...(msg.at || []).map((uid) => Mention(uid)),
             ),
           );
-          finalImg = uploadedUrl || null;
-        }
-
-        // 👉 审核逻辑（只在开启时执行）
-        if (cfg.isOpenR18 !== "1" && finalImg) {
-          try {
-            const imgres = await imageReview(finalImg);
-
-            if (imgres?.conclusion === "不合规") {
-              components.push(ImageFile(errorimg));
-              continue;
-            }
-          } catch (err) {}
-        }
-
-        // 👉 正常图片逻辑
-        if (finalImg) {
-          const imageComponent = isNetworkImage
-            ? ImageURL(finalImg)
-            : ImageFile(finalImg);
-          components.push(imageComponent);
-        } else {
-          // 上传失败 fallback
-          components.push(ImageFile(errorimg));
         }
       }
-
-      for (const atTarget of at) {
-        components.push(Mention(atTarget));
-      }
-
-      // 随机 1-3 秒延迟
-      const delay = Math.random() * 2000 + 1000;
-      await new Promise((resolve) => setTimeout(resolve, delay));
-
-      await message.send(format(...components));
     }
+
     return {
-      next: nextCommands.length > 0,
-      commands: nextCommands,
+      next: aireply.nextCommands.length > 0,
+      commands: aireply.nextCommands[0] ? aireply.nextCommands : undefined,
     };
   } catch (error) {
     console.error("AI回复出错", error);
-    // 清理聊天记录
-    await redisClient.clearLastNChatHistory(e.guid, 2);
-    message.send(
-      format(Text("AI回复出错了, 已清理最近2条聊天记录~\n" + error)),
-    );
+    message.send(format(Text("AI回复出错了\n" + error)));
     return {
       next: true,
     };

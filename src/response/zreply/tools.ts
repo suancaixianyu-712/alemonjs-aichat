@@ -21,11 +21,16 @@ const value = getConfigValue().aiChat || {};
 
 const extractImages = (text: string) => {
   const regex = /<img=(.*?)>/g;
+  const regex2 = /!\[[^\]]+\]\(([^)]+)\)/g;
   const result: string[] = [];
   let match;
 
   while ((match = regex.exec(text)) !== null) {
     result.push(match[1].trim().replace(/\\/g, "/"));
+  }
+
+  while ((match = regex2.exec(text)) !== null) {
+    result.push(match[1].trim());
   }
 
   return result;
@@ -54,16 +59,17 @@ const handleRevoke = async (text: string, message: any) => {
   }
 };
 
-const extractTTS = (text: string, list: any[], getModel: () => string) => {
+const extractTTS = (text: string, list: any[]) => {
   const regex = /<(tts|音色)=([^>]+)>/gi;
   let match;
 
   while ((match = regex.exec(text)) !== null) {
     const isTTS = match[1].toLowerCase() === "tts";
     const content = match[2].trim();
-
     if (isTTS) {
-      list.push({ text: content, model: getModel() });
+      list.push({ text: content, model: currentModel });
+    } else {
+      currentModel = content;
     }
   }
 };
@@ -75,6 +81,7 @@ const cleanMessage = (text: string) => {
     .replace(/<command=(.*?)>/g, "")
     .replace(/<revoke=(.*?)>/g, "")
     .replace(/<at=(.*?)>/g, "")
+    .replace(/!\[[^\]]+\]\([^\)]+\)/g, "")
     .trim();
 };
 
@@ -173,25 +180,24 @@ export const parseAIReply = (
   e: any,
   message: any,
 ) => {
-  const replyMessages = newText
-    .split(new RegExp(`${cfg.botName}:`, "g"))
-    .slice(1);
+  const replyMessages = newText.split(new RegExp(`${cfg.botName}:`, "g"));
 
   const replyMessagesResult: any[] = [];
   const ttsMessages: any[] = [];
   const nextCommands: string[] = [];
   const atTargets: string[] = [];
 
-  let currentModel = "";
-
-  for (const replyMessage of replyMessages) {
+  for (let replyMessage of replyMessages) {
+    if (replyMessage.trim() === "" || replyMessage.trim() === "[]") {
+      continue;
+    }
+    replyMessage = replyMessage.trim();
     const imgUrls = extractImages(replyMessage);
-
     handleAffection(replyMessage, e);
     extractCommands(replyMessage, nextCommands);
     handleRevoke(replyMessage, message);
     extractAt(replyMessage, atTargets);
-    extractTTS(replyMessage, ttsMessages, () => currentModel);
+    extractTTS(replyMessage, ttsMessages);
 
     const cleanText = cleanMessage(replyMessage);
 
@@ -260,7 +266,22 @@ export const parseAIOutput = (raw: string): MessageIR[] => {
 
     if (!content) {
       const text = line.replace(/^\w+:/, "").trim();
-      if (text) result.push({ type: "text", content: text });
+      if (text) {
+        const imgs = text.match(/!\[[^\]]+\]\([^\)]+\)/g) || [];
+        if (imgs.length) {
+          imgs.forEach((img) => {
+            const urlMatch = img.match(/!\[[^\]]+\]\([^\)]+\)/);
+            if (urlMatch) {
+              result.push({ type: "image", url: urlMatch[1] });
+            }
+          });
+        }
+
+        result.push({
+          type: "text",
+          content: text.replace(/!\[[^\]]+\]\([^\)]+\)/g, "").trim(),
+        });
+      }
       i++;
       continue;
     }

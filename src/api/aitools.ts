@@ -334,9 +334,36 @@ export const tools: ChatCompletionTool[] = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "getAlemonjsConfig",
+      description: `获取框架配置,详情请参考use-alemon技能说明`,
+      parameters: {
+        type: "object",
+        properties: {
+          key: {
+            type: "string",
+            description: "配置项的键,可用值请参考use-alemon技能说明",
+          },
+          value: {
+            type: "string",
+            description: "查找时传入值,可用值请参考use-alemon技能说明",
+          },
+        },
+      },
+    },
+  },
 ];
 
 export const availableTools = {
+  getAlemonjsConfig: async ({ key, value }) => {
+    if (key == "ailist") {
+      // 获取当前配置
+      return await redisClient.getAIList();
+    }
+  },
+
   MemoryOperation: async ({ userID, operation, dataType, data }) => {
     if (operation === "set") {
       if (dataType === "user") {

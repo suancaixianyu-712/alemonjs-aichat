@@ -1,14 +1,4 @@
-import {
-  Events,
-  useMessage,
-  format,
-  Text,
-  getConfigValue,
-  Audio,
-  Mention,
-  ImageFile,
-  ImageURL,
-} from "alemonjs";
+import { Events, useMessage } from "alemonjs";
 import OpenAi from "openai";
 import {
   buildUserMessage,
@@ -17,23 +7,8 @@ import {
 } from "./getChatConfig";
 import redisClient from "@src/config";
 import { availableTools } from "@src/api/aitools";
-import { TTSClient } from "@src/api/tts";
-import { createTTSMessage } from "./tts";
-import { uploadImageToR2 } from "@src/s3";
-import { imageReview } from "@src/api/review";
-import errorimg from "@src/assets/error.png";
-import {
-  handleTTS,
-  parseAIOutput,
-  parseAIReply,
-  renderMessages,
-  sendReplyMessages,
-} from "./tools";
+import { parseAIOutput, renderMessages } from "./tools";
 import { log } from "console";
-
-let currentModel = "派蒙-默认"; // 默认音色
-let ttsClient: TTSClient;
-const value = getConfigValue().aiChat || {};
 
 export const RApiReply = async (
   e: Events["message.create"] | Events["private.message.create"],

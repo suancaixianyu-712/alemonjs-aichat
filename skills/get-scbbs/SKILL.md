@@ -8,11 +8,13 @@ description: 从scbbs获取信息, scbbs是一个为游戏"生存战争(简称sc
 从scbbs获取信息, scbbs是一个为游戏"生存战争(简称sc)"的沙盒游戏提供的社区论坛, 可以从这里获取最新游戏咨询和玩家上传的资源
 支持获取帖子和资源信息, 以及根据关键词搜索相关内容
 
+api地址https://m.suancaixianyu.cn/api
+
 ## Workflow 1: 搜索帖子
 
 1. 接收用户需要搜索的帖子关键词
 2. 访问scbbs的搜索接口, 获取相关帖子列表
-   - 搜索接口 `curl -s https://m.suancaixianyu.cn/api/post/list?type=1&orderType=3&page=1&limit=10&title={关键词}`
+   - 搜索接口 `GET /post/list?type=1&orderType=3&page=1&limit=10&title={关键词}`
 
 3. 从帖子列表中提取标题、链接和摘要等信息
 4. 将提取的信息整理成易读的格式返回给用户
@@ -21,7 +23,7 @@ description: 从scbbs获取信息, scbbs是一个为游戏"生存战争(简称sc
 
 1. 接收用户需要搜索的资源关键词
 2. 访问scbbs的资源搜索接口, 获取相关资源列表
-   - 搜索接口 `curl -s https://m.suancaixianyu.cn/api/post/list?type=2&orderType=3&page=1&limit=10&title={关键词}`
+   - 搜索接口 `GET /post/list?type=2&orderType=3&page=1&limit=10&title={关键词}`
 
 3. 从资源列表中提取资源名称、下载链接和简介等信息
 4. 将提取的信息整理成易读的格式返回给用户
@@ -29,7 +31,7 @@ description: 从scbbs获取信息, scbbs是一个为游戏"生存战争(简称sc
 ## Workflow 3: 获取最新公告
 
 1. 访问scbbs的公告接口, 获取最新公告列表
-   - 公告接口 `curl -s https://m.suancaixianyu.cn/api/post/top?type=1,2,3`
+   - 公告接口 `GET /post/top?type=1,2,3`
 
 2. 从公告列表中提取公告标题、链接和摘要等信息
 3. 将提取的信息整理成易读的格式返回给用户
@@ -38,7 +40,7 @@ description: 从scbbs获取信息, scbbs是一个为游戏"生存战争(简称sc
 
 1. 接收用户提供的帖子ID
 2. 访问scbbs的帖子详情接口, 获取该帖子的详细信息
-   - 帖子详情接口 `curl -s https://m.suancaixianyu.cn/api/post/detail?id={帖子ID}`
+   - 帖子详情接口 `GET /post/detail?id={帖子ID}`
 
 3. 从帖子详情中提取标题、内容、作者和发布时间等信息
 4. 将提取的信息整理成易读的格式返回给用户
@@ -46,7 +48,7 @@ description: 从scbbs获取信息, scbbs是一个为游戏"生存战争(简称sc
 ## Workflow 4: 获取最近更新的资源
 
 1. 访问scbbs的帖子详情接口, 获取该帖子的详细信息
-   - 帖子详情接口 `curl -s https://m.suancaixianyu.cn/api/post/list?type=2&orderType=3&page=1&limit=5`
+   - 帖子详情接口 `GET /post/list?type=2&orderType=3&page=1&limit=5`
 
 2. 整理最新的资源信息, 包括资源名称、下载链接和简介等信息
 3. 将提取的信息整理成易读的格式返回给用户
