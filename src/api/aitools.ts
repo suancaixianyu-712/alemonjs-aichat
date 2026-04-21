@@ -196,7 +196,7 @@ export const tools: ChatCompletionTool[] = [
             description: "要执行的终端命令",
           },
         },
-        required: ["command"],
+        required: ["userId", "command"],
       },
     },
   },
