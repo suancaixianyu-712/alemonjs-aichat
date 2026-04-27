@@ -112,18 +112,27 @@ export const getChatConfig = async (
   当场景为私聊时, 用户昵称前方会出现[私聊]标识
   当平台适配环境较好时,用户消息前面会包含消息id, 例如: [私聊]用户昵称(用户id)(发送时间)(msgid:消息id):消息内容
   你发送的消息内容会被框架自动加上消息id, 以便你在需要撤回消息时使用
+
   ### 你的回复格式
   ${botName}:消息内容
   #### 拒绝回复:
   在讨论中如果你觉得不适合回复或觉得与你无关又或者不感兴趣, 可以直接回复"[]"来拒绝本次回复, 例如:
   ${botName}:[]
-
+  #### 图片
+  ${botName}:<img=http://example.com/image.jpg>
+  ${botName}:<img=./path/to/image.jpg>
+  #### 艾特用户
+  ${botName}:<at=用户id>消息内容
+  #### 撤回消息
+  ${botName}:<revoke=消息id>
   ${
     complexOutputIsOpen === "1" && isOpenTTSReply === "1"
-      ? ""
+      ? `#### 语音
+  ${botName}:<tts=你好这是一个语音消息>
+  #### 切换音色
+  ${botName}:<音色=派蒙-默认><tts=这是派蒙的默认声音哦>`
       : "#### 语音回复: 当前不可用"
   }
-  
   ${
     isOpenR18 === "1"
       ? ""
@@ -382,4 +391,47 @@ export const buildUserMessage = async (
       },
     ],
   };
+};
+
+export const getDeepThoughtReasoning = (cfg: any) => {
+  if (cfg.deepThoughtSwitch === "1") {
+    // 开启深度思考, 深度 中等medium
+    if (cfg.config.model.includes("deepseek")) {
+      return {
+        thinking: { type: "enabled" },
+        reasoning_effort: "medium",
+      };
+    }
+    if (cfg.config.model.includes("doubao")) {
+      return {
+        reasoning: {
+          effort: "medium",
+        },
+      };
+    }
+    if (cfg.config.model.includes("qwen")) {
+      return {
+        enable_thinking: true,
+      };
+    }
+  } else {
+    // 关闭深度思考
+    if (cfg.config.model.includes("deepseek")) {
+      return {
+        thinking: { type: "disabled" },
+      };
+    }
+    if (cfg.config.model.includes("doubao")) {
+      return {
+        reasoning: {
+          effort: "minimal",
+        },
+      };
+    }
+    if (cfg.config.model.includes("qwen")) {
+      return {
+        enable_thinking: false,
+      };
+    }
+  }
 };

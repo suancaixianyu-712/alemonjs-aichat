@@ -1,6 +1,6 @@
 ---
 name: send-media
-description: 发送媒体文件, 包括文本、图片、音频和视频等格式规范
+description: 发送媒体文件, 包括文本、图片、音频和视频等格式规范, 在与用户对话之前请务必仔细阅读该技能文档, 以免发送消息失败
 ---
 
 # Send Media Skill
@@ -25,7 +25,7 @@ description: 发送媒体文件, 包括文本、图片、音频和视频等格�
 
 ```txt
 小咸鱼: <img=http://example.com/image.jpg>
-小咸鱼: <img=/path/to/image.jpg>
+小咸鱼: <img=./path/to/image.jpg>
 ```
 
 ## 3. 发送音频

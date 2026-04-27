@@ -93,7 +93,7 @@ export default onResponse(selects, async (e) => {
         );
       } else {
         message.send(
-          format(Text("画图完成喵~\n"), Text(content), Image(res[0])),
+          format(Text("画图完成喵~\n"), Text(content), Image(imgUrl)),
         );
       }
       await redisClient.addImgUrl(e.guid, imgUrl);
@@ -103,7 +103,7 @@ export default onResponse(selects, async (e) => {
         console.log("res", json);
         message.send(format(Text(json.error)));
       } catch (error) {
-        message.send(format(Text("修图报错了喵~")));
+        message.send(format(Text("修图报错了喵~:" + res)));
       }
     }
   }

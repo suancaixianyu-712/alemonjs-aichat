@@ -22,6 +22,7 @@ import { imageReview } from "@src/api/review";
 import {
   buildUserMessage,
   getChatConfig,
+  getDeepThoughtReasoning,
   shouldSkipAIReply,
 } from "./getChatConfig";
 import { createTTSMessage } from "./tts";
@@ -72,51 +73,40 @@ export const CApiReply = async (
       createParams["tools"] = cfg.toolConfig.cApiToolList;
       createParams["tool_choice"] = "auto";
     }
-    if (cfg.deepThoughtSwitch === "0") {
-      createParams["verbosity"] = "low";
-    }
+    const deepThoughtReasoning = getDeepThoughtReasoning(cfg);
+    Object.assign(createParams, deepThoughtReasoning);
+    createParams["stream"] = false;
 
-    createParams["stream"] = true;
-
+    log("请求AI，参数：", createParams);
     const stream = (await openai.chat.completions.create(createParams)) as any;
 
+    log("AI回复原始数据:\n", JSON.stringify(stream, null, 2));
     let fullContent = "";
     let toolCalls: any[] = [];
 
-    for await (const chunk of stream) {
-      const delta = chunk.choices?.[0]?.delta;
-      if (!delta) continue;
+    const completion: any = stream;
+    const aiReplyMessage = completion?.choices?.[0]?.message;
 
-      if (delta.content) {
-        fullContent += delta.content;
-      }
+    if (aiReplyMessage?.content) {
+      fullContent = aiReplyMessage.content;
+    }
 
-      if (delta.tool_calls) {
-        for (const tc of delta.tool_calls) {
-          if (tc.index !== undefined) {
-            if (!toolCalls[tc.index]) {
-              toolCalls[tc.index] = {
-                id: tc.id || "",
-                type: "function",
-                function: { name: "", arguments: "" },
-              };
-            }
-            if (tc.id) toolCalls[tc.index].id = tc.id;
-            if (tc.function?.name)
-              toolCalls[tc.index].function.name += tc.function.name;
-            if (tc.function?.arguments)
-              toolCalls[tc.index].function.arguments += tc.function.arguments;
-          }
-        }
-      }
+    if (Array.isArray(aiReplyMessage?.tool_calls)) {
+      toolCalls = aiReplyMessage.tool_calls.map((tc: any) => ({
+        id: tc.id || "",
+        type: "function",
+        function: {
+          name: tc.function?.name || "",
+          arguments: tc.function?.arguments || "",
+        },
+      }));
     }
 
     let res: any = {
       choices: [
         {
           message: {
-            role: "assistant",
-            content: fullContent || null,
+            ...aiReplyMessage,
             tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
           },
         },
@@ -131,15 +121,20 @@ export const CApiReply = async (
     messages.push(usermessage);
     await redisClient.addAIChatHistory(e.guid, usermessage);
 
+    if (res.choices[0].message?.tool_calls && fullContent.trim() !== "") {
+      message.send(format(Text(fullContent)));
+    }
+
     // 检查是否有工具调用需要处理
     while (res.choices[0].message?.tool_calls?.length) {
       const responseMessage = res.choices[0].message as any;
+      log("AI返回工具调用，内容：-----", res.choices[0]);
 
       // 先处理对话
       messages.push(responseMessage);
       await redisClient.addAIChatHistory(e.guid, responseMessage);
 
-      console.log("模型决定调用工具：", responseMessage.tool_calls);
+      log("模型决定调用工具：", responseMessage.tool_calls);
 
       if (cfg.toolConfig.toolPromptSwitch === "1") {
         const useToolsMessage = responseMessage.tool_calls.map((toolCall) => {
@@ -212,6 +207,7 @@ export const CApiReply = async (
           tool_call_id: toolCall.id,
           name: functionName,
           content: toolContent,
+          reasoning_content: responseMessage.reasoning_content || "",
         });
 
         // 记录工具调用结果
@@ -220,16 +216,24 @@ export const CApiReply = async (
           tool_call_id: toolCall.id,
           name: functionName,
           content: toolContent,
+          reasoning_content: responseMessage.reasoning_content || "",
         });
       }
 
-      // 重新请求
-      res = await openai.chat.completions.create({
+      const params: any = {
         model: cfg.config.model,
         messages: messages,
         tools: cfg.toolConfig.cApiToolList,
         tool_choice: "auto",
-      });
+      };
+
+      const deepThoughtReasoning = getDeepThoughtReasoning(cfg);
+      Object.assign(params, deepThoughtReasoning);
+
+      log("重新请求AI，参数：", params);
+
+      // 重新请求
+      res = await openai.chat.completions.create(params);
 
       // 检查是否还有工具调用需要处理
       if (!res.choices || res.choices.length === 0) {
@@ -246,7 +250,7 @@ export const CApiReply = async (
       return;
     }
 
-    console.log("AI回复原文:\n", reply);
+    console.log("AI回复原文:\n", JSON.stringify(res, null, 2));
 
     // 处理消息
     // 提取ai发送的消息有多少条
