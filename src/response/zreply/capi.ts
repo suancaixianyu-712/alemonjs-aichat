@@ -245,7 +245,6 @@ export const CApiReply = async (
     // 如果没有工具调用，处理最终回复
     let reply =
       res.choices?.[0]?.message?.content?.trim() || `${cfg.botName}:[]`;
-    await redisClient.addAIChatHistory(e.guid, res.choices?.[0]?.message);
     if (reply === `${cfg.botName}:[]`) {
       log("AI选择不回复");
       return;

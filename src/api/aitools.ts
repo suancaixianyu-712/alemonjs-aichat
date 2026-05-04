@@ -183,7 +183,7 @@ export const tools: ChatCompletionTool[] = [
     function: {
       name: "exec",
       description:
-        "执行终端命令, 请勿执行高危险性指令, 例如rm -rf /等, 否则可能会导致服务器数据丢失或系统崩溃. 你可以使用这个工具来执行一些简单的命令, 例如查看当前目录下的文件ls, 查看系统状态top等. 当你想要执行一个命令时, 请提供具体的命令文本, 例如'ls -la'或'top -n 1'. 执行结果将会返回给你, 但请注意, 由于安全限制, 某些命令可能无法执行或返回受限的结果",
+        "执行终端命令. 你可以使用这个工具来执行一些简单的命令, 例如查看当前目录下的文件ls, 查看系统状态top等. 当你想要执行一个命令时, 请提供具体的命令文本, 例如'ls -la'或'top -n 1'. 执行结果将会返回给你, 但请注意, 由于安全限制, 某些命令可能无法执行或返回受限的结果",
       parameters: {
         type: "object",
         properties: {
@@ -191,12 +191,16 @@ export const tools: ChatCompletionTool[] = [
             type: "string",
             description: "执行命令的用户ID",
           },
+          groupId: {
+            type: "string",
+            description: "当前群聊ID，私聊时传'private'",
+          },
           command: {
             type: "string",
             description: "要执行的终端命令",
           },
         },
-        required: ["userId", "command"],
+        required: ["userId", "groupId", "command"],
       },
     },
   },
@@ -355,6 +359,51 @@ export const tools: ChatCompletionTool[] = [
     },
   },
 ];
+
+/**
+ * 确保 Docker 容器已创建并运行
+ */
+async function ensureContainerRunning(config: Record<string, any>): Promise<void> {
+  const { containerName, image, memory, cpus, pidsLimit, networkMode } = config;
+  if (!containerName) return;
+
+  return new Promise((resolve) => {
+    // 检查容器是否存在
+    const check = spawn("docker", ["inspect", "-f", "{{.State.Running}}", containerName]);
+    let stdout = "";
+    let stderr = "";
+    check.stdout.on("data", (d: Buffer) => (stdout += d.toString()));
+    check.stderr.on("data", (d: Buffer) => (stderr += d.toString()));
+    check.on("close", (code: number) => {
+      if (code === 0 && stdout.trim() === "true") {
+        // 容器已在运行
+        resolve();
+        return;
+      }
+
+      if (code === 0 && stdout.trim() === "false") {
+        // 容器存在但未运行，启动它
+        const start = spawn("docker", ["start", containerName]);
+        start.on("close", () => resolve());
+        return;
+      }
+
+      // 容器不存在，创建并启动
+      const args = [
+        "run", "-d",
+        "--name", containerName,
+        "--memory", memory || "256m",
+        "--cpus", cpus || "0.5",
+        "--pids-limit", String(pidsLimit || 64),
+        "--network", networkMode || "none",
+        image || "ubuntu:latest",
+        "sleep", "infinity",
+      ];
+      const create = spawn("docker", args);
+      create.on("close", () => resolve());
+    });
+  });
+}
 
 export const availableTools = {
   getAlemonjsConfig: async ({ key, value }) => {
@@ -780,36 +829,46 @@ export const availableTools = {
 
   /**
    * 运行cmd命令
-   * @param exec 命令字符串
+   * @param userId 用户ID
+   * @param groupId 群聊ID，私聊时为"private"
+   * @param command 命令字符串
    * @returns 命令执行结果
    */
-  exec: async ({ userId, command }: { userId: string; command: string }) => {
+  exec: async ({ userId, groupId, command }: { userId: string; groupId: string; command: string }) => {
     const workspace = getWorkspace(userId);
+    const envConfig = await redisClient.getExecEnv(groupId || "private", userId);
+
+    // 系统环境：直接在宿主机执行
+    if (envConfig?.system) {
+      return new Promise((resolve) => {
+        let output = "";
+        const child = spawn("sh", ["-c", command], { cwd: workspace });
+        child.stdout.on("data", (d: Buffer) => (output += d.toString()));
+        child.stderr.on("data", (d: Buffer) => (output += d.toString()));
+        child.on("close", () => resolve(output));
+      });
+    }
+
+    // 容器环境：确保容器存在并启动，然后 docker exec
+    const containerName = envConfig?.containerName;
+    if (!containerName) {
+      return "错误：未找到执行环境配置，请先切换执行环境";
+    }
+
+    // 确保容器已创建并启动
+    await ensureContainerRunning(envConfig);
 
     return new Promise((resolve) => {
+      let output = "";
       const child = spawn("docker", [
-        "run",
-        "--rm",
-        "--memory=256m",
-        "--cpus=0.5",
-        "--pids-limit=64",
-        "--network=none",
-        "--read-only",
-        "-v",
-        `${workspace}:/workspace`,
-        "-w",
-        "/workspace",
-        "alpine",
+        "exec",
+        containerName,
         "sh",
         "-c",
         command,
       ]);
-
-      let output = "";
-
-      child.stdout.on("data", (d) => (output += d.toString()));
-      child.stderr.on("data", (d) => (output += d.toString()));
-
+      child.stdout.on("data", (d: Buffer) => (output += d.toString()));
+      child.stderr.on("data", (d: Buffer) => (output += d.toString()));
       child.on("close", () => resolve(output));
     });
   },

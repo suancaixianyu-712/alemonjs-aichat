@@ -2,6 +2,79 @@ import Redis, { RedisOptions } from "ioredis";
 import { getConfigValue } from "alemonjs";
 import { AIConfig } from "./types";
 import { availableTools, tools } from "./api/aitools";
+import fs from "fs";
+import path from "path";
+
+/** 常见的 Redis Unix Socket 路径 */
+const REDIS_SOCKET_PATHS = [
+  "/var/run/redis/redis-server.sock",
+  "/run/redis/redis-server.sock",
+  "/tmp/redis.sock",
+  "/var/run/redis/redis.sock",
+];
+
+/**
+ * 检查 Unix Socket 是否可用
+ * @returns 可用的 socket 路径，或 null
+ */
+function detectRedisSocket(): string | null {
+  for (const socketPath of REDIS_SOCKET_PATHS) {
+    try {
+      if (fs.existsSync(socketPath)) {
+        // 尝试访问 socket 文件
+        const stat = fs.statSync(socketPath);
+        if (stat.isSocket()) {
+          console.log(`[Redis] 检测到可用的 Unix Socket: ${socketPath}`);
+          return socketPath;
+        }
+      }
+    } catch (err) {
+      // 忽略错误，继续检查下一个路径
+    }
+  }
+  return null;
+}
+
+/**
+ * 创建 Redis 连接，优先使用 Unix Socket（如果可用且未配置 host）
+ */
+function createRedisConnection(config?: RedisOptions): Redis {
+  const configValue = getConfigValue();
+  const aiChatConfig = configValue.aiChat || {};
+  const configuredHost = aiChatConfig.redis?.host;
+  const configuredPort = aiChatConfig.redis?.port;
+  const password = aiChatConfig.redis?.password ?? "";
+
+  // 如果配置了 host（非空），直接使用配置
+  if (configuredHost && configuredHost.trim() !== "") {
+    console.log(`[Redis] 当前连接方式: TCP (${configuredHost}:${configuredPort || 6379})`);
+    return new Redis({
+      host: configuredHost,
+      port: configuredPort ?? 6379,
+      password,
+    });
+  }
+
+  // 未配置 host，尝试检测 Unix Socket
+  const socketPath = detectRedisSocket();
+  if (socketPath) {
+    console.log(`[Redis] 当前连接方式: Unix Socket (${socketPath})`);
+    return new Redis({
+      path: socketPath,
+      password,
+      lazyConnect: true,
+    });
+  }
+
+  // 没有 Unix Socket，使用默认 TCP
+  console.log(`[Redis] 当前连接方式: TCP (localhost:6379)`);
+  return new Redis({
+    host: "localhost",
+    port: 6379,
+    password,
+  lazyConnect: true,
+  });
+}
 
 class db {
   redis: Redis;
@@ -18,10 +91,7 @@ class db {
   };
 
   constructor(redisConfig?: RedisOptions) {
-    this.redis =
-      redisConfig && Object.keys(redisConfig).length > 0
-        ? new Redis(redisConfig)
-        : new Redis(); // 默认配置
+    this.redis = createRedisConnection(redisConfig);
   }
 
   /** 获取提示词优化内容 */
@@ -584,6 +654,136 @@ class db {
   }
 
   /** --------------------------------------------------------- */
+  /** 容器管理 */
+
+  /** 获取群容器配置 */
+  async getGroupContainer(groupId: string): Promise<Record<string, any> | null> {
+    const str = await this.redis.get(`ai:container:group:${groupId}`);
+    return str ? JSON.parse(str) : null;
+  }
+
+  /** 设置群容器配置 */
+  async setGroupContainer(groupId: string, config: Record<string, any>): Promise<void> {
+    await this.redis.set(`ai:container:group:${groupId}`, JSON.stringify(config));
+  }
+
+  /** 获取用户容器配置 */
+  async getUserContainer(userId: string): Promise<Record<string, any> | null> {
+    const str = await this.redis.get(`ai:container:user:${userId}`);
+    return str ? JSON.parse(str) : null;
+  }
+
+  /** 设置用户容器配置 */
+  async setUserContainer(userId: string, config: Record<string, any>): Promise<void> {
+    await this.redis.set(`ai:container:user:${userId}`, JSON.stringify(config));
+  }
+
+  /** 获取用户当前 exec 环境配置（按群隔离） */
+  async getExecEnv(groupId: string, userId: string): Promise<Record<string, any> | null> {
+    const key = groupId === "private"
+      ? `ai:container:env:private:${userId}`
+      : `ai:container:env:${groupId}:${userId}`;
+    const str = await this.redis.get(key);
+    return str ? JSON.parse(str) : null;
+  }
+
+  /** 设置用户当前 exec 环境配置（按群隔离） */
+  async setExecEnv(groupId: string, userId: string, config: Record<string, any>): Promise<void> {
+    const key = groupId === "private"
+      ? `ai:container:env:private:${userId}`
+      : `ai:container:env:${groupId}:${userId}`;
+    await this.redis.set(key, JSON.stringify(config));
+  }
+
+  /** 创建群容器（首次触发时自动创建） */
+  async ensureGroupContainer(groupId: string): Promise<Record<string, any>> {
+    const existing = await this.getGroupContainer(groupId);
+    if (existing) return existing;
+
+    const configValue = getConfigValue();
+    const containerConf = configValue.aiChat?.groupContainer || {};
+    const image = containerConf.image || "ubuntu:latest";
+    const containerName = `aichat_grp_${groupId}`;
+
+    const config = {
+      containerName,
+      image,
+      memory: containerConf.memory || "256m",
+      cpus: containerConf.cpus || "0.5",
+      pidsLimit: containerConf.pidsLimit || 64,
+      networkMode: containerConf.networkMode || "none",
+    };
+    await this.setGroupContainer(groupId, config);
+    return config;
+  }
+
+  /** 创建用户容器（手动切换或私聊首次触发时创建） */
+  async ensureUserContainer(userId: string): Promise<Record<string, any>> {
+    const existing = await this.getUserContainer(userId);
+    if (existing) return existing;
+
+    const configValue = getConfigValue();
+    const containerConf = configValue.aiChat?.userContainer || {};
+    const image = containerConf.image || "ubuntu:latest";
+    const containerName = `aichat_usr_${userId}`;
+
+    const config = {
+      containerName,
+      image,
+      memory: containerConf.memory || "128m",
+      cpus: containerConf.cpus || "0.25",
+      pidsLimit: containerConf.pidsLimit || 32,
+      networkMode: containerConf.networkMode || "none",
+    };
+    await this.setUserContainer(userId, config);
+    return config;
+  }
+
+  /** 初始化用户 exec 环境（群聊默认群容器，私聊默认用户容器） */
+  async initExecEnv(groupId: string, userId: string): Promise<Record<string, any>> {
+    const existing = await this.getExecEnv(groupId, userId);
+    if (existing) return existing;
+
+    if (groupId === "private") {
+      // 私聊默认用户容器
+      const userConfig = await this.ensureUserContainer(userId);
+      await this.setExecEnv("private", userId, userConfig);
+      return userConfig;
+    } else {
+      // 群聊默认群容器
+      const groupConfig = await this.ensureGroupContainer(groupId);
+      await this.setExecEnv(groupId, userId, groupConfig);
+      return groupConfig;
+    }
+  }
+
+  /** 切换到群容器 */
+  async switchToGroupContainer(groupId: string, userId: string): Promise<Record<string, any>> {
+    const groupConfig = await this.ensureGroupContainer(groupId);
+    await this.setExecEnv(groupId, userId, groupConfig);
+    return groupConfig;
+  }
+
+  /** 切换到用户容器 */
+  async switchToUserContainer(groupId: string, userId: string): Promise<Record<string, any>> {
+    const userConfig = await this.ensureUserContainer(userId);
+    await this.setExecEnv(groupId, userId, userConfig);
+    return userConfig;
+  }
+
+  /** 切换到系统环境 */
+  async switchToSystemEnv(userId: string): Promise<void> {
+    await this.setExecEnv("private", userId, { system: true });
+  }
+
+  /** 判断是否为超级管理员 */
+  isSuperAdmin(userId: string): boolean {
+    const configValue = getConfigValue();
+    const superAdmins = configValue.aiChat?.superAdmin || [];
+    return superAdmins.includes(userId);
+  }
+
+  /** --------------------------------------------------------- */
 
   /** 禁用工具 */
   async disableTool(guid: string, toolName: string): Promise<void> {
@@ -651,10 +851,8 @@ class db {
 
 const configValue = getConfigValue();
 const aiChatConfig = configValue.aiChat || {};
-const redisClient = new db({
-  host: aiChatConfig.redis?.host ?? "localhost",
-  port: aiChatConfig.redis?.port ?? 6379,
-  password: aiChatConfig.redis?.password ?? "",
-});
+
+// 使用自动检测 Unix Socket 的连接方式
+const redisClient = new db();
 
 export default redisClient;

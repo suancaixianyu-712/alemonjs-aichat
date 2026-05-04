@@ -19,6 +19,13 @@ export default onMiddleware(selects, async (event, next) => {
   event["nickname"] =
     `${event.name === "private.message.create" ? "[私信]" : ""}${event.UserName}(${event.UserId})`; // 昵称(用户名+QQ号)
 
+  // 初始化 exec 环境（群容器为默认）
+  if (event.name === "private.message.create") {
+    await redisClient.initExecEnv("private", event.UserId);
+  } else {
+    await redisClient.initExecEnv(event.guid, event.UserId);
+  }
+
   if (event.Platform == "testone") {
     // 处理图片消息
     event["img"] = event.value

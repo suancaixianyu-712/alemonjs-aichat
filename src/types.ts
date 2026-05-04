@@ -4,6 +4,15 @@ export interface EventMessageCreate extends PublicEventMessageCreate {
   user_id: string;
 }
 
+export interface ContainerConfig {
+  image: string;
+  memory?: string;
+  cpus?: string;
+  pidsLimit?: number;
+  networkMode?: string;
+  [key: string]: any;
+}
+
 export interface AIChatConfig {
   searchApiKey: string;
   xaiImgProxy?: string;
@@ -16,6 +25,9 @@ export interface AIChatConfig {
     port: number;
     password: string;
   };
+  superAdmin?: string[];
+  groupContainer?: ContainerConfig;
+  userContainer?: ContainerConfig;
 }
 
 export interface AIConfig {

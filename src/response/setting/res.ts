@@ -25,6 +25,7 @@ export default onResponse(selects, async (e, next) => {
     availableTools.exec({
       command: "echo hello world",
       userId: e.UserId,
+      groupId: e.guid || "private",
     });
 
     message.send(format(Text("测试消息")));
@@ -719,5 +720,47 @@ export default onResponse(selects, async (e, next) => {
     );
     return;
   }
+
+  // 切换群容器
+  if (/(\/|#)切换群容器$/i.test(e.msg)) {
+    if (e.Name === "private.message.create") {
+      message.send(format(Text("私聊中无法切换群容器，请在群聊中使用！")));
+      return;
+    }
+    const groupId = e.guid;
+    const config = await redisClient.switchToGroupContainer(groupId, e.UserId);
+    message.send(
+      format(Text(`已切换到群容器\n容器: ${config.containerName}\n镜像: ${config.image}`)),
+    );
+    return;
+  }
+
+  // 切换用户容器
+  if (/(\/|#)切换用户容器$/i.test(e.msg)) {
+    const groupId = e.Name === "private.message.create" ? "private" : e.guid;
+    const config = await redisClient.switchToUserContainer(groupId, e.UserId);
+    message.send(
+      format(Text(`已切换到用户容器\n容器: ${config.containerName}\n镜像: ${config.image}`)),
+    );
+    return;
+  }
+
+  // 切换系统环境
+  if (/(\/|#)切换系统环境$/i.test(e.msg)) {
+    // 仅私聊可用
+    if (e.Name !== "private.message.create") {
+      message.send(format(Text("切换系统环境仅在私聊中可用！")));
+      return;
+    }
+    // 仅超级管理员可用
+    if (!redisClient.isSuperAdmin(e.UserId)) {
+      message.send(format(Text("你没有权限切换到系统环境！")));
+      return;
+    }
+    await redisClient.switchToSystemEnv(e.UserId);
+    message.send(format(Text("已切换到系统环境，exec 指令将在宿主机上执行。")));
+    return;
+  }
+
   next();
 });
