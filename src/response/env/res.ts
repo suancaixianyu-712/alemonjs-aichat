@@ -1,4 +1,4 @@
-import { Text, useMessage, getConfigValue } from "alemonjs";
+﻿import { Text, useMessage, getConfigValue } from "alemonjs";
 import { onResponse, onSelects } from "alemonjs";
 import { getExecCommandEnv, getUserEnv, setUserEnv, initUserEnv, switchToSystem, switchToGroup, switchToUser, switchToRemote, switchToSingularity, getEnvDescription, listAvailableEnvs } from "@src/userEnv";
 import { remoteNodeManager } from "@src/remoteNodes";
@@ -13,7 +13,7 @@ export default onResponse(selects, async (e, next) => {
   // 查看当前环境
   // ====================
   if (/^(\/|#)查看环境$/i.test(e.msg)) {
-    const groupId = e.Name === "private.message.create" ? "private" : e.guid;
+    const groupId = e.name === "private.message.create" ? "private" : e.guid;
     
     // 初始化环境（如果未设置）
     await initUserEnv(groupId, e.UserId);
@@ -33,7 +33,7 @@ export default onResponse(selects, async (e, next) => {
   // ====================
   if (/^(\/|#)切换环境\s+system$/i.test(e.msg)) {
     // 仅私聊可用
-    if (e.Name !== "private.message.create") {
+    if (e.name !== "private.message.create") {
       message.send(Text("切换系统环境仅在私聊中可用！"));
       return;
     }
@@ -53,7 +53,7 @@ export default onResponse(selects, async (e, next) => {
   // 切换环境 - 群容器
   // ====================
   if (/^(\/|#)切换环境\s+group$/i.test(e.msg)) {
-    if (e.Name === "private.message.create") {
+    if (e.name === "private.message.create") {
       message.send(Text("私聊无法切换到群容器，请在群聊中使用！"));
       return;
     }
@@ -66,7 +66,7 @@ export default onResponse(selects, async (e, next) => {
   // 切换环境 - 用户容器
   // ====================
   if (/^(\/|#)切换环境\s+user$/i.test(e.msg)) {
-    const groupId = e.Name === "private.message.create" ? "private" : e.guid;
+    const groupId = e.name === "private.message.create" ? "private" : e.guid;
     const result = await switchToUser(groupId, e.UserId);
     message.send(Text(result));
     return;
@@ -82,7 +82,7 @@ export default onResponse(selects, async (e, next) => {
       return;
     }
     const nodeName = match[2];
-    const groupId = e.Name === "private.message.create" ? "private" : e.guid;
+    const groupId = e.name === "private.message.create" ? "private" : e.guid;
     const result = await switchToRemote(groupId, e.UserId, nodeName);
     message.send(Text(result));
     return;
@@ -99,7 +99,7 @@ export default onResponse(selects, async (e, next) => {
     }
     const nodeName = match[2];
     const image = match[3] || undefined;
-    const groupId = e.Name === "private.message.create" ? "private" : e.guid;
+    const groupId = e.name === "private.message.create" ? "private" : e.guid;
     const result = await switchToSingularity(groupId, e.UserId, nodeName, image);
     message.send(Text(result));
     return;
@@ -119,7 +119,7 @@ export default onResponse(selects, async (e, next) => {
     const script = match[2].trim();
     
     // 获取当前环境
-    const groupId = e.Name === "private.message.create" ? "private" : e.guid;
+    const groupId = e.name === "private.message.create" ? "private" : e.guid;
     const env = await getUserEnv(groupId, e.UserId);
     
     if (!env || (env.type !== "remote" && env.type !== "singularity")) {
@@ -164,7 +164,7 @@ export default onResponse(selects, async (e, next) => {
     const jobId = match?.[2] || undefined;
     
     // 获取当前环境
-    const groupId = e.Name === "private.message.create" ? "private" : e.guid;
+    const groupId = e.name === "private.message.create" ? "private" : e.guid;
     const env = await getUserEnv(groupId, e.UserId);
     
     if (!env || (env.type !== "remote" && env.type !== "singularity")) {
@@ -196,7 +196,7 @@ export default onResponse(selects, async (e, next) => {
     const jobId = match[2];
     
     // 获取当前环境
-    const groupId = e.Name === "private.message.create" ? "private" : e.guid;
+    const groupId = e.name === "private.message.create" ? "private" : e.guid;
     const env = await getUserEnv(groupId, e.UserId);
     
     if (!env || (env.type !== "remote" && env.type !== "singularity")) {
@@ -230,7 +230,7 @@ export default onResponse(selects, async (e, next) => {
     const jobId = match[2];
     
     // 获取当前环境
-    const groupId = e.Name === "private.message.create" ? "private" : e.guid;
+    const groupId = e.name === "private.message.create" ? "private" : e.guid;
     const env = await getUserEnv(groupId, e.UserId);
     
     if (!env || (env.type !== "remote" && env.type !== "singularity")) {
@@ -255,7 +255,7 @@ export default onResponse(selects, async (e, next) => {
   // 列出 Slurm 作业
   if (/^(\/|#)slurm\s+列表$/i.test(e.msg)) {
     // 获取当前环境
-    const groupId = e.Name === "private.message.create" ? "private" : e.guid;
+    const groupId = e.name === "private.message.create" ? "private" : e.guid;
     const env = await getUserEnv(groupId, e.UserId);
     
     if (!env || (env.type !== "remote" && env.type !== "singularity")) {
@@ -311,7 +311,7 @@ export default onResponse(selects, async (e, next) => {
   // 列出远程节点上的 Singularity 镜像
   if (/^(\/|#)列出镜像\s*(\S*)$/i.test(e.msg)) {
     // 获取当前环境
-    const groupId = e.Name === "private.message.create" ? "private" : e.guid;
+    const groupId = e.name === "private.message.create" ? "private" : e.guid;
     const env = await getUserEnv(groupId, e.UserId);
     
     let nodeName = "";

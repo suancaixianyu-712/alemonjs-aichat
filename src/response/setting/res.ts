@@ -1,4 +1,4 @@
-import { availableTools } from "@src/api/aitools";
+﻿import { availableTools } from "@src/api/aitools";
 import redisClient from "@src/config";
 import { Text, useMessage, getConfigValue } from "alemonjs";
 import { log } from "console";
@@ -723,7 +723,7 @@ export default onResponse(selects, async (e, next) => {
 
   // 切换群容器
   if (/(\/|#)切换群容器$/i.test(e.msg)) {
-    if (e.Name === "private.message.create") {
+    if (e.name === "private.message.create") {
       message.send(format(Text("私聊中无法切换群容器，请在群聊中使用！")));
       return;
     }
@@ -737,7 +737,7 @@ export default onResponse(selects, async (e, next) => {
 
   // 切换用户容器
   if (/(\/|#)切换用户容器$/i.test(e.msg)) {
-    const groupId = e.Name === "private.message.create" ? "private" : e.guid;
+    const groupId = e.name === "private.message.create" ? "private" : e.guid;
     const config = await redisClient.switchToUserContainer(groupId, e.UserId);
     message.send(
       format(Text(`已切换到用户容器\n容器: ${config.containerName}\n镜像: ${config.image}`)),
@@ -748,7 +748,7 @@ export default onResponse(selects, async (e, next) => {
   // 切换系统环境
   if (/(\/|#)切换系统环境$/i.test(e.msg)) {
     // 仅私聊可用
-    if (e.Name !== "private.message.create") {
+    if (e.name !== "private.message.create") {
       message.send(format(Text("切换系统环境仅在私聊中可用！")));
       return;
     }
