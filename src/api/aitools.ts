@@ -6,12 +6,14 @@ import { TTSClient } from "./tts";
 import { ChatCompletionTool } from "openai/resources";
 import { loadSkillDetail } from "./loadSkill";
 import help from "@src/data/help.json";
-import redisClient from "@src/config";
+import { redis as redisClient } from "../redis";
 import { isPrivateIP, validateURL } from "./security";
 import { spawn } from "child_process";
 import * as dns from "node:dns/promises";
 import path from "node:path";
 import { getWorkspace } from "./workspace";
+import { getExecCommandEnv } from "../userEnv";
+import { remoteNodeManager } from "../remoteNodes";
 
 const value = getConfigValue().aiChat || {};
 
@@ -836,10 +838,42 @@ export const availableTools = {
    */
   exec: async ({ userId, groupId, command }: { userId: string; groupId: string; command: string }) => {
     const workspace = getWorkspace(userId);
-    const envConfig = await redisClient.getExecEnv(groupId || "private", userId);
-
+    
+    // 使用新的环境管理获取执行环境
+    const envInfo = await getExecCommandEnv(groupId || "private", userId);
+    
+    // 远程节点环境：通过 SSH 执行
+    if (envInfo.type === "remote" && envInfo.nodeName) {
+      try {
+        const result = await remoteNodeManager.execute(envInfo.nodeName, command);
+        return result || "命令执行完成，无输出";
+      } catch (err: any) {
+        return `远程执行失败: ${err.message}`;
+      }
+    }
+    
+    // Singularity 容器环境：通过远程节点的 Singularity 执行
+    if (envInfo.type === "singularity" && envInfo.nodeName) {
+      try {
+        const node = remoteNodeManager.getNode(envInfo.nodeName);
+        if (!node) {
+          return `未找到远程节点: ${envInfo.nodeName}`;
+        }
+        const image = envInfo.singularityImage || node.defaultImage;
+        if (!image) {
+          return "未指定 Singularity 镜像，请在切换环境时指定或配置 defaultImage";
+        }
+        // 构建 singularity exec 命令
+        const singularityCmd = `singularity exec ${image} sh -c '${command.replace(/'/g, "'\''")}'`;
+        const result = await remoteNodeManager.execute(envInfo.nodeName, singularityCmd);
+        return result || "命令执行完成，无输出";
+      } catch (err: any) {
+        return `Singularity 执行失败: ${err.message}`;
+      }
+    }
+    
     // 系统环境：直接在宿主机执行
-    if (envConfig?.system) {
+    if (envInfo.type === "system") {
       return new Promise((resolve) => {
         let output = "";
         const child = spawn("sh", ["-c", command], { cwd: workspace });
@@ -849,7 +883,8 @@ export const availableTools = {
       });
     }
 
-    // 容器环境：确保容器存在并启动，然后 docker exec
+    // 容器环境（group/user）：确保容器存在并启动，然后 docker exec
+    const envConfig = await redisClient.getExecEnv(groupId || "private", userId);
     const containerName = envConfig?.containerName;
     if (!containerName) {
       return "错误：未找到执行环境配置，请先切换执行环境";
