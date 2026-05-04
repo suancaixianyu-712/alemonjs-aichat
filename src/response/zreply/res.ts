@@ -182,19 +182,24 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
     return;
   }
 
-  // 当e.at不存在时,只给20%概率继续执行, 当e.at存在时,概率为40%,当e.atBot存在时,概率为100%
-  const rand = Math.random();
+  // 正则触发的消息跳过概率过滤，直接响应
+  if (e["regexTriggered"]) {
+    console.log("正则规则匹配, 直接触发AI回复");
+  } else {
+    // 当e.at不存在时,只给20%概率继续执行, 当e.at存在时,概率为40%,当e.atBot存在时,概率为100%
+    const rand = Math.random();
 
-  if (e.Name !== "private.message.create") {
-    if (proactiveSwitch !== "1" && e.at && !e.atBot) {
-      console.log("未开启主动搭话, 跳过AI回复");
-      next();
-      return;
-    }
-    if ((!e.at && rand > 0.1) || (e.at && !e.atBot && rand > 0.2)) {
-      console.log("跳过AI回复");
-      next();
-      return;
+    if (e.Name !== "private.message.create") {
+      if (proactiveSwitch !== "1" && e.at && !e.atBot) {
+        console.log("未开启主动搭话, 跳过AI回复");
+        next();
+        return;
+      }
+      if ((!e.at && rand > 0.1) || (e.at && !e.atBot && rand > 0.2)) {
+        console.log("跳过AI回复");
+        next();
+        return;
+      }
     }
   }
 

@@ -308,7 +308,16 @@ export default onMiddleware(selects, async (event, next) => {
   );
   if (atTriggerSwitch === "1" && event.Platform !== "testone") {
     if (!event["atBot"] && event.name !== "private.message.create") {
-      event["Xianyu"] = false; // 跳过所有指令,继续执行后续的处理函数
+      // 检查是否匹配正则触发规则
+      const regexMatched = await redisClient.matchRegexRule(
+        event.ChannelId ?? event.UserId,
+        event.msg || "",
+      );
+      if (regexMatched) {
+        event["regexTriggered"] = true; // 标记为正则触发
+      } else {
+        event["Xianyu"] = false; // 跳过所有指令,继续执行后续的处理函数
+      }
     }
   }
 

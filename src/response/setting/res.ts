@@ -524,6 +524,65 @@ export default onResponse(selects, async (e, next) => {
     );
   }
 
+  // 添加正则规则
+  if (/(\/|#)添加正则规则 (.+)$/i.test(e.msg)) {
+    const match = e.msg.match(/(\/|#)添加正则规则 (.+)$/i);
+    if (!match) {
+      message.send(
+        format(Text("格式错误，请按照 格式：/添加正则规则 <正则表达式> 进行添加")),
+      );
+      return;
+    }
+    const [, , rule] = match;
+    const success = await redisClient.addRegexRule(e.guid, rule.trim());
+    if (!success) {
+      message.send(format(Text("添加失败，规则已存在或正则表达式不合法！")));
+      return;
+    }
+    message.send(format(Text(`正则规则添加成功：${rule.trim()}`)));
+    return;
+  }
+
+  // 删除正则规则
+  if (/(\/|#)(删除|移除)正则规则 (.+)$/i.test(e.msg)) {
+    const match = e.msg.match(/(\/|#)(删除|移除)正则规则 (.+)$/i);
+    if (!match) {
+      message.send(
+        format(Text("格式错误，请按照 格式：/删除正则规则 <规则序号或内容> 进行删除")),
+      );
+      return;
+    }
+    const [, , , ruleOrIndex] = match;
+    const success = await redisClient.removeRegexRule(e.guid, ruleOrIndex.trim());
+    if (!success) {
+      message.send(format(Text("删除失败，未找到该规则！")));
+      return;
+    }
+    message.send(format(Text("正则规则删除成功！")));
+    return;
+  }
+
+  // 查看正则规则列表
+  if (/(\/|#)正则规则列表$/i.test(e.msg)) {
+    const rules = await redisClient.getRegexRules(e.guid);
+    if (rules.length === 0) {
+      message.send(format(Text("当前没有配置任何正则触发规则。")));
+      return;
+    }
+    const ruleList = rules
+      .map((rule, index) => `${index + 1}. ${rule}`)
+      .join("\n");
+    message.send(format(Text(`当前正则触发规则列表：\n${ruleList}`)));
+    return;
+  }
+
+  // 清空正则规则
+  if (/(\/|#)清空正则规则$/i.test(e.msg)) {
+    await redisClient.clearRegexRules(e.guid);
+    message.send(format(Text("已清空所有正则触发规则！")));
+    return;
+  }
+
   // 设置仅艾特触发
   if (/(\/|#)(开启|关闭)仅艾特触发$/i.test(e.msg)) {
     const match = e.msg.match(/(\/|#)(开启|关闭)仅艾特触发$/i);

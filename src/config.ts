@@ -508,6 +508,83 @@ class db {
     await this.redis.set(`ai:at_trigger:switch:${guid}`, enable ? "1" : "0");
   }
 
+  /** --------------------------------------------------------- */
+  /** 正则触发规则 */
+
+  /** 获取正则触发规则列表 */
+  async getRegexRules(guid: string): Promise<string[]> {
+    const rulesStr = await this.redis.get(`ai:regex_rules:${guid}`);
+    if (rulesStr) {
+      return JSON.parse(rulesStr);
+    }
+    return [];
+  }
+
+  /** 设置正则触发规则列表 */
+  async setRegexRules(guid: string, rules: string[]): Promise<void> {
+    await this.redis.set(`ai:regex_rules:${guid}`, JSON.stringify(rules));
+  }
+
+  /** 添加正则触发规则 */
+  async addRegexRule(guid: string, rule: string): Promise<boolean> {
+    // 验证正则表达式是否合法
+    try {
+      new RegExp(rule);
+    } catch {
+      return false;
+    }
+    const rules = await this.getRegexRules(guid);
+    if (rules.includes(rule)) {
+      return false; // 规则已存在
+    }
+    rules.push(rule);
+    await this.setRegexRules(guid, rules);
+    return true;
+  }
+
+  /** 删除正则触发规则 */
+  async removeRegexRule(guid: string, ruleOrIndex: string): Promise<boolean> {
+    const rules = await this.getRegexRules(guid);
+    // 尝试按索引删除
+    const index = parseInt(ruleOrIndex, 10);
+    if (!isNaN(index) && index >= 0 && index < rules.length) {
+      rules.splice(index, 1);
+      await this.setRegexRules(guid, rules);
+      return true;
+    }
+    // 按规则内容删除
+    const ruleIndex = rules.indexOf(ruleOrIndex);
+    if (ruleIndex === -1) {
+      return false;
+    }
+    rules.splice(ruleIndex, 1);
+    await this.setRegexRules(guid, rules);
+    return true;
+  }
+
+  /** 检查消息是否匹配正则触发规则 */
+  async matchRegexRule(guid: string, message: string): Promise<boolean> {
+    const rules = await this.getRegexRules(guid);
+    for (const rule of rules) {
+      try {
+        const regex = new RegExp(rule);
+        if (regex.test(message)) {
+          return true;
+        }
+      } catch {
+        // 跳过无效的正则
+      }
+    }
+    return false;
+  }
+
+  /** 清空正则触发规则 */
+  async clearRegexRules(guid: string): Promise<void> {
+    await this.redis.del(`ai:regex_rules:${guid}`);
+  }
+
+  /** --------------------------------------------------------- */
+
   /** 禁用工具 */
   async disableTool(guid: string, toolName: string): Promise<void> {
     await this.redis.set(`ai:tool:disable:${guid}:${toolName}`, "1");
