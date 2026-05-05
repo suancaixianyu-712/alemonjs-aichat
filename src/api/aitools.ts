@@ -6,7 +6,7 @@ import { TTSClient } from "./tts";
 import { ChatCompletionTool } from "openai/resources";
 import { loadSkillDetail } from "./loadSkill";
 import help from "@src/data/help.json";
-import { redis as redisClient } from "../redis";
+import redisClient from "../config";
 import { isPrivateIP, validateURL } from "./security";
 import { spawn } from "child_process";
 import * as dns from "node:dns/promises";

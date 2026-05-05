@@ -400,7 +400,7 @@ export default onResponse(selects, async (e, next) => {
   if (
     /(\/|#)(关闭|禁止|不可以|不允许|开启|可以|允许)(涩涩|色色)$/i.test(e.msg)
   ) {
-    if (!e.IsMaster || String(e.UserId) != "3501869534") {
+    if (!e.IsMaster) {
       return;
     }
     const match = e.msg.match(
@@ -618,7 +618,7 @@ export default onResponse(selects, async (e, next) => {
 
   // 控制工具提示开关
   if (/(\/|#)(开启|关闭)工具(调用)?提示$/i.test(e.msg)) {
-    if (!e.IsMaster || String(e.UserId) != "3501869534") {
+    if (!e.IsMaster) {
       return;
     }
     const match = e.msg.match(/(\/|#)(开启|关闭)工具(调用)?提示$/i);
@@ -641,7 +641,7 @@ export default onResponse(selects, async (e, next) => {
 
   // 控制工具提示撤回开关
   if (/(\/|#)(开启|关闭)工具(调用)?提示撤回$/i.test(e.msg)) {
-    if (!e.IsMaster || String(e.UserId) != "3501869534") {
+    if (!e.IsMaster) {
       return;
     }
     const match = e.msg.match(/(\/|#)(开启|关闭)工具(调用)?提示撤回$/i);
@@ -666,7 +666,7 @@ export default onResponse(selects, async (e, next) => {
 
   // 控制工具调用提示详情开关
   if (/(\/|#)(开启|关闭)工具(调用)?提示详情$/i.test(e.msg)) {
-    if (!e.IsMaster || String(e.UserId) != "3501869534") {
+    if (!e.IsMaster) {
       return;
     }
     const match = e.msg.match(/(\/|#)(开启|关闭)工具(调用)?提示详情$/i);
@@ -691,7 +691,7 @@ export default onResponse(selects, async (e, next) => {
 
   // 控制工具开关
   if (/(\/|#)(开启|关闭)工具(.*)$/i.test(e.msg)) {
-    if (!e.IsMaster || String(e.UserId) != "3501869534") {
+    if (!e.IsMaster) {
       return;
     }
     const match = e.msg.match(/(\/|#)(开启|关闭)工具(.*)$/i);

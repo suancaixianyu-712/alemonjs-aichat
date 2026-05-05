@@ -31,7 +31,7 @@ export async function getUserEnv(groupId: string, userId: string): Promise<UserE
     ? `ai:user:env:private:${userId}`
     : `ai:user:env:${groupId}:${userId}`;
   
-  const str = await redisClient.redis.get(key);
+  const str = await redisClient.get(key);
   if (!str) return null;
   
   try {
@@ -56,7 +56,7 @@ export async function setUserEnv(
     ? `ai:user:env:private:${userId}`
     : `ai:user:env:${groupId}:${userId}`;
   
-  await redisClient.redis.set(key, JSON.stringify(config));
+  await redisClient.set(key, JSON.stringify(config));
 }
 
 /**
