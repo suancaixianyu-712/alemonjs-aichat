@@ -14,7 +14,7 @@ export const RApiReply = async (
   e: Events["message.create"] | Events["private.message.create"],
 ) => {
   const cfg = await getChatConfig(e);
-  if (await shouldSkipAIReply(e)) {
+  if (await shouldSkipAIReply(e, cfg)) {
     return {
       next: true,
     };

@@ -1,5 +1,3 @@
-import { emojiMap } from "@src/emoji";
-import { uploadImageToR2 } from "@src/s3";
 import {
   Events,
   ImageFile,
@@ -8,17 +6,12 @@ import {
   Text,
   Audio,
   useMessage,
-  Video,
 } from "alemonjs";
 import { log } from "console";
 import OpenAi from "openai";
-import { getConfigValue } from "alemonjs";
 import { TTSClient } from "@src/api/tts";
-import { getTimeString } from "@src/api/format";
 import { availableTools } from "@src/api/aitools";
 import redisClient from "@src/config";
-import errorimg from "@src/assets/error.png";
-import { imageReview } from "@src/api/review";
 import {
   buildUserMessage,
   getChatConfig,
@@ -28,16 +21,54 @@ import {
 import { createTTSMessage } from "./tts";
 import { parseAIReply } from "./tools";
 
-const value = getConfigValue().aiChat || {};
 export const selects = onSelects(["message.create", "private.message.create"]);
+const MAX_TOOL_ROUNDS = 6;
 let currentModel = "派蒙-默认"; // 默认音色
+
+const sendAIReply = async (
+  reply: string,
+  cfg: any,
+  e: Events["message.create"] | Events["private.message.create"],
+  message: any,
+) => {
+  const aireply = await parseAIReply(reply, cfg, e, message);
+  console.log("aireply", aireply);
+
+  if (aireply?.ttsMessages) {
+    for (const ttsMsg of aireply.ttsMessages) {
+      const ttsMessage = await createTTSMessage(
+        ttsMsg.text,
+        new TTSClient(),
+        ttsMsg.model ?? currentModel,
+      );
+      await message.send(format(Audio(ttsMessage)));
+    }
+  }
+
+  if (aireply?.replyMessages) {
+    for (const msg of aireply.replyMessages) {
+      await message.send(
+        format(
+          Text(msg.text),
+          ...(msg.images || []).map((img) => {
+            return /^https?:\/\//.test(img) ? ImageURL(img) : ImageFile(img);
+          }),
+          ...(msg.at || []).map((uid) => Mention(uid)),
+        ),
+      );
+    }
+  }
+
+  return aireply;
+};
 
 export const CApiReply = async (
   e: Events["message.create"] | Events["private.message.create"],
 ) => {
   console.log("e.UserId", e.UserId, e.bot);
 
-  if (await shouldSkipAIReply(e)) {
+  const cfg = await getChatConfig(e);
+  if (await shouldSkipAIReply(e, cfg)) {
     return {
       next: true,
     };
@@ -45,7 +76,6 @@ export const CApiReply = async (
 
   // 创建消息
   const [message] = useMessage(e);
-  const cfg = await getChatConfig(e);
   const usermessage = await buildUserMessage(e, cfg, "capi");
 
   try {
@@ -118,15 +148,19 @@ export const CApiReply = async (
       return;
     }
 
-    messages.push(usermessage);
     await redisClient.addAIChatHistory(e.guid, usermessage);
 
     if (res.choices[0].message?.tool_calls && fullContent.trim() !== "") {
-      message.send(format(Text(fullContent)));
+      await sendAIReply(fullContent, cfg, e, message);
     }
 
     // 检查是否有工具调用需要处理
+    let toolRound = 0;
     while (res.choices[0].message?.tool_calls?.length) {
+      toolRound += 1;
+      if (toolRound > MAX_TOOL_ROUNDS) {
+        throw new Error(`Tool call rounds exceeded ${MAX_TOOL_ROUNDS}`);
+      }
       const responseMessage = res.choices[0].message as any;
       log("AI返回工具调用，内容：-----", res.choices[0]);
 
@@ -254,35 +288,10 @@ export const CApiReply = async (
 
     // 处理消息
     // 提取ai发送的消息有多少条
-    const aireply = parseAIReply(reply, cfg, message, e);
-    console.log("aireply", aireply);
-
-    if (aireply) {
-      if (aireply.ttsMessages) {
-        for (const ttsMsg of aireply.ttsMessages) {
-          const ttsMessage = await createTTSMessage(
-            ttsMsg.text,
-            new TTSClient(),
-            ttsMsg.model ?? currentModel,
-          );
-          message.send(format(Audio(ttsMessage)));
-        }
-      }
-      if (aireply.replyMessages) {
-        for (const msg of aireply.replyMessages) {
-          message.send(
-            format(
-              Text(msg.text),
-              ...(msg.images || []).map((img) => {
-                return /^https?:\/\//.test(img)
-                  ? ImageURL(img)
-                  : ImageFile(img);
-              }),
-              ...(msg.at || []).map((uid) => Mention(uid)),
-            ),
-          );
-        }
-      }
+    const aireply = await sendAIReply(reply, cfg, e, message);
+    const assistantMessage = res.choices?.[0]?.message;
+    if (assistantMessage) {
+      await redisClient.addAIChatHistory(e.guid, assistantMessage);
     }
 
     return {

@@ -1,4 +1,4 @@
-import { getTimeString } from "@src/api/format";
+import { getGroupTimeString, getMessageTimeString } from "@src/api/format";
 import { loadSkills } from "@src/api/loadSkill";
 import redisClient from "@src/config";
 import { Events } from "alemonjs";
@@ -160,7 +160,7 @@ export const getChatConfig = async (
   
   #### 基础状态信息:
   这里的信息会实时变化,根据需要进行获取使用
-  当前群时间:${getTimeString()}
+  当前群时间:${getGroupTimeString()}
   当前群号:${e.guid}
   当前群名称:${e.GroupName || "无"}
   当前聊天平台:${e.Platform}
@@ -238,8 +238,8 @@ ${botName}::text 这是第二条消息
  */
 export const shouldSkipAIReply = async (
   e: Events["message.create"] | Events["private.message.create"],
+  cfg?: Awaited<ReturnType<typeof getChatConfig>>,
 ) => {
-  const cfg = await getChatConfig(e);
   // 如果是命令则跳过
   if (
     e.msg.startsWith("/") ||
@@ -248,6 +248,7 @@ export const shouldSkipAIReply = async (
   ) {
     return true;
   }
+  cfg ??= await getChatConfig(e);
   // 如果没有配置AI,则不处理
   if (
     cfg.config.host.trim() === "" ||
@@ -352,7 +353,7 @@ export const buildUserMessage = async (
     (_, id) => `[${emojiMap[id]}]`,
   );
 
-  const text = `${e.nickname}(${getTimeString()}): ${rawMessage}`;
+  const text = `${e.nickname}(${getMessageTimeString()}): ${rawMessage}`;
 
   // =========================
   // 🔥 CAPI (chat.completions)

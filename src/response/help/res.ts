@@ -7,7 +7,12 @@ export const selects = onSelects(["message.create", "private.message.create"]);
 export default onResponse(selects, async (e) => {
   // 创建
   const [message] = useMessage(e);
-  const img = await renderComponentIsHtmlToBuffer(Help, {});
+  const img = await renderComponentIsHtmlToBuffer(Help, {}, {
+    screenshot: {
+      type: "jpeg",
+      quality: 80,
+    },
+  });
   if (img) message.send(format(Image(img)));
   const config = await redisClient.getAIConfig(e.guid);
   if (

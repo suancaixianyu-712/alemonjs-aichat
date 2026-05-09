@@ -14,7 +14,7 @@ import { log } from "console";
 import OpenAi from "openai";
 import { getConfigValue } from "alemonjs";
 import { TTSClient } from "@src/api/tts";
-import { getTimeString } from "@src/api/format";
+import { getGroupTimeString, getMessageTimeString } from "@src/api/format";
 import { availableTools, tools } from "@src/api/aitools";
 import { loadSkills } from "@src/api/loadSkill";
 import redisClient from "@src/config";
@@ -157,7 +157,7 @@ ${botName}:[]
 
 基础状态信息:
 这里的信息会实时变化,根据需要进行获取使用
-当前群时间:${getTimeString()}
+当前群时间:${getGroupTimeString()}
 当前群号:${e.guid}
 当前群名称:${e.GroupName || "无"}
 当前聊天平台:${e.Platform}
@@ -300,9 +300,9 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
         text:
           complexOutputIsOpen === "1"
             ? JSON.stringify({
-                [`${e.nickname}(${getTimeString()})`]: rawMessage,
+                [`${e.nickname}(${getMessageTimeString()})`]: rawMessage,
               })
-            : `${e.nickname}(${getTimeString()}): ${rawMessage}`,
+            : `${e.nickname}(${getMessageTimeString()}): ${rawMessage}`,
       },
     ],
   };

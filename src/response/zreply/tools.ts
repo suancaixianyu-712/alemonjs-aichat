@@ -1,7 +1,6 @@
 import {
   format,
   Text,
-  getConfigValue,
   Audio,
   Mention,
   ImageFile,
@@ -17,7 +16,6 @@ import { imageReview } from "@src/api/review";
 import errorimg from "@src/assets/error.png";
 
 let currentModel = "派蒙-默认"; // 默认音色
-const value = getConfigValue().aiChat || {};
 
 const extractImages = (text: string) => {
   const regex = /<img=(.*?)>/g;
@@ -174,7 +172,7 @@ export const sendReplyMessages = async (
   }
 };
 
-export const parseAIReply = (
+export const parseAIReply = async (
   newText: string,
   cfg: any,
   e: any,
@@ -193,10 +191,12 @@ export const parseAIReply = (
     }
     replyMessage = replyMessage.trim();
     const imgUrls = extractImages(replyMessage);
-    handleAffection(replyMessage, e);
+    const messageAtTargets: string[] = [];
+    await handleAffection(replyMessage, e);
     extractCommands(replyMessage, nextCommands);
-    handleRevoke(replyMessage, message);
-    extractAt(replyMessage, atTargets);
+    await handleRevoke(replyMessage, message);
+    extractAt(replyMessage, messageAtTargets);
+    atTargets.push(...messageAtTargets);
     extractTTS(replyMessage, ttsMessages);
 
     const cleanText = cleanMessage(replyMessage);
@@ -204,7 +204,7 @@ export const parseAIReply = (
     replyMessagesResult.push({
       text: cleanText,
       images: imgUrls,
-      at: [...atTargets],
+      at: messageAtTargets,
     });
   }
 
@@ -261,7 +261,7 @@ export const parseAIOutput = (raw: string): MessageIR[] => {
     // =========================
     // normal line
     // =========================
-    const [prefix, ...rest] = line.split("::");
+    const [, ...rest] = line.split("::");
     const content = rest.join("::");
 
     if (!content) {

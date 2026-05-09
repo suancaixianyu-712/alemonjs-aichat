@@ -183,7 +183,6 @@ export default onResponse(selects, async (e, next) => {
         const response = await openai.chat.completions.create({
           model: aiConfig.model,
           messages,
-          temperature: 0.8,
           stream: false,
         });
         const summary = response.choices[0].message.content;
