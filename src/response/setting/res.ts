@@ -217,6 +217,9 @@ export default onResponse(selects, async (e, next) => {
     }
     const [, , action, isAll] = match;
     const enable = action === "开启";
+    if (!e.IsMaster && e.name !== "private.message.create") {
+      return;
+    }
     if (enable) {
       const aiList = await redisClient.getAIList();
       if (aiList.length === 0) {
@@ -236,6 +239,9 @@ export default onResponse(selects, async (e, next) => {
       message.send(format(Text(`已开启聊天功能，当前AI为 ${aiList[0]} !`)));
     } else {
       if (isAll) {
+        if (!e.IsMaster) {
+          return;
+        }
         // 如果是关闭全部聊天，则清空所有AI配置
         await redisClient.closeAllChat();
         message.send(format(Text("已关闭聊天功能 !")));
