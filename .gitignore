@@ -12,3 +12,4 @@ alemon.config.yaml
 ._*
 .DS_Store
 /alemonjs-SKILL
+.idea/

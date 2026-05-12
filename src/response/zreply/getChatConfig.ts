@@ -240,6 +240,12 @@ export const shouldSkipAIReply = async (
   e: Events["message.create"] | Events["private.message.create"],
   cfg?: Awaited<ReturnType<typeof getChatConfig>>,
 ) => {
+  // 正则触发时直接必定回复，忽略后续所有判断
+  if (e["regexTriggered"]) {
+    console.log("正则规则匹配, 跳过 shouldSkipAIReply 检查, 必定回复");
+    return false;
+  }
+
   // 如果是命令则跳过
   if (
     e.msg.startsWith("/") ||

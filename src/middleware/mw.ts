@@ -19,6 +19,13 @@ export default onMiddleware(selects, async (event, next) => {
   event["nickname"] =
     `${event.name === "private.message.create" ? "[私信]" : ""}${event.UserName}(${event.UserId})`; // 昵称(用户名+QQ号)
 
+  // 初始化 exec 环境（群容器为默认）
+  if (event.name === "private.message.create") {
+    await redisClient.initExecEnv("private", event.UserId);
+  } else {
+    await redisClient.initExecEnv(event.guid, event.UserId);
+  }
+
   if (event.Platform == "testone") {
     // 处理图片消息
     event["img"] = event.value
@@ -308,7 +315,16 @@ export default onMiddleware(selects, async (event, next) => {
   );
   if (atTriggerSwitch === "1" && event.Platform !== "testone") {
     if (!event["atBot"] && event.name !== "private.message.create") {
-      event["Xianyu"] = false; // 跳过所有指令,继续执行后续的处理函数
+      // 检查是否匹配正则触发规则
+      const regexMatched = await redisClient.matchRegexRule(
+        event.ChannelId ?? event.UserId,
+        event.msg || "",
+      );
+      if (regexMatched) {
+        event["regexTriggered"] = true; // 标记为正则触发
+      } else {
+        event["Xianyu"] = false; // 跳过所有指令,继续执行后续的处理函数
+      }
     }
   }
 

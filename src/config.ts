@@ -2,6 +2,9 @@ import Redis, { RedisOptions } from "ioredis";
 import { getConfigValue } from "alemonjs";
 import { AIConfig } from "./types";
 import { availableTools, tools } from "./api/aitools";
+import fs from "fs";
+import path from "path";
+import { redis } from "./redis";
 
 class db {
   redis: Redis;
@@ -17,11 +20,8 @@ class db {
     rapi: false,
   };
 
-  constructor(redisConfig?: RedisOptions) {
-    this.redis =
-      redisConfig && Object.keys(redisConfig).length > 0
-        ? new Redis(redisConfig)
-        : new Redis(); // 默认配置
+  constructor(redisInstance?: Redis) {
+    this.redis = redisInstance || redis;
   }
 
   /** 获取提示词优化内容 */
@@ -508,6 +508,213 @@ class db {
     await this.redis.set(`ai:at_trigger:switch:${guid}`, enable ? "1" : "0");
   }
 
+  /** --------------------------------------------------------- */
+  /** 正则触发规则 */
+
+  /** 获取正则触发规则列表 */
+  async getRegexRules(guid: string): Promise<string[]> {
+    const rulesStr = await this.redis.get(`ai:regex_rules:${guid}`);
+    if (rulesStr) {
+      return JSON.parse(rulesStr);
+    }
+    return [];
+  }
+
+  /** 设置正则触发规则列表 */
+  async setRegexRules(guid: string, rules: string[]): Promise<void> {
+    await this.redis.set(`ai:regex_rules:${guid}`, JSON.stringify(rules));
+  }
+
+  /** 添加正则触发规则 */
+  async addRegexRule(guid: string, rule: string): Promise<boolean> {
+    // 验证正则表达式是否合法
+    try {
+      new RegExp(rule);
+    } catch {
+      return false;
+    }
+    const rules = await this.getRegexRules(guid);
+    if (rules.includes(rule)) {
+      return false; // 规则已存在
+    }
+    rules.push(rule);
+    await this.setRegexRules(guid, rules);
+    return true;
+  }
+
+  /** 删除正则触发规则 */
+  async removeRegexRule(guid: string, ruleOrIndex: string): Promise<boolean> {
+    const rules = await this.getRegexRules(guid);
+    // 尝试按索引删除
+    const index = parseInt(ruleOrIndex, 10);
+    if (!isNaN(index) && index >= 0 && index < rules.length) {
+      rules.splice(index, 1);
+      await this.setRegexRules(guid, rules);
+      return true;
+    }
+    // 按规则内容删除
+    const ruleIndex = rules.indexOf(ruleOrIndex);
+    if (ruleIndex === -1) {
+      return false;
+    }
+    rules.splice(ruleIndex, 1);
+    await this.setRegexRules(guid, rules);
+    return true;
+  }
+
+  /** 检查消息是否匹配正则触发规则 */
+  async matchRegexRule(guid: string, message: string): Promise<boolean> {
+    const rules = await this.getRegexRules(guid);
+    for (const rule of rules) {
+      try {
+        const regex = new RegExp(rule);
+        if (regex.test(message)) {
+          return true;
+        }
+      } catch {
+        // 跳过无效的正则
+      }
+    }
+    return false;
+  }
+
+  /** 清空正则触发规则 */
+  async clearRegexRules(guid: string): Promise<void> {
+    await this.redis.del(`ai:regex_rules:${guid}`);
+  }
+
+  /** --------------------------------------------------------- */
+  /** 容器管理 */
+
+  /** 获取群容器配置 */
+  async getGroupContainer(groupId: string): Promise<Record<string, any> | null> {
+    const str = await this.redis.get(`ai:container:group:${groupId}`);
+    return str ? JSON.parse(str) : null;
+  }
+
+  /** 设置群容器配置 */
+  async setGroupContainer(groupId: string, config: Record<string, any>): Promise<void> {
+    await this.redis.set(`ai:container:group:${groupId}`, JSON.stringify(config));
+  }
+
+  /** 获取用户容器配置 */
+  async getUserContainer(userId: string): Promise<Record<string, any> | null> {
+    const str = await this.redis.get(`ai:container:user:${userId}`);
+    return str ? JSON.parse(str) : null;
+  }
+
+  /** 设置用户容器配置 */
+  async setUserContainer(userId: string, config: Record<string, any>): Promise<void> {
+    await this.redis.set(`ai:container:user:${userId}`, JSON.stringify(config));
+  }
+
+  /** 获取用户当前 exec 环境配置（按群隔离） */
+  async getExecEnv(groupId: string, userId: string): Promise<Record<string, any> | null> {
+    const key = groupId === "private"
+      ? `ai:container:env:private:${userId}`
+      : `ai:container:env:${groupId}:${userId}`;
+    const str = await this.redis.get(key);
+    return str ? JSON.parse(str) : null;
+  }
+
+  /** 设置用户当前 exec 环境配置（按群隔离） */
+  async setExecEnv(groupId: string, userId: string, config: Record<string, any>): Promise<void> {
+    const key = groupId === "private"
+      ? `ai:container:env:private:${userId}`
+      : `ai:container:env:${groupId}:${userId}`;
+    await this.redis.set(key, JSON.stringify(config));
+  }
+
+  /** 创建群容器（首次触发时自动创建） */
+  async ensureGroupContainer(groupId: string): Promise<Record<string, any>> {
+    const existing = await this.getGroupContainer(groupId);
+    if (existing) return existing;
+
+    const configValue = getConfigValue();
+    const containerConf = configValue.aiChat?.groupContainer || {};
+    const image = containerConf.image || "ubuntu:latest";
+    const containerName = `aichat_grp_${groupId}`;
+
+    const config = {
+      containerName,
+      image,
+      memory: containerConf.memory || "256m",
+      cpus: containerConf.cpus || "0.5",
+      pidsLimit: containerConf.pidsLimit || 64,
+      networkMode: containerConf.networkMode || "none",
+    };
+    await this.setGroupContainer(groupId, config);
+    return config;
+  }
+
+  /** 创建用户容器（手动切换或私聊首次触发时创建） */
+  async ensureUserContainer(userId: string): Promise<Record<string, any>> {
+    const existing = await this.getUserContainer(userId);
+    if (existing) return existing;
+
+    const configValue = getConfigValue();
+    const containerConf = configValue.aiChat?.userContainer || {};
+    const image = containerConf.image || "ubuntu:latest";
+    const containerName = `aichat_usr_${userId}`;
+
+    const config = {
+      containerName,
+      image,
+      memory: containerConf.memory || "128m",
+      cpus: containerConf.cpus || "0.25",
+      pidsLimit: containerConf.pidsLimit || 32,
+      networkMode: containerConf.networkMode || "none",
+    };
+    await this.setUserContainer(userId, config);
+    return config;
+  }
+
+  /** 初始化用户 exec 环境（群聊默认群容器，私聊默认用户容器） */
+  async initExecEnv(groupId: string, userId: string): Promise<Record<string, any>> {
+    const existing = await this.getExecEnv(groupId, userId);
+    if (existing) return existing;
+
+    if (groupId === "private") {
+      // 私聊默认用户容器
+      const userConfig = await this.ensureUserContainer(userId);
+      await this.setExecEnv("private", userId, userConfig);
+      return userConfig;
+    } else {
+      // 群聊默认群容器
+      const groupConfig = await this.ensureGroupContainer(groupId);
+      await this.setExecEnv(groupId, userId, groupConfig);
+      return groupConfig;
+    }
+  }
+
+  /** 切换到群容器 */
+  async switchToGroupContainer(groupId: string, userId: string): Promise<Record<string, any>> {
+    const groupConfig = await this.ensureGroupContainer(groupId);
+    await this.setExecEnv(groupId, userId, groupConfig);
+    return groupConfig;
+  }
+
+  /** 切换到用户容器 */
+  async switchToUserContainer(groupId: string, userId: string): Promise<Record<string, any>> {
+    const userConfig = await this.ensureUserContainer(userId);
+    await this.setExecEnv(groupId, userId, userConfig);
+    return userConfig;
+  }
+
+  /** 切换到系统环境 */
+  async switchToSystemEnv(userId: string): Promise<void> {
+    await this.setExecEnv("private", userId, { system: true });
+  }
+
+  /** 判断是否为超级管理员 */
+  isSuperAdmin(userId: string): boolean {
+    const configValue = getConfigValue();
+    const superAdmins = configValue.aiChat?.superAdmin || [];
+    return superAdmins.includes(userId);
+  }
+
+  /** --------------------------------------------------------- */
+
   /** 禁用工具 */
   async disableTool(guid: string, toolName: string): Promise<void> {
     await this.redis.set(`ai:tool:disable:${guid}:${toolName}`, "1");
@@ -572,12 +779,6 @@ class db {
   }
 }
 
-const configValue = getConfigValue();
-const aiChatConfig = configValue.aiChat || {};
-const redisClient = new db({
-  host: aiChatConfig.redis?.host ?? "localhost",
-  port: aiChatConfig.redis?.port ?? 6379,
-  password: aiChatConfig.redis?.password ?? "",
-});
+const redisClient = new db(redis);
 
 export default redisClient;
