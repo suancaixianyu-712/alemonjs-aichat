@@ -366,31 +366,25 @@ export const tools: ChatCompletionTool[] = [
  * 确保 Docker 容器已创建并运行
  */
 async function ensureContainerRunning(config: Record<string, any>): Promise<void> {
-  const { containerName, image, memory, cpus, pidsLimit, networkMode } = config;
+  const { containerName, image, memory, cpus, pidsLimit, networkMode, workspacePath } = config;
   if (!containerName) return;
 
   return new Promise((resolve) => {
-    // 检查容器是否存在
     const check = spawn("docker", ["inspect", "-f", "{{.State.Running}}", containerName]);
     let stdout = "";
-    let stderr = "";
     check.stdout.on("data", (d: Buffer) => (stdout += d.toString()));
-    check.stderr.on("data", (d: Buffer) => (stderr += d.toString()));
     check.on("close", (code: number) => {
       if (code === 0 && stdout.trim() === "true") {
-        // 容器已在运行
         resolve();
         return;
       }
 
       if (code === 0 && stdout.trim() === "false") {
-        // 容器存在但未运行，启动它
         const start = spawn("docker", ["start", containerName]);
         start.on("close", () => resolve());
         return;
       }
 
-      // 容器不存在，创建并启动
       const args = [
         "run", "-d",
         "--name", containerName,
@@ -398,11 +392,23 @@ async function ensureContainerRunning(config: Record<string, any>): Promise<void
         "--cpus", cpus || "0.5",
         "--pids-limit", String(pidsLimit || 64),
         "--network", networkMode || "none",
-        image || "ubuntu:latest",
-        "sleep", "infinity",
       ];
+
+      if (workspacePath && fs.existsSync(workspacePath)) {
+        args.push("-v", `${workspacePath}:/workspace`, "-w", "/workspace");
+      }
+
+      args.push(image || "ubuntu:latest", "sleep", "infinity");
+
       const create = spawn("docker", args);
-      create.on("close", () => resolve());
+      let createStderr = "";
+      create.stderr.on("data", (d: Buffer) => (createStderr += d.toString()));
+      create.on("close", (code: number) => {
+        if (code !== 0) {
+          console.error(`[Docker] 容器创建失败: ${containerName}`, createStderr);
+        }
+        resolve();
+      });
     });
   });
 }
@@ -890,18 +896,16 @@ export const availableTools = {
       return "错误：未找到执行环境配置，请先切换执行环境";
     }
 
-    // 确保容器已创建并启动
     await ensureContainerRunning(envConfig);
 
     return new Promise((resolve) => {
       let output = "";
-      const child = spawn("docker", [
-        "exec",
-        containerName,
-        "sh",
-        "-c",
-        command,
-      ]);
+      const args = ["exec"];
+      if (envConfig.workspacePath) {
+        args.push("-w", "/workspace");
+      }
+      args.push(containerName, "sh", "-c", command);
+      const child = spawn("docker", args);
       child.stdout.on("data", (d: Buffer) => (output += d.toString()));
       child.stderr.on("data", (d: Buffer) => (output += d.toString()));
       child.on("close", () => resolve(output));

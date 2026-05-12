@@ -91,10 +91,17 @@ export class RemoteNodeManager {
       throw new Error(`未找到远程节点: ${nodeName}`);
     }
 
-    // 如果已有连接且可用，直接返回
+    // 如果已有连接，检查是否可用，否则重新连接
     const existing = this.connections.get(nodeName);
     if (existing && existing.ready) {
-      return existing.client;
+      try {
+        const testResult = await this.executeQuick(nodeName, "echo ok", 3000);
+        if (testResult.trim() === "ok") {
+          return existing.client;
+        }
+      } catch {
+        console.log(`[RemoteNode] 连接 ${nodeName} 已失效，重新连接`);
+      }
     }
 
     const config: ConnectConfig = {
@@ -200,6 +207,31 @@ export class RemoteNodeManager {
   }
 
   /**
+   * 快速执行命令（用于健康检查，不打印日志）
+   */
+  private executeQuick(nodeName: string, command: string, timeout: number): Promise<string> {
+    const client = this.connections.get(nodeName)?.client;
+    if (!client) throw new Error("无可用连接");
+
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("超时")), timeout);
+      client.exec(command, (err, stream) => {
+        if (err) {
+          clearTimeout(timer);
+          return reject(err);
+        }
+        let output = "";
+        stream.on("data", (d: Buffer) => (output += d.toString()));
+        stream.on("close", () => {
+          clearTimeout(timer);
+          resolve(output);
+        });
+        stream.stderr.on("data", () => {});
+      });
+    });
+  }
+
+  /**
    * 通过 Slurm 提交作业
    * @param nodeName 节点名称
    * @param script 要执行的脚本或命令
@@ -251,14 +283,10 @@ export class RemoteNodeManager {
       sbatchScript += `\n${script}\n`;
     }
 
-    // 将脚本写入远程节点的临时文件并执行
+    // 将脚本内容通过 base64 安全传输到远程节点
     const remoteScriptPath = `/tmp/alemonjs_sbatch_${Date.now()}.sh`;
-    
-    // 创建 sbatch 脚本内容（转义特殊字符）
-    const escapedScript = sbatchScript.replace(/'/g, "'\\''");
-    
-    // 先创建脚本文件
-    await this.execute(nodeName, `cat > ${remoteScriptPath} << 'SCRIPT_EOF'\n${sbatchScript}\nSCRIPT_EOF`);
+    const encodedScript = Buffer.from(sbatchScript).toString("base64");
+    await this.execute(nodeName, `echo ${encodedScript} | base64 -d > ${remoteScriptPath}`);
     
     // 提交作业
     const result = await this.execute(nodeName, `sbatch ${remoteScriptPath}`);

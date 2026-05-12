@@ -634,6 +634,10 @@ class db {
     const containerConf = configValue.aiChat?.groupContainer || {};
     const image = containerConf.image || "ubuntu:latest";
     const containerName = `aichat_grp_${groupId}`;
+    const workspacePath = path.resolve(process.cwd(), `public/sandbox/workspaces/groups/${groupId}`);
+    if (!fs.existsSync(workspacePath)) {
+      fs.mkdirSync(workspacePath, { recursive: true });
+    }
 
     const config = {
       containerName,
@@ -642,6 +646,7 @@ class db {
       cpus: containerConf.cpus || "0.5",
       pidsLimit: containerConf.pidsLimit || 64,
       networkMode: containerConf.networkMode || "none",
+      workspacePath,
     };
     await this.setGroupContainer(groupId, config);
     return config;
@@ -656,6 +661,10 @@ class db {
     const containerConf = configValue.aiChat?.userContainer || {};
     const image = containerConf.image || "ubuntu:latest";
     const containerName = `aichat_usr_${userId}`;
+    const workspacePath = path.resolve(process.cwd(), `public/sandbox/workspaces/${userId}`);
+    if (!fs.existsSync(workspacePath)) {
+      fs.mkdirSync(workspacePath, { recursive: true });
+    }
 
     const config = {
       containerName,
@@ -664,6 +673,7 @@ class db {
       cpus: containerConf.cpus || "0.25",
       pidsLimit: containerConf.pidsLimit || 32,
       networkMode: containerConf.networkMode || "none",
+      workspacePath,
     };
     await this.setUserContainer(userId, config);
     return config;
@@ -675,14 +685,12 @@ class db {
     if (existing) return existing;
 
     if (groupId === "private") {
-      // 私聊默认用户容器
       const userConfig = await this.ensureUserContainer(userId);
-      await this.setExecEnv("private", userId, userConfig);
+      await this.setExecEnv("private", userId, { ...userConfig, type: "user" });
       return userConfig;
     } else {
-      // 群聊默认群容器
       const groupConfig = await this.ensureGroupContainer(groupId);
-      await this.setExecEnv(groupId, userId, groupConfig);
+      await this.setExecEnv(groupId, userId, { ...groupConfig, type: "group" });
       return groupConfig;
     }
   }
@@ -690,20 +698,30 @@ class db {
   /** 切换到群容器 */
   async switchToGroupContainer(groupId: string, userId: string): Promise<Record<string, any>> {
     const groupConfig = await this.ensureGroupContainer(groupId);
-    await this.setExecEnv(groupId, userId, groupConfig);
+    await this.setExecEnv(groupId, userId, { ...groupConfig, type: "group" });
     return groupConfig;
   }
 
   /** 切换到用户容器 */
   async switchToUserContainer(groupId: string, userId: string): Promise<Record<string, any>> {
     const userConfig = await this.ensureUserContainer(userId);
-    await this.setExecEnv(groupId, userId, userConfig);
+    await this.setExecEnv(groupId, userId, { ...userConfig, type: "user" });
     return userConfig;
   }
 
   /** 切换到系统环境 */
-  async switchToSystemEnv(userId: string): Promise<void> {
-    await this.setExecEnv("private", userId, { system: true });
+  async switchToSystemEnv(groupId: string, userId: string): Promise<void> {
+    await this.setExecEnv(groupId, userId, { type: "system" });
+  }
+
+  /** 切换到远程节点环境 */
+  async switchToRemoteEnv(groupId: string, userId: string, nodeName: string): Promise<void> {
+    await this.setExecEnv(groupId, userId, { type: "remote", nodeName });
+  }
+
+  /** 切换到 Singularity 环境 */
+  async switchToSingularityEnv(groupId: string, userId: string, nodeName: string, image?: string): Promise<void> {
+    await this.setExecEnv(groupId, userId, { type: "singularity", nodeName, singularityImage: image });
   }
 
   /** 判断是否为超级管理员 */
@@ -711,6 +729,18 @@ class db {
     const configValue = getConfigValue();
     const superAdmins = configValue.aiChat?.superAdmin || [];
     return superAdmins.includes(userId);
+  }
+
+  /** 获取所有容器配置 key */
+  async getAllContainerKeys(): Promise<string[]> {
+    const groupKeys = await this.redis.keys("ai:container:group:*");
+    const userKeys = await this.redis.keys("ai:container:user:*");
+    return [...groupKeys, ...userKeys];
+  }
+
+  /** 删除指定容器配置 */
+  async deleteContainer(key: string): Promise<void> {
+    await this.redis.del(key);
   }
 
   /** --------------------------------------------------------- */
@@ -750,6 +780,19 @@ class db {
       return !toolStatus[toolName] || toolStatus[toolName] === "0";
     });
     return availableTools;
+  }
+
+  /** 获取渲染精度 (中:80%, 高:100%, 超高:120%) */
+  async getRenderPrecision(guid: string): Promise<number> {
+    const val = await this.redis.get(`ai:render_precision:${guid}`);
+    if (val === "中") return 0.8;
+    if (val === "超高") return 1.2;
+    return 1.0;
+  }
+
+  /** 设置渲染精度 */
+  async setRenderPrecision(guid: string, level: string): Promise<void> {
+    await this.redis.set(`ai:render_precision:${guid}`, level);
   }
 
   /** 装载工具 */

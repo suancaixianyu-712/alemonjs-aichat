@@ -7,10 +7,14 @@ export const selects = onSelects(["message.create", "private.message.create"]);
 export default onResponse(selects, async (e) => {
   // 创建
   const [message] = useMessage(e);
+  const scale = await redisClient.getRenderPrecision(e.guid);
   const img = await renderComponentIsHtmlToBuffer(Help, {}, {
     screenshot: {
       type: "jpeg",
       quality: 80,
+    },
+    playwright: {
+      context: { deviceScaleFactor: scale },
     },
   });
   if (img) message.send(format(Image(img)));

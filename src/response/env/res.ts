@@ -1,13 +1,12 @@
-﻿import { Text, useMessage, getConfigValue } from "alemonjs";
+﻿import { Text, useMessage } from "alemonjs";
 import { onResponse, onSelects } from "alemonjs";
-import { getExecCommandEnv, getUserEnv, setUserEnv, initUserEnv, switchToSystem, switchToGroup, switchToUser, switchToRemote, switchToSingularity, getEnvDescription, listAvailableEnvs } from "@src/userEnv";
+import { getUserEnv, initUserEnv, switchToSystem, switchToGroup, switchToUser, switchToRemote, switchToSingularity, getEnvDescription, listAvailableEnvs } from "@src/userEnv";
 import { remoteNodeManager } from "@src/remoteNodes";
 
 const selects = onSelects(["message.create", "private.message.create"]);
 
 export default onResponse(selects, async (e, next) => {
   const [message] = useMessage(e);
-  const value = getConfigValue().aiChat || {};
 
   // ====================
   // 查看当前环境
@@ -32,16 +31,11 @@ export default onResponse(selects, async (e, next) => {
   // 切换环境 - 系统
   // ====================
   if (/^(\/|#)切换环境\s+system$/i.test(e.msg)) {
-    // 仅私聊可用
     if (e.name !== "private.message.create") {
-      message.send(Text("切换系统环境仅在私聊中可用！"));
+      message.send(Text("切换系统环境需要在私聊中进行，请在私聊中使用此命令"));
       return;
     }
-    // 仅超级管理员可用
-    const configValue = getConfigValue();
-    const superAdmins = configValue.aiChat?.superAdmin || [];
-    if (!superAdmins.includes(e.UserId)) {
-      message.send(Text("你没有权限切换到系统环境！"));
+    if (!e.IsMaster) {
       return;
     }
     const result = await switchToSystem("private", e.UserId);

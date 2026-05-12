@@ -32,6 +32,7 @@ export default onResponse(selects, async (e, next) => {
     // 发送消息
 
     try {
+      const scale = await redisClient.getRenderPrecision(e.guid);
       const img = await renderComponentIsHtmlToBuffer(AiConfig, {
         switch: config.model != "",
         tools: toolsIsOpen == "1",
@@ -48,6 +49,10 @@ export default onResponse(selects, async (e, next) => {
         toolPromptSwitch: toolPromptSwitch == "1",
         toolPromptRevokeSwitch: toolPromptRevokeSwitch == "1",
         toolPromptArgsSwitch: toolPromptArgsSwitch == "1",
+      }, {
+        playwright: {
+          context: { deviceScaleFactor: scale },
+        },
       });
       if (img) {
         message.send(format(Image(img)));

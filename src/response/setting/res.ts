@@ -1,5 +1,6 @@
 ﻿import { availableTools } from "@src/api/aitools";
 import redisClient from "@src/config";
+import { switchToGroupById } from "@src/userEnv";
 import { Text, useMessage, getConfigValue } from "alemonjs";
 import { log } from "console";
 const value = getConfigValue().aiChat || {};
@@ -727,6 +728,19 @@ export default onResponse(selects, async (e, next) => {
     return;
   }
 
+  // 切换指定群容器（管理员可指定群号切换，支持私聊）
+  if (/(\/|#)切换群容器\s+(\S+)$/i.test(e.msg)) {
+    if (!e.IsMaster && !redisClient.isSuperAdmin(e.UserId)) {
+      return;
+    }
+    const match = e.msg.match(/(\/|#)切换群容器\s+(\S+)$/i);
+    if (!match) return;
+    const targetGroupId = match[2];
+    const result = await switchToGroupById(targetGroupId, e.UserId);
+    message.send(format(Text(result)));
+    return;
+  }
+
   // 切换群容器
   if (/(\/|#)切换群容器$/i.test(e.msg)) {
     if (e.name === "private.message.create") {
@@ -753,18 +767,63 @@ export default onResponse(selects, async (e, next) => {
 
   // 切换系统环境
   if (/(\/|#)切换系统环境$/i.test(e.msg)) {
-    // 仅私聊可用
     if (e.name !== "private.message.create") {
-      message.send(format(Text("切换系统环境仅在私聊中可用！")));
+      message.send(format(Text("切换系统环境需要在私聊中进行，请在私聊中使用此命令")));
       return;
     }
-    // 仅超级管理员可用
-    if (!redisClient.isSuperAdmin(e.UserId)) {
-      message.send(format(Text("你没有权限切换到系统环境！")));
+    if (!e.IsMaster) {
       return;
     }
-    await redisClient.switchToSystemEnv(e.UserId);
+    await redisClient.switchToSystemEnv("private", e.UserId);
     message.send(format(Text("已切换到系统环境，exec 指令将在宿主机上执行。")));
+    return;
+  }
+
+  // 清理闲置容器（仅主人可用）
+  if (/(\/|#)清理容器$/i.test(e.msg)) {
+    if (!e.IsMaster) {
+      return;
+    }
+    message.send(format(Text("正在清理容器...")));
+    try {
+      const { execSync } = await import("child_process");
+      const names = ["aichat_grp_", "aichat_usr_"];
+      let cleaned = 0;
+      for (const prefix of names) {
+        try {
+          const output = execSync(
+            `docker ps -a --filter "name=${prefix}" --format "{{.Names}}"`,
+            { stdio: "pipe" },
+          ).toString().trim();
+          if (!output) continue;
+          const containers = output.split("\n");
+          for (const name of containers) {
+            try {
+              execSync(`docker rm -f ${name}`, { stdio: "pipe" });
+              cleaned++;
+            } catch {}
+          }
+        } catch {}
+      }
+      const keys = await redisClient.getAllContainerKeys();
+      for (const key of keys) {
+        await redisClient.deleteContainer(key);
+      }
+      message.send(format(Text(`清理完成，共清理 ${cleaned} 个容器及 ${keys.length} 条配置`)));
+    } catch (err: any) {
+      message.send(format(Text(`清理失败: ${err.message}`)));
+    }
+    return;
+  }
+
+  // 设置渲染精度（中:80%, 高:100%, 超高:120%）
+  if (/(\/|#)设置渲染精度\s*(中|高|超高)$/i.test(e.msg)) {
+    const match = e.msg.match(/(\/|#)设置渲染精度\s*(中|高|超高)$/i);
+    if (!match) return;
+    const level = match[2];
+    await redisClient.setRenderPrecision(e.guid, level);
+    const scaleMap: Record<string, string> = { "中": "80%", "高": "100%", "超高": "120%" };
+    message.send(format(Text(`已设置渲染精度为 ${level} (${scaleMap[level]})`)));
     return;
   }
 
