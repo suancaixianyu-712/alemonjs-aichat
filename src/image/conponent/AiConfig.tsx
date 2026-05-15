@@ -83,7 +83,7 @@ export default function App(data: {
       <head>
         <LinkStyleSheet src={css_output} />
       </head>
-      <body className="bg-cover p-4" style={{ backgroundImage: `url(${img})` }}>
+      <body className="bg-cover p-4" style={{ backgroundImage: `url(${img})`, width: "800px" }}>
         <div className="relative mb-6">
           {/* 装饰性背景光晕 */}
           <div className="absolute -left-4 -top-4 w-24 h-24 bg-purple-400/20 rounded-full blur-2xl -z-0"></div>

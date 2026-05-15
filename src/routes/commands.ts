@@ -75,6 +75,7 @@ export const children = [
       /(\/|#)(开启|关闭)工具(调用)?提示撤回$/i,
       /(\/|#)(开启|关闭)工具(调用)?提示详情$/i,
       /(\/|#)测试$/i,
+      /(\/|#)设置渲染精度\s*(中|高|超高)$/i,
     ),
     handler: lazy(() => import("../response/setting/res")),
   },
