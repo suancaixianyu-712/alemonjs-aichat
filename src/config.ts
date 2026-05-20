@@ -1,7 +1,6 @@
-import Redis, { RedisOptions } from "ioredis";
+import Redis from "ioredis";
 import { getConfigValue } from "alemonjs";
 import { AIConfig } from "./types";
-import { availableTools, tools } from "./api/aitools";
 import fs from "fs";
 import path from "path";
 import { redis } from "./redis";
@@ -9,6 +8,11 @@ import { redis } from "./redis";
 class db {
   redis: Redis;
   systemPrompt = "";
+
+  private async getToolDefinitions() {
+    const { tools } = await import("./api/aitools");
+    return tools;
+  }
 
   static defaultAIConfig: AIConfig = {
     host: "",
@@ -764,6 +768,7 @@ class db {
 
   /** 获取所有工具状态 */
   async getAllToolStatus(guid: string): Promise<Record<string, string>> {
+    const tools = await this.getToolDefinitions();
     const status: Record<string, string> = {};
     for (const tool of tools) {
       const toolName = tool.type === "function" ? tool.function.name : "";
@@ -774,6 +779,7 @@ class db {
 
   // 获取所有可用工具,返回完整工具
   async getAvailableTools(guid: string): Promise<any[]> {
+    const tools = await this.getToolDefinitions();
     const toolStatus = await this.getAllToolStatus(guid);
     const availableTools = tools.filter((tool) => {
       const toolName = tool.type === "function" ? tool.function.name : "";
@@ -797,6 +803,7 @@ class db {
 
   /** 装载工具 */
   async loadTools(guid: string): Promise<string[]> {
+    const tools = await this.getToolDefinitions();
     const toolStatus = await this.getAllToolStatus(guid);
     const allTools = tools.map((tool) =>
       tool.type === "function" ? tool.function.name : "",

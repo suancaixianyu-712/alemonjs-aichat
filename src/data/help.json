@@ -2,7 +2,7 @@
   "title": "IA聊天插件",
   "desc": "一个基于AI的聊天插件，支持多种AI模型和丰富的功能配置，适用于各种聊天场景。",
   "name": "alemonjs-aichat",
-  "version": "v1.0.31-beta",
+  "version": "v1.0.32",
   "by": "AlemonJS",
   "list": [
     {
