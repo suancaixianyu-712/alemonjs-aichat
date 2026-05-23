@@ -22,7 +22,6 @@ import { createTTSMessage } from "./tts";
 import { parseAIReply } from "./tools";
 
 export const selects = onSelects(["message.create", "private.message.create"]);
-const MAX_TOOL_ROUNDS = 6;
 let currentModel = "派蒙-默认"; // 默认音色
 
 const sendAIReply = async (
@@ -158,13 +157,15 @@ export const CApiReply = async (
     let toolRound = 0;
     while (res.choices[0].message?.tool_calls?.length) {
       toolRound += 1;
-      if (toolRound > MAX_TOOL_ROUNDS) {
-        throw new Error(`Tool call rounds exceeded ${MAX_TOOL_ROUNDS}`);
-      }
       const responseMessage = res.choices[0].message as any;
       log("AI返回工具调用，内容：-----", res.choices[0]);
 
       // 先处理对话
+      if (toolRound === 5) {
+        await message.send(
+          format(Text("AI正在连续调用工具，第 5 轮处理中，请稍等")),
+        );
+      }
       messages.push(responseMessage);
       await redisClient.addAIChatHistory(e.guid, responseMessage);
 
