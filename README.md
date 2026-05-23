@@ -1,103 +1,125 @@
 
-## 安装
+## 1.安装
 
-### 前置条件
-- nodejs 20+
-- yarn 1.22+
-- redis 5+
+安装中遇到问题可访问alemonjs官网查询[https://alemonjs.com/docs](https://alemonjs.com/docs)
 
-安装依赖时更推荐使用yarn, 也可以使用npm, 但需要将命令中的`yarn`替换为`npm install`
+### yarn安装方式(推荐)
+前置条件:
+安装alemonjs: [alemonjs官网](https://alemonjs.com)
 
-或者安装`yarn`:
-``` bash
-npm install -g yarn
+``` sh
+yarn add alemonjs-aichat
 ```
 
-### 克隆仓库安装
-适合在没有部署alemonjs的环境中安装
-``` bash
-# 克隆release分支
-git clone -b release https://gitee.com/suancaixianyu/alemonjs-aichat.git
+```sh
+## 运行
+yarn start
+```
+
+### git拉取项目安装
+
+```sh
+git clone git@gitee.com:suancaixianyu/alemonjs-aichat.git
 cd alemonjs-aichat
 yarn
 ```
 
-### npm安装
-适合在已经部署alemonjs的环境中安装, 在alemonjs项目根目录下执行
-``` bash
-yarn add alemonjs-aichat
+```sh
+## 运行
+yarn dev
+
+## 打包
+yarn build
+```
+### 从零开始安装
+
+1. 拉取仓库
+```sh
+git clone -b release git@gitee.com:suancaixianyu/alemonjs-aichat.git
+cd alemonjs-aichat
+yarn
 ```
 
-## 配置 `alemon.config.yaml`
-
-1. 将`alemon.config.example.yaml`复制重命名为`alemon.config.yaml`
-``` bash
-cp alemon.config.example.yaml alemon.config.yaml
+2. 配置`alemon.config.yaml`连接平台
+3. 启动
+```sh
+node index
 ```
-如果你的目中已经有`alemon.config.yaml`请略过此步骤
 
-2. 启用`alemonjs-aichat`
+## 2.配置
+
+#### 配置app
+在配置中添加该插件, 才能正常触发指令
+
+如果使用的是git拉取项目的方式, 就不需要配置这个
 ``` yaml
 app: 
   - 'alemonjs-aichat'
 ```
 
-3. 配置redis
+#### 配置redis 
 `alemon.config.yaml`
 ``` yaml
 redis:
-  host: '127.0.0.1'
+  # host默认 127.0.0.1
+  host: '127.0.0.1' 
+  # 端口号默认 6379
   port: 6379
+  # 无密码则留空或者不写, 默认无密码
   password: ''
 ```
-你也可以选择为插件单独配置redis
+
+#### 配置AI修图 
+修图基于xai的grok接口实现, 该接口返回的图片也是xai的, 在特定平台中可能无法发送此图片,这时候可以用自己写个代理将图片转为可访问状态
+
+已知无需转换的平台: `QQ`,`Bubble`
+`alemon.config.yaml`
 ``` yaml
-aiChat:
-  redis:
-    host: '127.0.0.1'
-    port: 6379
-    password: ''
-```
-aiChat.redis优先级高于全局redis配置
-插件使用的存储key为`ai:*`
-
-## 其他功能配置
-- 语音回复
-该功能依赖于B站up主的开发的GPT-Sovits整合包:
-[【GPT-Sovits V4推理特化一键包，完全免费开源，内含大量模型（原神，崩铁等），亦可训练】](https://www.bilibili.com/video/BV1j7TszYE27/?share_source=copy_web&vd_source=545e30adee8fc4af7b2d9c4d7c3ad713)
-
-此外, 你还需要在`alemon.config.yaml`中配置TTS服务器地址, 并且确保该地址能够从外网访问
-```yaml
-aiChat:
-  ttsServer:
-    host: "http://127.0.0.1:8005"
+# 代理默认可不填
+xaiImgProxy: 'http://127.0.0.1:3002/ximgen'
 ```
 
-- 图片审核
-  
-该功能依赖于百度云的内容安全审核服务, 你需要在`alemon.config.yaml`中配置百度云的AK/SK和审核策略ID, 具体配置项如下:
-```yaml
-aiChat:
-  baidu:
-    ak: ''
-    sk: ''
+ai修图依赖于xai, 需要使用该功能必须添加一个grok模型, 在启动机器人后, 使用以下指令添加
 ```
-使用指令`/不可以色色``/可以色色`开启或关闭图片审核功能, 默认开启, 但如果没有配置AK/SK, 则无法使用图片审核功能
-
-- onebot平台
-  
-在使用onebot平台时, 还需要安装onebot服务端, 例如[napcat](https://napneko.github.io/),使用napcat创建ws服务端, 并且在`alemon.config.yaml`中配置napcat的ws地址
-```yaml
-onebot:
-  url: 'ws://127.0.0.1:3001' # 正向url
-  token: '' # token
-  reverse_enable: false # 启用后正向连接配置失效，地址：ws://127.0.0.1:17158
-  reverse_port: 17158 # 返向连接服务端口，启用反向连接后生效
-  master_id: ['3501869534'] # 主人QQ号列表
+#添加ai grok https://api.x.ai/v1 <你的apiKey> grok-4-1-fast-non-reasoning
+```
+通常情况下nodejs不会使用本地的代理, 因此你可能需要自己解决一下无法访问ai的问题, 例如另写一个脚本, 脚本已经预备好了, 下载项目中的`daili.js`然后运行它即可(Clash的默认端口一般是7890, 可能需要修改一下daili.js中的端口)
+``` sh
+node daili
 ```
 
-- 其他平台
-详情请参考[Alemonjs连接平台](https://alemonjs.com/docs/environment)文档
+如果你使用的是`daili.js`, 那么地址需要改为`http://127.0.0.1:3002/x/v1`
 
-## 使用
-指令`/ai帮助`查看使用方法
+#### 配置搜索工具
+网页搜索功能基于[https://serpapi.com](https://serpapi.com)的接口制作
+需要前往他们的官网获取key
+`alemon.config.yaml`
+``` yaml
+# 默认无, 可能无法使用网页搜索
+searchApiKey: ''
+```
+
+#### 配置管理员
+`alemon.config.yaml`
+``` yaml
+# 默认无, 小部分功能需要管理员权限才能使用
+master_id: ['3501869534']
+```
+
+## 4.使用
+
+需要先使用`#添加ai`,配置一个ai后才能使用对话功能
+
+|指令|作用|
+|---|---|
+|#添加ai|添加一个ai, 重名时更新|
+|#切换ai|切换一个ai配置并保留当前对话|
+|#开启对话|在当前位置启用ai聊天|
+|#ai配置|显示当前使用的配置|
+|#添加提示词|添加一个提示词|
+|#提示词列表|查看当前配置的所有提示词|
+|#切换提示词|切换一个提示词并保留当前对话|
+|#清空对话|清空当前对话并保留好感度|
+|#开启好感度|好感度会影响回复时的语气|
+|#好感度|查看自己的好感度|
+|#ai帮助|查看更多指令|
