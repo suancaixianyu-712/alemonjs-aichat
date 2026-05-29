@@ -2,9 +2,9 @@ export default onMiddleware(
   onSelects(["message.create", "private.message.create"]),
   async (event, next) => {
     if (event.Xianyu) {
-      return true; // 继续执行后续的处理函数
+      return next(); // 普通聊天交给后续路由/文件处理，跳过命令子路由
     } else {
-      return next(); // 跳过所有指令,继续执行后续的处理函数
+      return true; // 命令消息继续执行当前命令子路由
     }
   },
 );
