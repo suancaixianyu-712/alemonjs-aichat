@@ -1,10 +1,88 @@
-import { getConfigValue, useClient } from "alemonjs";
+import { getConfigValue, Text, useClient, useMessage } from "alemonjs";
 import { API } from "@alemonjs/onebot";
 import redisClient from "@src/config";
 import { CApiReply } from "@src/response/zreply/capi";
 import { RApiReply } from "@src/response/zreply/rapi";
+import { buildUserMessage, getChatConfig } from "@src/response/zreply/getChatConfig";
 
 const selects = onSelects(["message.create", "private.message.create"]);
+
+const prependGuidancePrefix = (message: any) => ({
+  ...message,
+  guidance: true,
+  content: Array.isArray(message?.content)
+    ? message.content.map((item: any) => {
+        if (item?.type === "text" || item?.type === "input_text") {
+          return {
+            ...item,
+            text:
+              "[补充引导] 工具调用期间用户追加了新的消息，请结合这条消息调整后续工具调用和最终回复。\n" +
+              item.text,
+          };
+        }
+        return item;
+      })
+    : message?.content,
+});
+
+const buildGuidanceMessage = async (event: any) => {
+  const cfg = await getChatConfig(event);
+  const capiMessage = prependGuidancePrefix(
+    await buildUserMessage(event, cfg, "capi"),
+  );
+  const rapiMessage = prependGuidancePrefix(
+    await buildUserMessage(event, cfg, "rapi"),
+  );
+
+  return {
+    guidance: true,
+    capiMessage,
+    rapiMessage,
+    createdAt: Date.now(),
+    previewText: event.msg || "",
+  };
+};
+
+const canPassReplyTriggerGate = async (event: any) => {
+  if (
+    event.UserId == event.bot?.user_id ||
+    !event.msg ||
+    event.msg.startsWith("/") ||
+    event.msg.startsWith("#")
+  ) {
+    return false;
+  }
+
+  const aiConfig = await redisClient.getAIConfig(event.guid);
+  if (
+    !aiConfig ||
+    aiConfig.host.trim() === "" ||
+    aiConfig.key.trim() === "" ||
+    aiConfig.model.trim() === ""
+  ) {
+    return false;
+  }
+
+  const atTriggerSwitch = await redisClient.getAtTriggerSwitch(
+    event.ChannelId ?? event.UserId,
+  );
+  if (atTriggerSwitch === "1" && event.Platform !== "testone") {
+    if (!event["atBot"] && event.name !== "private.message.create") {
+      const regexMatched = await redisClient.matchRegexRule(
+        event.ChannelId ?? event.UserId,
+        event.msg || "",
+      );
+      if (regexMatched) {
+        event["regexTriggered"] = true;
+        return true;
+      }
+      return false;
+    }
+  }
+
+  return true;
+};
+
 // 中间件
 export default onMiddleware(selects, async (event, next) => {
   const config = getConfigValue().aiChat || {};
@@ -310,22 +388,28 @@ export default onMiddleware(selects, async (event, next) => {
     }
   }
 
-  const atTriggerSwitch = await redisClient.getAtTriggerSwitch(
-    event.ChannelId ?? event.UserId,
-  );
-  if (atTriggerSwitch === "1" && event.Platform !== "testone") {
-    if (!event["atBot"] && event.name !== "private.message.create") {
-      // 检查是否匹配正则触发规则
-      const regexMatched = await redisClient.matchRegexRule(
-        event.ChannelId ?? event.UserId,
-        event.msg || "",
+  const shouldHandleAsGuidance =
+    (await redisClient.getAIToolLoopProcessing(event.guid)) === "1" &&
+    (await canPassReplyTriggerGate(event));
+
+  if (shouldHandleAsGuidance) {
+    const guidanceMessage = await buildGuidanceMessage(event);
+    const queue = await redisClient.addAIGuidanceMessage(
+      event.guid,
+      guidanceMessage,
+    );
+    if (queue.length === 1) {
+      const [message] = useMessage(event);
+      await message.send(
+        format(Text("已收到新的补充消息，等当前工具调用完成后会一并处理。")),
       );
-      if (regexMatched) {
-        event["regexTriggered"] = true; // 标记为正则触发
-      } else {
-        event["Xianyu"] = false; // 跳过所有指令,继续执行后续的处理函数
-      }
     }
+    event["Xianyu"] = false;
+    return next();
+  }
+
+  if (!(await canPassReplyTriggerGate(event))) {
+    event["Xianyu"] = false;
   }
 
   if (event["Xianyu"]) {

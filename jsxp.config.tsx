@@ -25,6 +25,10 @@ export default defineConfig({
           atTrigger={false}
           currentAI="OpenAI"
           aiList={["OpenAI", "Claude", "Gemini"]}
+          skillList={[
+            { name: "use-alemon", description: "控制AI配置和框架开关" },
+            { name: "send-media", description: "发送图片、音频和视频等媒体" },
+          ]}
           toolList={{ 搜索工具: "0", 翻译工具: "1" }}
           toolPromptSwitch={true}
           toolPromptRevokeSwitch={false}

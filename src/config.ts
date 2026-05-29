@@ -5,13 +5,245 @@ import fs from "fs";
 import path from "path";
 import { redis } from "./redis";
 
+type ArchivedChatRecord = {
+  id: string;
+  guid: string;
+  summary: string;
+  detail: string;
+  transcript: string;
+  history: any[];
+  reason: string;
+  createdAt: number;
+};
+
+type ArchivedChatSearchResult = {
+  id: string;
+  guid: string;
+  summary: string;
+  detail: string;
+  transcript: string;
+  reason: string;
+  createdAt: number;
+  score: number;
+};
+
 class db {
   redis: Redis;
   systemPrompt = "";
 
+  private sanitizeAIChatHistory(history: any[]): any[] {
+    if (!Array.isArray(history) || history.length === 0) {
+      return [];
+    }
+
+    const sanitized: any[] = [];
+    let index = 0;
+
+    while (index < history.length) {
+      const message = history[index];
+
+      if (!message || typeof message !== "object") {
+        index += 1;
+        continue;
+      }
+
+      const toolCalls = Array.isArray(message.tool_calls)
+        ? message.tool_calls.filter((toolCall) => toolCall?.id)
+        : [];
+
+      if (message.role === "tool") {
+        index += 1;
+        continue;
+      }
+
+      if (message.role !== "assistant" || toolCalls.length === 0) {
+        sanitized.push(message);
+        index += 1;
+        continue;
+      }
+
+      const toolCallIds = new Set(
+        toolCalls.map((toolCall: any) => String(toolCall.id)),
+      );
+      const matchedToolIds = new Set<string>();
+      const toolMessages: any[] = [];
+      let cursor = index + 1;
+
+      while (cursor < history.length) {
+        const nextMessage = history[cursor];
+
+        if (nextMessage?.role !== "tool") {
+          break;
+        }
+
+        const toolCallId = String(nextMessage.tool_call_id || "");
+        if (toolCallIds.has(toolCallId)) {
+          matchedToolIds.add(toolCallId);
+          toolMessages.push(nextMessage);
+          cursor += 1;
+          continue;
+        }
+
+        break;
+      }
+
+      if (matchedToolIds.size === toolCallIds.size) {
+        sanitized.push(message, ...toolMessages);
+      }
+
+      index = cursor;
+    }
+
+    return sanitized;
+  }
+
   private async getToolDefinitions() {
     const { tools } = await import("./api/aitools");
     return tools;
+  }
+
+  private extractMessageText(content: any): string {
+    if (typeof content === "string") {
+      return content;
+    }
+
+    if (Array.isArray(content)) {
+      return content
+        .map((part) => {
+          if (!part) return "";
+          if (typeof part === "string") return part;
+          if (typeof part?.text === "string") return part.text;
+          if (typeof part?.content === "string") return part.content;
+          if (part?.type === "input_text" && typeof part?.text === "string") {
+            return part.text;
+          }
+          if (part?.type === "output_text" && typeof part?.text === "string") {
+            return part.text;
+          }
+          if (part?.type === "image_url" && part?.image_url?.url) {
+            return `[image:${part.image_url.url}]`;
+          }
+          return "";
+        })
+        .filter(Boolean)
+        .join("\n");
+    }
+
+    if (content && typeof content === "object") {
+      if (typeof content.text === "string") {
+        return content.text;
+      }
+      if (typeof content.content === "string") {
+        return content.content;
+      }
+    }
+
+    return "";
+  }
+
+  private trimText(text: string, maxLength: number): string {
+    const normalized = text.replace(/\s+/g, " ").trim();
+    if (normalized.length <= maxLength) {
+      return normalized;
+    }
+    return `${normalized.slice(0, maxLength)}...`;
+  }
+
+  private formatHistoryMessage(message: any): string {
+    if (!message || typeof message !== "object") {
+      return "";
+    }
+
+    const role = String(message.role || "unknown");
+    const name = message.name ? `(${message.name})` : "";
+    const content = this.extractMessageText(message.content);
+    const trimmed = content.trim();
+
+    if (!trimmed) {
+      return `${role}${name}: [空内容]`;
+    }
+
+    return `${role}${name}: ${trimmed}`;
+  }
+
+  private buildChatHistoryTranscript(history: any[]): string {
+    return history
+      .map((message) => this.formatHistoryMessage(message))
+      .filter(Boolean)
+      .join("\n");
+  }
+
+  private buildFallbackSummary(history: any[], transcript: string): string {
+    const recent = history
+      .slice(-6)
+      .map((message) => this.formatHistoryMessage(message))
+      .filter(Boolean)
+      .join(" ");
+
+    if (recent) {
+      return this.trimText(`共 ${history.length} 条消息，最近内容：${recent}`, 180);
+    }
+
+    return this.trimText(
+      `共 ${history.length} 条消息，主要内容：${transcript || "无可用文本内容"}`,
+      180,
+    );
+  }
+
+  private buildFallbackDetail(history: any[], transcript: string): string {
+    const recentMessages = history
+      .slice(-20)
+      .map((message) => this.formatHistoryMessage(message))
+      .filter(Boolean)
+      .join("\n");
+
+    return this.trimText(
+      recentMessages || transcript || "无详细历史内容",
+      2000,
+    );
+  }
+
+  private getArchiveRecordKey(guid: string, id: string): string {
+    return `ai:memory:chat:${guid}:${id}`;
+  }
+
+  private buildSearchTerms(query: string): string[] {
+    const normalized = query.toLowerCase().trim();
+    if (!normalized) {
+      return [];
+    }
+
+    const parts = normalized.split(/\s+/).filter(Boolean);
+    return [...new Set([normalized, ...parts])];
+  }
+
+  private scoreArchivedChatRecord(
+    record: ArchivedChatRecord,
+    query: string,
+  ): number {
+    const normalized = query.toLowerCase().trim();
+    if (!normalized) {
+      return 0;
+    }
+
+    const summary = (record.summary || "").toLowerCase();
+    const detail = (record.detail || "").toLowerCase();
+    const transcript = (record.transcript || "").toLowerCase();
+    const terms = this.buildSearchTerms(query);
+    let score = 0;
+
+    if (summary.includes(normalized)) score += 18;
+    if (detail.includes(normalized)) score += 12;
+    if (transcript.includes(normalized)) score += 6;
+
+    for (const term of terms) {
+      if (!term) continue;
+      if (summary.includes(term)) score += 6;
+      if (detail.includes(term)) score += 4;
+      if (transcript.includes(term)) score += 2;
+    }
+
+    return score;
   }
 
   static defaultAIConfig: AIConfig = {
@@ -282,21 +514,31 @@ class db {
   async getAIChatHistory(guid: string): Promise<any[]> {
     const historyStr = await this.redis.get(`ai:history:${guid}`);
     if (historyStr) {
-      return JSON.parse(historyStr);
+      const history = JSON.parse(historyStr);
+      const sanitizedHistory = this.sanitizeAIChatHistory(history);
+      if (JSON.stringify(history) !== JSON.stringify(sanitizedHistory)) {
+        await this.setAIChatHistory(guid, sanitizedHistory);
+      }
+      return sanitizedHistory;
     }
     return [];
   }
 
   /** 设置聊天历史 */
   async setAIChatHistory(guid: string, history: any[]): Promise<void> {
-    await this.redis.set(`ai:history:${guid}`, JSON.stringify(history));
+    const sanitizedHistory = this.sanitizeAIChatHistory(history);
+    await this.redis.set(`ai:history:${guid}`, JSON.stringify(sanitizedHistory));
   }
 
   /** 添加聊天历史 */
   async addAIChatHistory(guid: string, data: any): Promise<any[]> {
+    return this.addAIChatHistoryBatch(guid, [data]);
+  }
+
+  /** 批量添加聊天历史 */
+  async addAIChatHistoryBatch(guid: string, dataList: any[]): Promise<any[]> {
     const history = await this.getAIChatHistory(guid);
-    // while (history.length >= 40) history.shift();
-    history.push(data);
+    history.push(...dataList);
     await this.setAIChatHistory(guid, history);
     return history;
   }
@@ -322,6 +564,88 @@ class db {
     await this.setAIChatHistory(guid, history);
   }
 
+  /** 归档当前聊天历史 */
+  async archiveAIChatHistory(
+    guid: string,
+    options?: {
+      reason?: string;
+      summary?: string;
+      detail?: string;
+    },
+  ): Promise<ArchivedChatRecord | null> {
+    const history = await this.getAIChatHistory(guid);
+    if (!Array.isArray(history) || history.length === 0) {
+      return null;
+    }
+
+    const transcript = this.buildChatHistoryTranscript(history);
+    const id = Date.now().toString();
+    const summary =
+      options?.summary?.trim() || this.buildFallbackSummary(history, transcript);
+    const detail =
+      options?.detail?.trim() || this.buildFallbackDetail(history, transcript);
+
+    const record: ArchivedChatRecord = {
+      id,
+      guid,
+      summary,
+      detail,
+      transcript,
+      history,
+      reason: options?.reason || "manual",
+      createdAt: Date.now(),
+    };
+
+    await this.setSummary(guid, id, summary);
+    await this.setSummaryDetail(guid, id, detail);
+    await this.redis.set(this.getArchiveRecordKey(guid, id), JSON.stringify(record));
+
+    return record;
+  }
+
+  /** 设置工具调用中的处理状态 */
+  async setAIToolLoopProcessing(guid: string, processing: boolean): Promise<void> {
+    if (processing) {
+      await this.redis.set(`ai:tool_loop_processing:${guid}`, "1");
+      return;
+    }
+    await this.redis.del(`ai:tool_loop_processing:${guid}`);
+  }
+
+  /** 获取工具调用中的处理状态 */
+  async getAIToolLoopProcessing(guid: string): Promise<string> {
+    return (await this.redis.get(`ai:tool_loop_processing:${guid}`)) || "0";
+  }
+
+  /** 获取工具调用期间追加的引导消息 */
+  async getAIGuidanceMessages(guid: string): Promise<any[]> {
+    const queueStr = await this.redis.get(`ai:guidance:${guid}`);
+    if (!queueStr) {
+      return [];
+    }
+    return JSON.parse(queueStr);
+  }
+
+  /** 追加工具调用期间的引导消息 */
+  async addAIGuidanceMessage(guid: string, data: any): Promise<any[]> {
+    const queue = await this.getAIGuidanceMessages(guid);
+    queue.push(data);
+    await this.redis.set(`ai:guidance:${guid}`, JSON.stringify(queue));
+    return queue;
+  }
+
+  /** 提取并清空工具调用期间的引导消息 */
+  async drainAIGuidanceMessages(guid: string): Promise<any[]> {
+    const queue = await this.getAIGuidanceMessages(guid);
+    await this.clearAIGuidanceMessages(guid);
+    return queue;
+  }
+
+  /** 清空工具调用期间的引导消息 */
+  async clearAIGuidanceMessages(guid: string): Promise<void> {
+    await this.redis.del(`ai:guidance:${guid}`);
+  }
+
   /** 存储摘要,全局共享 */
   async setSummary(guid: string, id: string, summary: string): Promise<void> {
     await this.redis.set(`ai:summary:${guid}:${id}`, `${summary}`);
@@ -332,10 +656,8 @@ class db {
   }
   /** 获取所有摘要时间列表 */
   async getSummaryList(): Promise<{ id: string; summary: string }[]> {
-    console.log("获取列表");
-
     const keys = await this.redis.keys(`ai:summary:*`);
-    return Promise.all(
+    const entries = await Promise.all(
       keys.map(async (key) => {
         const parts = key.split(":");
         const summary = await this.redis.get(key);
@@ -345,6 +667,7 @@ class db {
         };
       }),
     );
+    return entries.sort((a, b) => b.id.localeCompare(a.id));
   }
 
   /** 删除摘要 */
@@ -366,6 +689,190 @@ class db {
   /** 删除摘要中的详细内容 */
   async deleteSummaryDetail(guid: string, id: string): Promise<number> {
     return await this.redis.del(`ai:summary_detail:${guid}:${id}`);
+  }
+
+  /** 获取完整归档记录 */
+  async getArchivedChatRecord(
+    guid: string,
+    id: string,
+  ): Promise<ArchivedChatRecord | null> {
+    const raw = await this.redis.get(this.getArchiveRecordKey(guid, id));
+    if (!raw) {
+      const summary = await this.getSummary(guid, id);
+      const detail = await this.getSummaryDetail(guid, id);
+      if (!summary && !detail) {
+        return null;
+      }
+      return {
+        id,
+        guid,
+        summary: summary || "无摘要",
+        detail: detail || "",
+        transcript: detail || "",
+        history: [],
+        reason: "legacy",
+        createdAt: Number(id) || 0,
+      };
+    }
+
+    try {
+      return JSON.parse(raw) as ArchivedChatRecord;
+    } catch {
+      return null;
+    }
+  }
+
+  /** 获取归档记录列表 */
+  async listArchivedChatRecords(
+    guid?: string,
+    limit = 20,
+  ): Promise<ArchivedChatRecord[]> {
+    const pattern = guid
+      ? this.getArchiveRecordKey(guid, "*")
+      : this.getArchiveRecordKey("*", "*");
+    const keys = await this.redis.keys(pattern);
+    const records = await Promise.all(
+      keys.map(async (key) => {
+        const raw = await this.redis.get(key);
+        if (!raw) return null;
+        try {
+          return JSON.parse(raw) as ArchivedChatRecord;
+        } catch {
+          return null;
+        }
+      }),
+    );
+
+    const merged = new Map<string, ArchivedChatRecord>();
+    for (const record of records) {
+      if (!record) continue;
+      merged.set(`${record.guid}:${record.id}`, record);
+    }
+
+    const summaryPattern = guid ? `ai:summary:${guid}:*` : "ai:summary:*";
+    const summaryKeys = await this.redis.keys(summaryPattern);
+    for (const key of summaryKeys) {
+      const [, , summaryGuid, summaryId] = key.split(":");
+      const recordKey = `${summaryGuid}:${summaryId}`;
+      if (merged.has(recordKey)) {
+        continue;
+      }
+      const [summary, detail] = await Promise.all([
+        this.redis.get(key),
+        this.getSummaryDetail(summaryGuid, summaryId),
+      ]);
+      if (!summary && !detail) {
+        continue;
+      }
+      merged.set(recordKey, {
+        id: summaryId,
+        guid: summaryGuid,
+        summary: summary || "无摘要",
+        detail: detail || "",
+        transcript: detail || "",
+        history: [],
+        reason: "legacy",
+        createdAt: Number(summaryId) || 0,
+      });
+    }
+
+    return [...merged.values()]
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .slice(0, limit);
+  }
+
+  /** 搜索归档聊天记录 */
+  async searchArchivedChatRecords(
+    query: string,
+    options?: {
+      guid?: string;
+      limit?: number;
+    },
+  ): Promise<ArchivedChatSearchResult[]> {
+    const normalized = query.trim();
+    if (!normalized) {
+      return [];
+    }
+
+    const records = await this.listArchivedChatRecords(options?.guid, 200);
+    return records
+      .map((record) => ({
+        ...record,
+        score: this.scoreArchivedChatRecord(record, normalized),
+      }))
+      .filter((record) => record.score > 0)
+      .sort((a, b) => {
+        if (b.score !== a.score) {
+          return b.score - a.score;
+        }
+        return b.createdAt - a.createdAt;
+      })
+      .slice(0, options?.limit || 5);
+  }
+
+  /** 获取与当前消息最相关的历史记忆上下文 */
+  async getRelevantMemoryContext(
+    guid: string,
+    userKey: string,
+    query: string,
+    limit = 3,
+  ): Promise<string> {
+    const blocks: string[] = [];
+    const userMemory = userKey ? await this.getUserData(userKey) : null;
+    if (userMemory) {
+      blocks.push(`用户长期记忆:\n${this.trimText(userMemory, 500)}`);
+    }
+
+    const normalizedQuery = query.trim();
+    if (normalizedQuery) {
+      const scopedRecords = await this.searchArchivedChatRecords(normalizedQuery, {
+        guid,
+        limit,
+      });
+      const records = [...scopedRecords];
+
+      if (records.length < limit) {
+        const globalRecords = await this.searchArchivedChatRecords(normalizedQuery, {
+          limit: limit * 2,
+        });
+        for (const record of globalRecords) {
+          if (records.some((item) => item.guid === record.guid && item.id === record.id)) {
+            continue;
+          }
+          records.push(record);
+          if (records.length >= limit) {
+            break;
+          }
+        }
+      }
+
+      const fallbackRecords =
+        records.length === 0 &&
+        /(之前|上次|刚才|还记得|继续|前面| earlier |before|remember)/i.test(
+          normalizedQuery,
+        )
+          ? await this.listArchivedChatRecords(guid, Math.min(limit, 2))
+          : [];
+
+      const finalRecords = (records.length > 0 ? records : fallbackRecords).slice(
+        0,
+        limit,
+      );
+
+      if (finalRecords.length > 0) {
+        blocks.push(
+          [
+            "相关历史归档:",
+            ...finalRecords.map((record) => {
+              const scope = record.guid === guid ? "当前会话" : `其他会话(${record.guid})`;
+              return `- ${scope} / 归档ID:${record.id} / 摘要:${this.trimText(record.summary || "无摘要", 120)} / 详情:${this.trimText(record.detail || record.transcript || "无详情", 220)}`;
+            }),
+          ].join("\n"),
+        );
+      }
+    }
+
+    return blocks.join("\n\n").trim();
   }
 
   /** 存储用户数据 */

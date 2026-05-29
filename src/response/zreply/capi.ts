@@ -61,6 +61,24 @@ const sendAIReply = async (
   return aireply;
 };
 
+const appendPendingGuidanceMessages = async (guid: string, messages: any[]) => {
+  const queuedMessages = await redisClient.drainAIGuidanceMessages(guid);
+  if (!queuedMessages.length) {
+    return [];
+  }
+
+  const guidanceMessages = queuedMessages
+    .map((item: any) => item?.capiMessage || item)
+    .filter(Boolean);
+  if (!guidanceMessages.length) {
+    return [];
+  }
+
+  messages.push(...guidanceMessages);
+  await redisClient.addAIChatHistoryBatch(guid, guidanceMessages);
+  return guidanceMessages;
+};
+
 export const CApiReply = async (
   e: Events["message.create"] | Events["private.message.create"],
 ) => {
@@ -106,7 +124,7 @@ export const CApiReply = async (
     Object.assign(createParams, deepThoughtReasoning);
     createParams["stream"] = false;
 
-    log("请求AI，参数：", createParams);
+    // log("请求AI，参数：", createParams);
     const stream = (await openai.chat.completions.create(createParams)) as any;
 
     log("AI回复原始数据:\n", JSON.stringify(stream, null, 2));
@@ -155,126 +173,171 @@ export const CApiReply = async (
 
     // 检查是否有工具调用需要处理
     let toolRound = 0;
-    while (res.choices[0].message?.tool_calls?.length) {
-      toolRound += 1;
-      const responseMessage = res.choices[0].message as any;
-      log("AI返回工具调用，内容：-----", res.choices[0]);
+    if (res.choices[0].message?.tool_calls?.length) {
+      await redisClient.setAIToolLoopProcessing(e.guid, true);
+    }
 
-      // 先处理对话
-      if (toolRound === 5) {
-        await message.send(
-          format(Text("AI正在连续调用工具，第 5 轮处理中，请稍等")),
-        );
-      }
-      messages.push(responseMessage);
-      await redisClient.addAIChatHistory(e.guid, responseMessage);
+    try {
+      while (true) {
+        if (!res.choices[0].message?.tool_calls?.length) {
+          const pendingGuidanceMessages = await appendPendingGuidanceMessages(
+            e.guid,
+            messages,
+          );
+          if (pendingGuidanceMessages.length === 0) {
+            break;
+          }
 
-      log("模型决定调用工具：", responseMessage.tool_calls);
-
-      if (cfg.toolConfig.toolPromptSwitch === "1") {
-        const useToolsMessage = responseMessage.tool_calls.map((toolCall) => {
-          return `工具调用: ${toolCall.function.name}(${cfg.toolConfig.toolPromptArgsSwitch === "1" ? toolCall.function.arguments : ""})`;
-        });
-        const msgId = await message.send(
-          format(Text(useToolsMessage.join("\n"))),
-        );
-        if (cfg.toolConfig.toolPromptRevokeSwitch === "1") {
-          // 10秒后撤回工具调用提示
-          setTimeout(() => {
-            message.delete({ messageId: msgId[0].data.message_id });
-          }, 10000);
-        }
-      }
-
-      for (const toolCall of responseMessage.tool_calls) {
-        const functionName = toolCall.function.name;
-        let functionArgs: any = {};
-
-        try {
-          functionArgs = toolCall.function.arguments
-            ? JSON.parse(toolCall.function.arguments)
-            : {};
-        } catch (err) {
-          console.error(`工具参数解析失败：${functionName}`, err);
-          functionArgs = {};
-        }
-
-        const functionToCall = availableTools[functionName];
-        let functionResult: any;
-
-        if (!functionToCall) {
-          console.error(`未找到函数：${functionName}`);
-          functionResult = {
-            ok: false,
-            error: `未找到函数：${functionName}`,
+          log(
+            "工具调用完成后收到补充引导，继续请求模型：",
+            pendingGuidanceMessages.length,
+          );
+          const params: any = {
+            model: cfg.config.model,
+            messages: messages,
           };
-        } else {
-          try {
-            if (
-              (await redisClient.getToolStatus(e.guid, functionName)) === "1"
-            ) {
-              console.error(`工具被禁用：${functionName}`);
-              functionResult = {
-                ok: false,
-                error: `工具被禁用：${functionName}`,
-              };
-            } else {
-              functionResult = await functionToCall(functionArgs);
-            }
-          } catch (err: any) {
-            console.error(`工具执行失败：${functionName}`, err);
-            functionResult = {
-              ok: false,
-              error: err?.message || String(err) || "工具执行失败",
-            };
+          if (cfg.toolConfig.toolSwitch === "1") {
+            params.tools = cfg.toolConfig.cApiToolList;
+            params.tool_choice = "auto";
+          }
+          Object.assign(params, getDeepThoughtReasoning(cfg));
+          res = await openai.chat.completions.create(params);
+          if (!res.choices || res.choices.length === 0) {
+            log("AI未返回内容");
+            return;
+          }
+          continue;
+        }
+
+        toolRound += 1;
+        const responseMessage = res.choices[0].message as any;
+        log("AI返回工具调用，内容：-----", res.choices[0]);
+
+        // 先处理对话
+        if (toolRound >= 10 && toolRound % 10 === 0) {
+          await message.send(
+            format(Text(`AI正在连续调用工具，第 ${toolRound} 轮处理中，请稍等`)),
+          );
+        }
+        messages.push(responseMessage);
+
+        log("模型决定调用工具：", responseMessage.tool_calls);
+
+        if (cfg.toolConfig.toolPromptSwitch === "1") {
+          const useToolsMessage = responseMessage.tool_calls.map((toolCall) => {
+            return `工具调用: ${toolCall.function.name}(${cfg.toolConfig.toolPromptArgsSwitch === "1" ? toolCall.function.arguments : ""})`;
+          });
+          const msgId = await message.send(
+            format(Text(useToolsMessage.join("\n"))),
+          );
+          if (cfg.toolConfig.toolPromptRevokeSwitch === "1") {
+            // 10秒后撤回工具调用提示
+            setTimeout(() => {
+              message.delete({ messageId: msgId[0].data.message_id });
+            }, 10000);
           }
         }
 
-        const toolContent = JSON.stringify(
-          typeof functionResult === "undefined"
-            ? { ok: true, result: null }
-            : functionResult,
+        const toolMessages: any[] = [];
+
+        for (const toolCall of responseMessage.tool_calls) {
+          const functionName = toolCall.function.name;
+          let functionArgs: any = {};
+
+          try {
+            functionArgs = toolCall.function.arguments
+              ? JSON.parse(toolCall.function.arguments)
+              : {};
+          } catch (err) {
+            console.error(`工具参数解析失败：${functionName}`, err);
+            functionArgs = {};
+          }
+
+          const functionToCall = availableTools[functionName];
+          let functionResult: any;
+
+          if (!functionToCall) {
+            console.error(`未找到函数：${functionName}`);
+            functionResult = {
+              ok: false,
+              error: `未找到函数：${functionName}`,
+            };
+          } else {
+            try {
+              if (
+                (await redisClient.getToolStatus(e.guid, functionName)) === "1"
+              ) {
+                console.error(`工具被禁用：${functionName}`);
+                functionResult = {
+                  ok: false,
+                  error: `工具被禁用：${functionName}`,
+                };
+              } else {
+                functionResult = await functionToCall(functionArgs);
+              }
+            } catch (err: any) {
+              console.error(`工具执行失败：${functionName}`, err);
+              functionResult = {
+                ok: false,
+                error: err?.message || String(err) || "工具执行失败",
+              };
+            }
+          }
+
+          const toolContent = JSON.stringify(
+            typeof functionResult === "undefined"
+              ? { ok: true, result: null }
+              : functionResult,
+          );
+
+          // 把工具执行结果作为 tool role 消息加回对话
+          const toolMessage = {
+            role: "tool",
+            tool_call_id: toolCall.id,
+            name: functionName,
+            content: toolContent,
+            reasoning_content: responseMessage.reasoning_content || "",
+          };
+          messages.push(toolMessage);
+          toolMessages.push(toolMessage);
+        }
+
+        await redisClient.addAIChatHistoryBatch(e.guid, [
+          responseMessage,
+          ...toolMessages,
+        ]);
+
+        const guidanceMessages = await appendPendingGuidanceMessages(
+          e.guid,
+          messages,
         );
+        if (guidanceMessages.length > 0) {
+          log("工具调用期间收到补充引导：", guidanceMessages.length);
+        }
 
-        // 把工具执行结果作为 tool role 消息加回对话
-        messages.push({
-          role: "tool",
-          tool_call_id: toolCall.id,
-          name: functionName,
-          content: toolContent,
-          reasoning_content: responseMessage.reasoning_content || "",
-        });
+        const params: any = {
+          model: cfg.config.model,
+          messages: messages,
+          tools: cfg.toolConfig.cApiToolList,
+          tool_choice: "auto",
+        };
 
-        // 记录工具调用结果
-        await redisClient.addAIChatHistory(e.guid, {
-          role: "tool",
-          tool_call_id: toolCall.id,
-          name: functionName,
-          content: toolContent,
-          reasoning_content: responseMessage.reasoning_content || "",
-        });
+        const deepThoughtReasoning = getDeepThoughtReasoning(cfg);
+        Object.assign(params, deepThoughtReasoning);
+
+        // log("重新请求AI，参数：", params);
+
+        // 重新请求
+        res = await openai.chat.completions.create(params);
+
+        // 检查是否还有工具调用需要处理
+        if (!res.choices || res.choices.length === 0) {
+          log("AI未返回内容");
+          return;
+        }
       }
-
-      const params: any = {
-        model: cfg.config.model,
-        messages: messages,
-        tools: cfg.toolConfig.cApiToolList,
-        tool_choice: "auto",
-      };
-
-      const deepThoughtReasoning = getDeepThoughtReasoning(cfg);
-      Object.assign(params, deepThoughtReasoning);
-
-      log("重新请求AI，参数：", params);
-
-      // 重新请求
-      res = await openai.chat.completions.create(params);
-
-      // 检查是否还有工具调用需要处理
-      if (!res.choices || res.choices.length === 0) {
-        log("AI未返回内容");
-        return;
-      }
+    } finally {
+      await redisClient.setAIToolLoopProcessing(e.guid, false);
     }
 
     // 如果没有工具调用，处理最终回复

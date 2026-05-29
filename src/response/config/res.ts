@@ -1,9 +1,67 @@
 import redisClient from "@src/config";
+import { loadSkills } from "@src/api/loadSkill";
 import AiConfig from "@src/image/conponent/AiConfig";
 import { Text, useMessage, Image } from "alemonjs";
 import { renderComponentIsHtmlToBuffer } from "jsxp";
 import OpenAi from "openai";
 export const selects = onSelects(["message.create", "private.message.create"]);
+
+const parseArchiveSummary = (content: string) => {
+  const summaryMatch = content.match(/摘要:(.*?)(?:详细信息:|$)/s);
+  const detailMatch = content.match(/详细信息:(.*)/s);
+
+  return {
+    summary: summaryMatch ? summaryMatch[1].trim() : "",
+    detail: detailMatch ? detailMatch[1].trim() : "",
+  };
+};
+
+const archiveCurrentConversation = async (
+  guid: string,
+  reason: string,
+  aiConfig?: Awaited<ReturnType<typeof redisClient.getAIConfig>>,
+) => {
+  const history = await redisClient.getAIChatHistory(guid);
+  if (history.length === 0) {
+    return null;
+  }
+
+  if (aiConfig?.model) {
+    try {
+      const openai = new OpenAi({
+        baseURL: aiConfig.host,
+        apiKey: aiConfig.key,
+        timeout: 300000,
+      });
+      const summaryPrompt =
+        "请总结一下我们之前的聊天内容。请严格按以下格式输出：\n摘要:<一句到两句的简短总结>\n详细信息:<尽可能完整的要点整理，方便之后继续对话>";
+      const response = await openai.chat.completions.create({
+        model: aiConfig.model,
+        messages: [
+          ...history,
+          {
+            role: "user",
+            content: summaryPrompt,
+          },
+        ],
+        stream: false,
+      });
+      const content = response.choices[0].message.content || "";
+      const { summary, detail } = parseArchiveSummary(content);
+      return await redisClient.archiveAIChatHistory(guid, {
+        reason,
+        summary,
+        detail,
+      });
+    } catch (error) {
+      console.error("对话归档总结失败，改用本地摘要：", error);
+    }
+  }
+
+  return await redisClient.archiveAIChatHistory(guid, {
+    reason,
+  });
+};
 
 export default onResponse(selects, async (e, next) => {
   // 创建
@@ -20,6 +78,7 @@ export default onResponse(selects, async (e, next) => {
     const atTriggerSwitch = await redisClient.getAtTriggerSwitch(e.guid); // 仅艾特触发
     const currentAI = await redisClient.getCurrentAI(e.guid); // 当前AI名称
     const aiList = await redisClient.getAIList();
+    const skillList = loadSkills();
     const toolList = await redisClient.getAllToolStatus(e.guid);
     const toolPromptSwitch = await redisClient.getToolPromptSwitch(e.guid); // 工具提示开关
     const toolPromptRevokeSwitch = await redisClient.getToolPromptRevokeSwitch(
@@ -45,6 +104,7 @@ export default onResponse(selects, async (e, next) => {
         atTrigger: atTriggerSwitch == "1",
         aiList: aiList,
         currentAI: currentAI,
+        skillList,
         toolList: toolList,
         toolPromptSwitch: toolPromptSwitch == "1",
         toolPromptRevokeSwitch: toolPromptRevokeSwitch == "1",
@@ -118,9 +178,13 @@ export default onResponse(selects, async (e, next) => {
 
   // 清空对话
   if (/^(\/|#)清空对话$/i.test(e.msg)) {
+    message.send(format(Text("正在归档并清空当前对话，请稍等...")));
+    const archived = await archiveCurrentConversation(e.guid, "clear", config);
     await redisClient.clearAIChatHistory(e.guid);
     await redisClient.deleteSessionId(e.guid);
-    message.send(format(Text("对话已清空")));
+    message.send(
+      format(Text(archived ? "当前对话已归档并清空" : "对话已清空")),
+    );
   }
 
   // 清空所有对话
@@ -154,70 +218,13 @@ export default onResponse(selects, async (e, next) => {
       return;
     }
 
-    // 压缩当前对话的上下文
     const aiConfig = await redisClient.getAIConfig(e.guid);
-    if (aiConfig.model) {
-      // 让ai总结当前聊天内容, 将其存储到redis中作为历史对话的一部分
-      const openai = new OpenAi({
-        baseURL: aiConfig.host,
-        apiKey: aiConfig.key,
-        timeout: 300000,
-      });
-      const history = await redisClient.getAIChatHistory(e.guid);
-      const FilingID = Date.now();
-
-      const summaryPrompt = `system:请总结一下我们之前的聊天内容，要求总结内容能够涵盖之前聊天的主要信息和细节，字数控制在200字以内。总结内容将被用作未来对话的上下文，请确保总结内容的准确性和完整性。请务必按照特定格式总总结, 格式如下
-
-归档ID:${FilingID}
-摘要:<简单描述>
-详细信息:<详细描述>
-
-归档id为框架生成
-其中摘要部分要求简洁明了, 详细信息部分要求尽可能全面地涵盖之前聊天的内容, 包括重要的细节和信息点。请确保总结内容能够准确反映之前的聊天内容, 并且格式正确，以便我们在未来的对话中能够正确地使用这些总结内容。`;
-      const messages = [
-        ...history,
-        {
-          role: "user",
-          content: summaryPrompt,
-        },
-      ];
-
-      console.log("messages", messages);
-
-      try {
-        const response = await openai.chat.completions.create({
-          model: aiConfig.model,
-          messages,
-          stream: false,
-        });
-        const summary = response.choices[0].message.content;
-        if (summary) {
-          const AbstractMatch = summary.match(/摘要:(.*)详细信息:/s);
-          const DetailMatch = summary.match(/详细信息:(.*)/s);
-          const Abstract = AbstractMatch ? AbstractMatch[1].trim() : "无摘要";
-          const Detail = DetailMatch ? DetailMatch[1].trim() : "无详细信息";
-          await redisClient.setSummary(e.guid, FilingID.toString(), Abstract);
-          await redisClient.setSummaryDetail(
-            e.guid,
-            FilingID.toString(),
-            Detail,
-          );
-          await redisClient.clearAIChatHistory(e.guid);
-          await redisClient.addAIChatHistory(e.guid, {
-            role: "user",
-            content: `system:上一轮对话小结：${Abstract}\n详细信息：${Detail}`,
-          });
-          message.send(format(Text("已开启新对话")));
-        }
-      } catch (error) {
-        console.error("对话总结失败：", error);
-        message.send(
-          format(Text("新对话开启失败"), Text(`\n报错内容：${error}`)),
-        );
-      }
-    } else {
-      message.send(format(Text("当前无可用的AI配置，请先设置AI配置")));
-    }
+    const archived = await archiveCurrentConversation(e.guid, "new", aiConfig);
+    await redisClient.clearAIChatHistory(e.guid);
+    await redisClient.deleteSessionId(e.guid);
+    message.send(
+      format(Text(archived ? "已归档当前对话并开启新对话" : "已开启新对话")),
+    );
   }
 
   next();

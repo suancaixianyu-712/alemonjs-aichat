@@ -14,6 +14,25 @@ const cmds = [
   { cmd: "/清空对话", desc: "清空当前对话历史" },
 ];
 
+const SkillItem = ({
+  name,
+  description,
+}: {
+  name: string;
+  description: string;
+}) => {
+  return (
+    <div className="rounded-lg bg-white/5 border border-white/10 px-3 py-2">
+      <div className="font-mono text-sm font-semibold text-cyan-200">
+        {name}
+      </div>
+      <div className="mt-1 text-xs leading-relaxed text-white/70">
+        {description || "暂无描述"}
+      </div>
+    </div>
+  );
+};
+
 {
   /* 辅助组件 - StatusItem */
 }
@@ -73,6 +92,7 @@ export default function App(data: {
   atTrigger: boolean;
   currentAI: string;
   aiList: string[];
+  skillList: Array<{ name: string; description: string }>;
   toolList: Record<string, string>;
   toolPromptSwitch: boolean;
   toolPromptRevokeSwitch: boolean;
@@ -112,6 +132,30 @@ export default function App(data: {
             <span className="text-amber-200 text-xs font-medium tracking-wide">
               {help.by}
             </span>
+          </div>
+        </div>
+
+        <div className="bg-gradient-to-br from-gray-900/90 to-black/80 backdrop-blur-md rounded-2xl border border-white/20 shadow-xl overflow-hidden mb-4 text-white">
+          <div className="px-5 py-3 bg-white/5 border-b border-white/10 backdrop-blur-sm">
+            <p className="text-base font-medium tracking-wide flex items-center gap-2">
+              <span className="w-1.5 h-1.5 bg-cyan-400 rounded-full"></span>
+              技能列表
+            </p>
+          </div>
+          <div className="p-5">
+            {data.skillList.length ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {data.skillList.map((skill) => (
+                  <SkillItem
+                    key={`skill-${skill.name}`}
+                    name={skill.name}
+                    description={skill.description}
+                  />
+                ))}
+              </div>
+            ) : (
+              <span className=" text-white/40 italic">暂无技能配置</span>
+            )}
           </div>
         </div>
 

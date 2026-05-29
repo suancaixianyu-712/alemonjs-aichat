@@ -57,6 +57,12 @@ export default onResponse(selects, async (e, next) => {
   );
 
   const skills = loadSkills(); // 加载技能列表
+  const relevantMemoryContext = await redisClient.getRelevantMemoryContext(
+    e.guid,
+    String(e.UserId || ""),
+    e.msg || "",
+    3,
+  );
   // 创建消息
   const [message] = useMessage(e);
   const historyMessages = await redisClient.getAIChatHistory(e.guid);
@@ -71,12 +77,14 @@ export default onResponse(selects, async (e, next) => {
 ## 技能
 在遇到用户需要执行特定操作时,先获取对应的技能,如果有可用技能,获取该技能,并严格按照技能文档要求的格式调用, 不要添加任何多余的内容, 也不要删除或修改规范中的任何内容, 以确保技能能够被正确解析和处理
 当没有技能可以应对需求时, 就自行挑选合适的工具函数来完成用户的需求
+如果用户在继续之前的话题、问你记不记得、提到上次/刚才/之前聊过的内容，先参考系统自动检索到的相关记忆；如果还不够，再调用 MemoryOperation，优先使用 chatHistory 的 search:关键词 或 guid:id 补充历史上下文
 
 调用执行脚本类型的工具时, 务必确保脚本安全, 不得执行对服务器有伤害的脚本
 ---
 技能列表:
 ${skills.map((skill) => `- ${skill.name}: ${skill.description}`).join("\n")}
 ---
+${relevantMemoryContext ? `\n系统预检索记忆:\n${relevantMemoryContext}\n---\n` : ""}
 
 ## 关于回复格式:
 ### 用户发言
@@ -398,7 +406,6 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
       return;
     }
 
-    messages.push(usermessage);
     await redisClient.addAIChatHistory(e.guid, usermessage);
 
     // 检查是否有工具调用需要处理
@@ -407,7 +414,6 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
 
       // 先处理对话
       messages.push(responseMessage);
-      await redisClient.addAIChatHistory(e.guid, responseMessage);
 
       console.log("模型决定调用工具：", responseMessage.tool_calls);
       const useToolsMessage = responseMessage.tool_calls.map((toolCall) => {
@@ -420,6 +426,8 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
       setTimeout(() => {
         message.delete({ messageId: msgId[0].data.message_id });
       }, 30000);
+      const toolMessages: any[] = [];
+
       for (const toolCall of responseMessage.tool_calls) {
         const functionName = toolCall.function.name;
         let functionArgs: any = {};
@@ -471,21 +479,20 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
         );
 
         // 把工具执行结果作为 tool role 消息加回对话
-        messages.push({
+        const toolMessage = {
           role: "tool",
           tool_call_id: toolCall.id,
           name: functionName,
           content: toolContent,
-        });
-
-        // 记录工具调用结果
-        await redisClient.addAIChatHistory(e.guid, {
-          role: "tool",
-          tool_call_id: toolCall.id,
-          name: functionName,
-          content: toolContent,
-        });
+        };
+        messages.push(toolMessage);
+        toolMessages.push(toolMessage);
       }
+
+      await redisClient.addAIChatHistoryBatch(e.guid, [
+        responseMessage,
+        ...toolMessages,
+      ]);
 
       // 重新请求
       res = await openai.chat.completions.create({

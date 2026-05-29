@@ -15,6 +15,22 @@ const R2_CONFIG = {
   endpoint: "https://b24a196dc2ee578845bb555d53812508.r2.cloudflarestorage.com",
 };
 
+const sanitizeR2FileName = (name: string) =>
+  name
+    .trim()
+    .replace(/[\\/:*?"<>|]+/g, "-")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^\.+|\.+$/g, "");
+
+const buildR2ObjectKey = (key: string | undefined, fallbackBaseName: string, extension: string) => {
+  const normalizedExtension = extension.startsWith(".") ? extension : `.${extension}`;
+  const rawName = key?.trim() || fallbackBaseName;
+  const parsed = path.parse(rawName);
+  const safeBaseName = sanitizeR2FileName(parsed.name || rawName || "file") || "file";
+  return `${safeBaseName}${normalizedExtension}`;
+};
+
 /**
  * 图片处理选项
  */
@@ -215,7 +231,12 @@ export const getImageBuffer = async (
     contentType = matches[1];
     buffer = Buffer.from(matches[2], "base64");
     fileName = `image-${Date.now()}.${mime.extension(contentType) || "jpg"}`;
-  } else if (source.includes("./") || source.includes("\\")) {
+  } else if (
+    path.isAbsolute(source) ||
+    source.startsWith("./") ||
+    source.startsWith("../") ||
+    source.includes("\\")
+  ) {
     // 本地路径
     buffer = await fs.readFile(source);
     contentType = mime.lookup(source) || "image/jpeg";
@@ -277,8 +298,8 @@ export const uploadImageToR2 = async (
 
   // 5. 生成对象key（使用新格式的扩展名）
   const extension = format; // webp/png/jpeg
-  const baseFileName = key || originalFileName.replace(/\.[^/.]+$/, ""); // 移除原扩展名
-  const objectKey = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}.${extension}`;
+  const baseFileName = originalFileName.replace(/\.[^/.]+$/, "");
+  const objectKey = buildR2ObjectKey(key, baseFileName, extension);
 
   // 6. 上传
   const command = new PutObjectCommand({
@@ -347,8 +368,9 @@ export const uploadMediaToR2 = async (
   });
 
   // 3. 生成对象key
-  const extension = path.extname(originalFileName) || "";
-  const objectKey = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}${extension}`;
+  const extension = path.extname(originalFileName) || ".bin";
+  const baseFileName = originalFileName.replace(/\.[^/.]+$/, "");
+  const objectKey = buildR2ObjectKey(key, baseFileName, extension);
 
   // 4. 上传
   const command = new PutObjectCommand({
