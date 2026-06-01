@@ -63,10 +63,65 @@ const archiveCurrentConversation = async (
   });
 };
 
+const formatTokenValue = (value?: number | null) => {
+  return typeof value === "number" && Number.isFinite(value)
+    ? String(value)
+    : "未知";
+};
+
+const formatAIContextStatus = (
+  stats: Awaited<ReturnType<typeof redisClient.getAIContextStats>>,
+) => {
+  if (!stats) {
+    return "当前会话还没有 CAPI 上下文统计。";
+  }
+
+  const updatedAt = new Date(stats.updatedAt).toLocaleString("zh-CN", {
+    hour12: false,
+  });
+  const usageNote = stats.usageAvailable
+    ? ""
+    : "\n提示: 最近一次请求未返回 usage, 实际 token 统计可能不完整。";
+
+  return [
+    "当前AI状态：",
+    `模式: ${stats.mode.toUpperCase()}`,
+    `模型: ${stats.model || "未知"}`,
+    `更新时间: ${updatedAt}`,
+    `请求次数: ${stats.requestCount}`,
+    "",
+    "最近一次上下文：",
+    `消息数: ${stats.contextMessageCount}`,
+    `上下文字符数: ${stats.contextCharLength}`,
+    `上下文估算token: ${stats.estimatedContextTokens}`,
+    `输入token: ${formatTokenValue(stats.promptTokens)}`,
+    `输出token: ${formatTokenValue(stats.completionTokens)}`,
+    `总token: ${formatTokenValue(stats.totalTokens)}`,
+    `缓存命中token: ${formatTokenValue(stats.cachedTokens)}`,
+    `缓存未命中token: ${formatTokenValue(stats.cacheMissTokens)}`,
+    "",
+    "当前会话累计：",
+    `输入token: ${stats.totalPromptTokens}`,
+    `输出token: ${stats.totalCompletionTokens}`,
+    `总token: ${stats.totalTokensUsed}`,
+    `缓存命中token: ${stats.totalCachedTokens}`,
+    `缓存未命中token: ${stats.totalCacheMissTokens}`,
+    usageNote,
+  ]
+    .filter((line) => line !== "")
+    .join("\n");
+};
+
 export default onResponse(selects, async (e, next) => {
   // 创建
   const [message] = useMessage(e);
   const config = await redisClient.getAIConfig(e.guid);
+
+  // 查看AI状态
+  if (/^(\/|#)ai状态$/i.test(e.msg)) {
+    const stats = await redisClient.getAIContextStats(e.guid);
+    message.send(format(Text(formatAIContextStatus(stats))));
+  }
 
   // 查看AI配置
   if (/^(\/|#)(ai配置|当前提示词|查看提示词)$/i.test(e.msg)) {

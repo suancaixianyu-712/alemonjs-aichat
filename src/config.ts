@@ -27,6 +27,40 @@ type ArchivedChatSearchResult = {
   score: number;
 };
 
+const TOOL_LOOP_TTL_SECONDS = 600;
+const TOOL_LOOP_STALE_MS = TOOL_LOOP_TTL_SECONDS * 1000;
+
+type AIToolLoopState = {
+  processing: true;
+  startedAt: number;
+  updatedAt: number;
+};
+
+export type AIContextStatsInput = {
+  mode: "capi" | "rapi";
+  model: string;
+  contextMessageCount: number;
+  contextCharLength: number;
+  estimatedContextTokens: number;
+  promptTokens?: number | null;
+  completionTokens?: number | null;
+  totalTokens?: number | null;
+  cachedTokens?: number | null;
+  cacheMissTokens?: number | null;
+  usageAvailable: boolean;
+};
+
+export type AIContextStats = AIContextStatsInput & {
+  guid: string;
+  requestCount: number;
+  updatedAt: number;
+  totalPromptTokens: number;
+  totalCompletionTokens: number;
+  totalTokensUsed: number;
+  totalCachedTokens: number;
+  totalCacheMissTokens: number;
+};
+
 class db {
   redis: Redis;
   systemPrompt = "";
@@ -550,11 +584,60 @@ class db {
       for (const key of keys) {
         await this.redis.del(key);
       }
+      const contextStatsKeys = await this.redis.keys(`ai:context_stats:*`);
+      if (contextStatsKeys.length > 0) {
+        await this.redis.del(...contextStatsKeys);
+      }
       await this.clearAITransientState();
       return;
     }
     await this.clearAITransientState(guid);
-    await this.redis.del(`ai:history:${guid}`);
+    await this.redis.del(`ai:history:${guid}`, `ai:context_stats:${guid}`);
+  }
+
+  /** 记录当前会话上下文和 token 使用情况 */
+  async recordAIContextStats(
+    guid: string,
+    input: AIContextStatsInput,
+  ): Promise<AIContextStats> {
+    const current = await this.getAIContextStats(guid);
+    const promptTokens = input.promptTokens ?? 0;
+    const completionTokens = input.completionTokens ?? 0;
+    const totalTokens = input.totalTokens ?? promptTokens + completionTokens;
+    const cachedTokens = input.cachedTokens ?? 0;
+    const cacheMissTokens =
+      input.cacheMissTokens ?? Math.max(promptTokens - cachedTokens, 0);
+
+    const nextStats: AIContextStats = {
+      ...input,
+      promptTokens: input.promptTokens ?? null,
+      completionTokens: input.completionTokens ?? null,
+      totalTokens: input.totalTokens ?? null,
+      cachedTokens: input.cachedTokens ?? null,
+      cacheMissTokens: input.cacheMissTokens ?? null,
+      guid,
+      requestCount: (current?.requestCount ?? 0) + 1,
+      updatedAt: Date.now(),
+      totalPromptTokens: (current?.totalPromptTokens ?? 0) + promptTokens,
+      totalCompletionTokens:
+        (current?.totalCompletionTokens ?? 0) + completionTokens,
+      totalTokensUsed: (current?.totalTokensUsed ?? 0) + totalTokens,
+      totalCachedTokens: (current?.totalCachedTokens ?? 0) + cachedTokens,
+      totalCacheMissTokens:
+        (current?.totalCacheMissTokens ?? 0) + cacheMissTokens,
+    };
+
+    await this.redis.set(`ai:context_stats:${guid}`, JSON.stringify(nextStats));
+    return nextStats;
+  }
+
+  /** 获取当前会话上下文和 token 使用情况 */
+  async getAIContextStats(guid: string): Promise<AIContextStats | null> {
+    const statsStr = await this.redis.get(`ai:context_stats:${guid}`);
+    if (!statsStr) {
+      return null;
+    }
+    return JSON.parse(statsStr) as AIContextStats;
   }
 
   /** 清理最后的N条聊天记录 */
@@ -632,7 +715,18 @@ class db {
   /** 设置工具调用中的处理状态 */
   async setAIToolLoopProcessing(guid: string, processing: boolean): Promise<void> {
     if (processing) {
-      await this.redis.set(`ai:tool_loop_processing:${guid}`, "1", "EX", 600);
+      const now = Date.now();
+      const state: AIToolLoopState = {
+        processing: true,
+        startedAt: now,
+        updatedAt: now,
+      };
+      await this.redis.set(
+        `ai:tool_loop_processing:${guid}`,
+        JSON.stringify(state),
+        "EX",
+        TOOL_LOOP_TTL_SECONDS,
+      );
       return;
     }
     await this.redis.del(`ai:tool_loop_processing:${guid}`);
@@ -642,24 +736,36 @@ class db {
   async getAIToolLoopProcessing(guid: string): Promise<string> {
     const key = `ai:tool_loop_processing:${guid}`;
     const processing = await this.redis.get(key);
-    if (processing !== "1") {
+    if (!processing) {
       return "0";
     }
 
-    const ttl = await this.redis.ttl(key);
-    if (ttl === -1) {
-      const [sessionId, guidanceMessages, history] = await Promise.all([
-        this.getSessionId(guid),
-        this.getAIGuidanceMessages(guid),
-        this.getAIChatHistory(guid),
-      ]);
-
-      if (!sessionId && guidanceMessages.length === 0 && history.length === 0) {
+    let state: AIToolLoopState | null = null;
+    if (processing !== "1") {
+      try {
+        const parsed = JSON.parse(processing);
+        if (parsed?.processing === true) {
+          state = parsed as AIToolLoopState;
+        }
+      } catch {
         await this.clearAITransientState(guid);
         return "0";
       }
 
-      await this.redis.expire(key, 600);
+      const updatedAt = Number(state?.updatedAt || state?.startedAt || 0);
+      if (!updatedAt || Date.now() - updatedAt > TOOL_LOOP_STALE_MS) {
+        await this.clearAITransientState(guid);
+        return "0";
+      }
+    }
+
+    const ttl = await this.redis.ttl(key);
+    if (ttl === -1) {
+      if (processing === "1") {
+        await this.clearAITransientState(guid);
+        return "0";
+      }
+      await this.redis.expire(key, TOOL_LOOP_TTL_SECONDS);
     }
 
     return "1";
@@ -671,14 +777,25 @@ class db {
     if (!queueStr) {
       return [];
     }
-    return JSON.parse(queueStr);
+    try {
+      const queue = JSON.parse(queueStr);
+      return Array.isArray(queue) ? queue : [];
+    } catch {
+      await this.clearAIGuidanceMessages(guid);
+      return [];
+    }
   }
 
   /** 追加工具调用期间的引导消息 */
   async addAIGuidanceMessage(guid: string, data: any): Promise<any[]> {
     const queue = await this.getAIGuidanceMessages(guid);
     queue.push(data);
-    await this.redis.set(`ai:guidance:${guid}`, JSON.stringify(queue));
+    await this.redis.set(
+      `ai:guidance:${guid}`,
+      JSON.stringify(queue),
+      "EX",
+      TOOL_LOOP_TTL_SECONDS,
+    );
     return queue;
   }
 

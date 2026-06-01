@@ -79,6 +79,76 @@ const appendPendingGuidanceMessages = async (guid: string, messages: any[]) => {
   return guidanceMessages;
 };
 
+const getTextLength = (value: any): number => {
+  if (typeof value === "string") {
+    return value.length;
+  }
+  if (Array.isArray(value)) {
+    return value.reduce((sum, item) => sum + getTextLength(item), 0);
+  }
+  if (value && typeof value === "object") {
+    return Object.values(value).reduce(
+      (sum: number, item) => sum + getTextLength(item),
+      0,
+    );
+  }
+  return 0;
+};
+
+const getNumber = (value: any): number | null => {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+};
+
+const extractCachedTokens = (usage: any): number | null => {
+  return getNumber(
+    usage?.prompt_tokens_details?.cached_tokens ??
+      usage?.input_tokens_details?.cached_tokens ??
+      usage?.prompt_cache_hit_tokens,
+  );
+};
+
+const extractCacheMissTokens = (usage: any, promptTokens: number | null) => {
+  const explicitMissTokens = getNumber(usage?.prompt_cache_miss_tokens);
+  if (explicitMissTokens !== null) {
+    return explicitMissTokens;
+  }
+
+  const cachedTokens = extractCachedTokens(usage);
+  if (promptTokens !== null && cachedTokens !== null) {
+    return Math.max(promptTokens - cachedTokens, 0);
+  }
+
+  return null;
+};
+
+const recordCapiContextStats = async (
+  guid: string,
+  model: string,
+  messages: any[],
+  completion: any,
+) => {
+  const usage = completion?.usage;
+  const promptTokens = getNumber(usage?.prompt_tokens ?? usage?.input_tokens);
+  const completionTokens = getNumber(
+    usage?.completion_tokens ?? usage?.output_tokens,
+  );
+  const contextCharLength = getTextLength(messages);
+
+  await redisClient.recordAIContextStats(guid, {
+    mode: "capi",
+    model,
+    contextMessageCount: messages.length,
+    contextCharLength,
+    estimatedContextTokens: Math.ceil(contextCharLength / 4),
+    promptTokens,
+    completionTokens,
+    totalTokens: getNumber(usage?.total_tokens),
+    cachedTokens: extractCachedTokens(usage),
+    cacheMissTokens: extractCacheMissTokens(usage, promptTokens),
+    usageAvailable: Boolean(usage),
+  });
+};
+
 export const CApiReply = async (
   e: Events["message.create"] | Events["private.message.create"],
 ) => {
@@ -126,6 +196,7 @@ export const CApiReply = async (
 
     // log("请求AI，参数：", createParams);
     const stream = (await openai.chat.completions.create(createParams)) as any;
+    await recordCapiContextStats(e.guid, cfg.config.model, messages, stream);
 
     log("AI回复原始数据:\n", JSON.stringify(stream, null, 2));
     let fullContent = "";
@@ -202,6 +273,7 @@ export const CApiReply = async (
           }
           Object.assign(params, getDeepThoughtReasoning(cfg));
           res = await openai.chat.completions.create(params);
+          await recordCapiContextStats(e.guid, cfg.config.model, messages, res);
           if (!res.choices || res.choices.length === 0) {
             log("AI未返回内容");
             return;
@@ -329,6 +401,7 @@ export const CApiReply = async (
 
         // 重新请求
         res = await openai.chat.completions.create(params);
+        await recordCapiContextStats(e.guid, cfg.config.model, messages, res);
 
         // 检查是否还有工具调用需要处理
         if (!res.choices || res.choices.length === 0) {
@@ -363,6 +436,7 @@ export const CApiReply = async (
       commands: aireply.nextCommands[0] ? aireply.nextCommands : undefined,
     };
   } catch (error) {
+    await redisClient.setAIToolLoopProcessing(e.guid, false);
     console.error("AI回复出错", error);
     message.send(format(Text("AI回复出错了\n" + error)));
     return {

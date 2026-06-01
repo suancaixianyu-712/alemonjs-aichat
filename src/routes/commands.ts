@@ -33,6 +33,7 @@ export const children = [
       /^(\/|#)清空(所有|全部)对话$/i,
       /^(\/|#)get (.+)$/i,
       /(\/|#)(开启)?(new|新对话|新会话)$/i,
+      /^(\/|#)ai状态$/,
     ),
     handler: lazy(() => import("../response/config/res")),
   },
