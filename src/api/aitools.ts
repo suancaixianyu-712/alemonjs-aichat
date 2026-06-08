@@ -236,7 +236,8 @@ export const tools: ChatCompletionTool[] = [
         properties: {
           includeKnowledge: {
             type: "boolean",
-            description: "是否附带每个工作目录下 knowledge/ 的一级仓库目录名摘要",
+            description:
+              "是否附带每个工作目录下 knowledge/ 的一级仓库目录名摘要",
             default: true,
           },
           maxResults: {
@@ -259,8 +260,7 @@ export const tools: ChatCompletionTool[] = [
         properties: {
           guid: {
             type: "string",
-            description:
-              "可选。指定工作目录ID；不传则自动生成一个安全的随机ID",
+            description: "可选。指定工作目录ID；不传则自动生成一个安全的随机ID",
           },
         },
       },
@@ -340,6 +340,40 @@ export const tools: ChatCompletionTool[] = [
   {
     type: "function",
     function: {
+      name: "RunServerCommand",
+      description:
+        "直接在服务器上执行运维指令，可用于查看状态、管理服务、Docker、PM2、日志和部署流程。执行前必须通过本地基础拦截和 AI 自动审核；审核不可用或未通过时不会执行。不要用它操作 public/{guid} 项目文件，AI agent 项目文件操作仍使用 Agent* 工具。",
+      parameters: {
+        type: "object",
+        properties: {
+          command: {
+            type: "string",
+            description:
+              "要执行的服务器指令，例如 systemctl status nginx、docker ps、pm2 list、tail -n 100 app.log",
+          },
+          workingDirectory: {
+            type: "string",
+            description:
+              "可选。服务器上的执行目录，可以是绝对路径或相对当前进程目录，默认为服务进程当前目录",
+          },
+          reviewGuid: {
+            type: "string",
+            description:
+              "必填。传入当前群号，也就是系统提示词里的“当前群号(reviewGuid)”；私聊时也传当前会话的群号/guid。用于读取当前群 AI 配置并执行 AI 自动审核，不是 public/{guid} 项目工作目录ID。",
+          },
+          timeoutSeconds: {
+            type: "number",
+            description: "可选。命令超时时间，默认 120 秒，最大 600 秒",
+            default: 120,
+          },
+        },
+        required: ["command", "reviewGuid"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "AgentGitOperation",
       description:
         "在 public/{guid}/ 内的 Git 仓库执行受限 Git 操作：查看当前分支、获取分支列表、查看远端列表、切换到已有分支。禁止 commit、push、pull、merge、rebase、reset、tag、stash 等会改动历史或同步远端的操作。",
@@ -360,7 +394,12 @@ export const tools: ChatCompletionTool[] = [
             type: "string",
             description:
               "Git 操作类型：currentBranch 当前分支；listBranches 分支列表；listRemotes 远端列表；switchBranch 切换到已有分支",
-            enum: ["currentBranch", "listBranches", "listRemotes", "switchBranch"],
+            enum: [
+              "currentBranch",
+              "listBranches",
+              "listRemotes",
+              "switchBranch",
+            ],
           },
           branch: {
             type: "string",
@@ -457,7 +496,8 @@ export const tools: ChatCompletionTool[] = [
           },
           filePath: {
             type: "string",
-            description: "要读取的文本文件路径，必须是 public/{guid}/ 下的相对路径",
+            description:
+              "要读取的文本文件路径，必须是 public/{guid}/ 下的相对路径",
           },
           startLine: {
             type: "number",
@@ -520,7 +560,8 @@ export const tools: ChatCompletionTool[] = [
           },
           filePath: {
             type: "string",
-            description: "要插入内容的文本文件路径，必须是 public/{guid}/ 下的相对路径",
+            description:
+              "要插入内容的文本文件路径，必须是 public/{guid}/ 下的相对路径",
           },
           lineNumber: {
             type: "number",
@@ -679,8 +720,7 @@ export const tools: ChatCompletionTool[] = [
           },
           filePath: {
             type: "string",
-            description:
-              "要上传的文件路径，必须是 public/{guid}/ 下的相对路径",
+            description: "要上传的文件路径，必须是 public/{guid}/ 下的相对路径",
           },
           fileName: {
             type: "string",
@@ -889,10 +929,45 @@ const ALLOWED_DOTNET_PROJECT_SUBCOMMANDS = new Set([
   "sln",
 ]);
 const BLOCKED_PROJECT_COMMAND_PATTERNS = [
-  { pattern: /&&|\|\||[;|<>`]|[$][(]/, reason: "不允许使用 shell 控制符、重定向、命令替换或反引号" },
-  { pattern: /(^|[\s])(rm|del|erase|rmdir|rd)([\s]|$)/i, reason: "不允许使用删除命令" },
-  { pattern: /(^|[\s])(powershell|pwsh|cmd|bash|sh|docker|ssh|scp|sftp|curl|wget)([\s]|$)/i, reason: "不允许执行受限外部命令" },
+  {
+    pattern: /&&|\|\||[;|<>`]|[$][(]/,
+    reason: "不允许使用 shell 控制符、重定向、命令替换或反引号",
+  },
+  {
+    pattern: /(^|[\s])(rm|del|erase|rmdir|rd)([\s]|$)/i,
+    reason: "不允许使用删除命令",
+  },
+  {
+    pattern:
+      /(^|[\s])(powershell|pwsh|cmd|bash|sh|docker|ssh|scp|sftp|curl|wget)([\s]|$)/i,
+    reason: "不允许执行受限外部命令",
+  },
   { pattern: /\.\.[\\/]/, reason: "不允许通过 .. 离开 public 工作目录" },
+];
+const SERVER_COMMAND_DEFAULT_TIMEOUT_SECONDS = 120;
+const SERVER_COMMAND_MAX_TIMEOUT_SECONDS = 600;
+const BLOCKED_SERVER_COMMAND_PATTERNS = [
+  {
+    pattern: /\0/,
+    reason: "命令包含非法空字符",
+  },
+  {
+    pattern: /:\s*\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;/,
+    reason: "不允许执行 fork bomb",
+  },
+  {
+    pattern:
+      /(^|[\s;&|])rm\s+(-[^\s]*r[^\s]*f|-f[^\s]*r|-[^\s]*rf[^\s]*)\s+(\/|\/\*|~|~\/|\$HOME)(\s|$)/i,
+    reason: "不允许递归强制删除系统根目录或用户主目录",
+  },
+  {
+    pattern: /(^|[\s;&|])(mkfs|mkswap|fdisk|parted|wipefs)([\s]|$)/i,
+    reason: "不允许执行磁盘格式化或分区破坏类命令",
+  },
+  {
+    pattern: /(^|[\s;&|])dd\s+[\s\S]*\bof=\/dev\//i,
+    reason: "不允许使用 dd 写入块设备",
+  },
 ];
 
 const toToolError = (error: unknown) => ({
@@ -967,16 +1042,16 @@ const createAgentGuid = (guid?: string) => {
   return guidValue;
 };
 
-const listAgentWorkspaces = (
-  includeKnowledge = true,
-  maxResults = 50,
-) => {
+const listAgentWorkspaces = (includeKnowledge = true, maxResults = 50) => {
   const publicRoot = path.resolve(process.cwd(), "public");
   if (!fs.existsSync(publicRoot)) {
     return [];
   }
 
-  const limit = Math.max(1, Math.min(normalizePositiveInteger(maxResults, 50, "maxResults"), 200));
+  const limit = Math.max(
+    1,
+    Math.min(normalizePositiveInteger(maxResults, 50, "maxResults"), 200),
+  );
   const ignoredNames = new Set(["sandbox", "image_out"]);
 
   return fs
@@ -1045,10 +1120,7 @@ const normalizeCloneDepth = (depth: unknown) => {
   return Math.min(safeDepth, 50);
 };
 
-const resolveCloneTargetPath = (
-  repoUrl: string,
-  targetPath?: string,
-) => {
+const resolveCloneTargetPath = (repoUrl: string, targetPath?: string) => {
   const safeTargetPath = targetPath?.trim();
   if (safeTargetPath) {
     if (safeTargetPath === "." || safeTargetPath === "/") {
@@ -1134,7 +1206,10 @@ const listGitBranches = async (cwd: string, includeRemote: boolean) => {
         remote: name.startsWith("remotes/"),
       };
     })
-    .filter((item): item is { name: string; current: boolean; remote: boolean } => !!item);
+    .filter(
+      (item): item is { name: string; current: boolean; remote: boolean } =>
+        !!item,
+    );
 };
 
 const listGitRemotes = async (cwd: string) => {
@@ -1147,7 +1222,10 @@ const listGitRemotes = async (cwd: string) => {
     throw new Error(result.output.trim() || "获取远端列表失败");
   }
 
-  const remotes = new Map<string, { name: string; fetch?: string; push?: string }>();
+  const remotes = new Map<
+    string,
+    { name: string; fetch?: string; push?: string }
+  >();
   for (const line of result.output.split(/\r?\n/)) {
     const match = line.trim().match(/^(\S+)\s+(\S+)\s+\((fetch|push)\)$/);
     if (!match) continue;
@@ -1425,7 +1503,11 @@ const runGitClone = ({
         resolve(output.trim());
         return;
       }
-      reject(new Error(`git clone 失败，退出码 ${code}${output ? `\n${output}` : ""}`));
+      reject(
+        new Error(
+          `git clone 失败，退出码 ${code}${output ? `\n${output}` : ""}`,
+        ),
+      );
     });
   });
 };
@@ -1587,9 +1669,15 @@ const buildProjectCommandReview = (command: string) => {
         tokens,
       };
     }
-    risk = ["new", "restore", "build", "run", "test", "publish", "clean"].includes(
-      subcommand,
-    )
+    risk = [
+      "new",
+      "restore",
+      "build",
+      "run",
+      "test",
+      "publish",
+      "clean",
+    ].includes(subcommand)
       ? "medium"
       : "low";
     reasons.push(
@@ -1629,7 +1717,9 @@ const buildProjectCommandReview = (command: string) => {
       };
     }
     risk = subcommand === "init" ? "medium" : "low";
-    reasons.push(subcommand === "init" ? "git init 会创建仓库元数据" : "受限 git 查询命令");
+    reasons.push(
+      subcommand === "init" ? "git init 会创建仓库元数据" : "受限 git 查询命令",
+    );
     return {
       allowed: true,
       risk,
@@ -1679,13 +1769,19 @@ const buildProjectCommandReview = (command: string) => {
     };
   }
 
-  if (["create", "init", "dlx", "exec"].includes(subcommand) || ["npx", "npx.cmd", "bunx"].includes(baseCommand)) {
+  if (
+    ["create", "init", "dlx", "exec"].includes(subcommand) ||
+    ["npx", "npx.cmd", "bunx"].includes(baseCommand)
+  ) {
     risk = "medium";
     reasons.push("脚手架或外部执行命令会下载并运行第三方包");
   } else if (["install", "i", "add", "ci"].includes(subcommand)) {
     risk = "medium";
     reasons.push("依赖安装命令会写入项目依赖和锁文件");
-  } else if (["run", "test", "build"].includes(subcommand) || subcommand === "") {
+  } else if (
+    ["run", "test", "build"].includes(subcommand) ||
+    subcommand === ""
+  ) {
     risk = "low";
     reasons.push("项目内脚本或常规包管理命令");
   } else {
@@ -1699,6 +1795,62 @@ const buildProjectCommandReview = (command: string) => {
     reasons,
     baseCommand,
     tokens,
+  };
+};
+
+const buildServerCommandLocalReview = (command: string) => {
+  const trimmed = command.trim();
+  if (!trimmed) {
+    return {
+      allowed: false,
+      risk: "blocked" as const,
+      reasons: ["命令不能为空"],
+    };
+  }
+
+  for (const item of BLOCKED_SERVER_COMMAND_PATTERNS) {
+    if (item.pattern.test(trimmed)) {
+      return {
+        allowed: false,
+        risk: "blocked" as const,
+        reasons: [item.reason],
+      };
+    }
+  }
+
+  const highRiskPatterns = [
+    /(^|[\s;&|])(sudo|su)([\s]|$)/i,
+    /(^|[\s;&|])(systemctl|service|supervisorctl|pm2)([\s]|$)/i,
+    /(^|[\s;&|])(docker|docker-compose|kubectl)([\s]|$)/i,
+    /(^|[\s;&|])(apt|apt-get|yum|dnf|pacman|apk)([\s]|$)/i,
+    /(^|[\s;&|])(iptables|ufw|firewall-cmd)([\s]|$)/i,
+    /(^|[\s;&|])(rm|mv|cp|chmod|chown|kill|pkill)([\s]|$)/i,
+  ];
+  const mediumRiskPatterns = [
+    /(^|[\s;&|])(curl|wget|git|tar|unzip|npm|pnpm|yarn|node)([\s]|$)/i,
+    /[;&|<>`]|[$][(]/,
+  ];
+
+  if (highRiskPatterns.some((pattern) => pattern.test(trimmed))) {
+    return {
+      allowed: true,
+      risk: "high" as const,
+      reasons: ["服务器管理或文件/进程/网络配置相关命令，必须经过 AI 审核"],
+    };
+  }
+
+  if (mediumRiskPatterns.some((pattern) => pattern.test(trimmed))) {
+    return {
+      allowed: true,
+      risk: "medium" as const,
+      reasons: ["可能修改服务状态、下载内容或使用 shell 控制符，必须经过 AI 审核"],
+    };
+  }
+
+  return {
+    allowed: true,
+    risk: "low" as const,
+    reasons: ["常规服务器查询或低风险命令，仍需 AI 审核确认"],
   };
 };
 
@@ -1747,8 +1899,8 @@ const reviewProjectCommandWithAI = async ({
         {
           role: "system",
           content:
-            "你是一个命令安全审查器。请只输出 JSON，格式为 {\"allowed\":boolean,\"risk\":\"low|medium|high|blocked\",\"reason\":\"简短中文原因\"}。审核标准：命令必须只适用于 public 工作目录内的安全项目操作，不得包含权限提升、删除系统文件、远程控制、数据外传、全局环境修改或危险 shell 行为。"
-            + `\n性格约束:${aiConfig.config.systemPrompt || ""}`,
+            '你是一个命令安全审查器。请只输出 JSON，格式为 {"allowed":boolean,"risk":"low|medium|high|blocked","reason":"简短中文原因"}。审核标准：命令必须只适用于 public 工作目录内的安全项目操作，不得包含权限提升、删除系统文件、远程控制、数据外传、全局环境修改或危险 shell 行为。' +
+            `\n性格约束:${aiConfig.config.systemPrompt || ""}`,
         },
         {
           role: "user",
@@ -1801,6 +1953,181 @@ const reviewProjectCommandWithAI = async ({
   }
 };
 
+const reviewServerCommandWithAI = async ({
+  command,
+  localReview,
+  reviewGuid,
+  workingDirectory,
+}: {
+  command: string;
+  localReview: ReturnType<typeof buildServerCommandLocalReview>;
+  reviewGuid?: string;
+  workingDirectory: string;
+}) => {
+  const aiConfig = await getReviewAIConfig(reviewGuid);
+  if (!aiConfig) {
+    return {
+      status: "skipped" as const,
+      reason: "未找到可用的当前 AI 配置，服务器指令必须完成 AI 审核后才能执行",
+    };
+  }
+
+  try {
+    const openai = new OpenAi({
+      baseURL: aiConfig.config.host,
+      apiKey: aiConfig.config.key,
+      timeout: 30000,
+    });
+    const response = await openai.chat.completions.create({
+      model: aiConfig.config.model,
+      temperature: 0,
+      max_tokens: 220,
+      messages: [
+        {
+          role: "system",
+          content:
+            '你是服务器运维指令安全审核器。请只输出 JSON，格式为 {"allowed":boolean,"risk":"low|medium|high|blocked","reason":"简短中文原因"}。可以允许合理的服务器管理、状态查看、日志查看、服务重启、Docker/PM2/systemctl 操作、部署和包管理命令；必须阻止清空数据、破坏系统、植入后门、泄露密钥、反弹 shell、未知脚本下载后直接执行、越权访问或明显不可恢复的危险操作。' +
+            `\n性格约束:${aiConfig.config.systemPrompt || ""}`,
+        },
+        {
+          role: "user",
+          content: JSON.stringify({
+            command,
+            workingDirectory,
+            localReview: {
+              allowed: localReview.allowed,
+              risk: localReview.risk,
+              reasons: localReview.reasons,
+            },
+          }),
+        },
+      ],
+    });
+
+    const text = response.choices[0]?.message?.content || "";
+    const match = text.match(/\{[\s\S]*\}/);
+    if (!match) {
+      return {
+        status: "failed" as const,
+        reason: "AI 审核未返回可解析的 JSON",
+        raw: text,
+      };
+    }
+    const parsed = JSON.parse(match[0]);
+
+    return {
+      status: "completed" as const,
+      currentAI: aiConfig.currentAI || null,
+      model: aiConfig.config.model,
+      guid: aiConfig.guid,
+      allowed: Boolean(parsed.allowed),
+      risk:
+        parsed.risk === "low" ||
+        parsed.risk === "medium" ||
+        parsed.risk === "high" ||
+        parsed.risk === "blocked"
+          ? parsed.risk
+          : "high",
+      reason:
+        typeof parsed.reason === "string" && parsed.reason.trim()
+          ? parsed.reason.trim()
+          : "AI 未提供明确原因",
+    };
+  } catch (error) {
+    return {
+      status: "failed" as const,
+      reason: error instanceof Error ? error.message : String(error),
+    };
+  }
+};
+
+const resolveServerWorkingDirectory = (workingDirectory?: string) => {
+  if (workingDirectory?.includes("\0")) {
+    throw new Error("workingDirectory 包含非法空字符");
+  }
+  const cwd = path.resolve(workingDirectory?.trim() || process.cwd());
+  if (!fs.existsSync(cwd)) {
+    throw new Error("workingDirectory 不存在");
+  }
+  if (!fs.statSync(cwd).isDirectory()) {
+    throw new Error("workingDirectory 不是目录");
+  }
+  return cwd;
+};
+
+const normalizeServerCommandTimeoutMs = (timeoutSeconds?: number) => {
+  const safeSeconds = Math.min(
+    normalizePositiveInteger(
+      timeoutSeconds,
+      SERVER_COMMAND_DEFAULT_TIMEOUT_SECONDS,
+      "timeoutSeconds",
+    ),
+    SERVER_COMMAND_MAX_TIMEOUT_SECONDS,
+  );
+  return safeSeconds * 1000;
+};
+
+const runServerShellCommand = ({
+  command,
+  cwd,
+  timeoutMs,
+}: {
+  command: string;
+  cwd: string;
+  timeoutMs: number;
+}) => {
+  return new Promise<{ output: string; exitCode: number }>(
+    (resolve, reject) => {
+      const powershellCommand = [
+        "chcp 65001 | Out-Null",
+        "[Console]::InputEncoding = [System.Text.UTF8Encoding]::new()",
+        "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()",
+        "$OutputEncoding = [System.Text.UTF8Encoding]::new()",
+        command,
+      ].join("; ");
+      const shell =
+        process.platform === "win32"
+          ? {
+              file: "powershell.exe",
+              args: [
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                powershellCommand,
+              ],
+            }
+          : { file: "sh", args: ["-lc", command] };
+      const child = spawn(shell.file, shell.args, { cwd });
+      let output = "";
+      const appendOutput = (data: Buffer) => {
+        output += data.toString();
+        if (output.length > PROJECT_COMMAND_MAX_OUTPUT) {
+          output = output.slice(-PROJECT_COMMAND_MAX_OUTPUT);
+        }
+      };
+      const timeout = setTimeout(() => {
+        child.kill();
+        reject(new Error("服务器指令执行超时"));
+      }, timeoutMs);
+
+      child.stdout.on("data", appendOutput);
+      child.stderr.on("data", appendOutput);
+      child.on("error", (error: NodeJS.ErrnoException) => {
+        clearTimeout(timeout);
+        reject(new Error(`服务器指令启动失败: ${error.message}`));
+      });
+      child.on("close", (exitCode: number | null) => {
+        clearTimeout(timeout);
+        resolve({
+          output: trimProjectCommandOutput(output.trim()),
+          exitCode: exitCode ?? -1,
+        });
+      });
+    },
+  );
+};
+
 const runSpawnCommand = ({
   file,
   args,
@@ -1810,34 +2137,36 @@ const runSpawnCommand = ({
   args: string[];
   cwd: string;
 }) => {
-  return new Promise<{ output: string; exitCode: number }>((resolve, reject) => {
-    const child = spawn(file, args, { cwd });
-    let output = "";
-    const appendOutput = (data: Buffer) => {
-      output += data.toString();
-      if (output.length > PROJECT_COMMAND_MAX_OUTPUT) {
-        output = output.slice(-PROJECT_COMMAND_MAX_OUTPUT);
-      }
-    };
-    const timeout = setTimeout(() => {
-      child.kill();
-      reject(new Error("命令执行超时"));
-    }, PROJECT_COMMAND_TIMEOUT_MS);
+  return new Promise<{ output: string; exitCode: number }>(
+    (resolve, reject) => {
+      const child = spawn(file, args, { cwd });
+      let output = "";
+      const appendOutput = (data: Buffer) => {
+        output += data.toString();
+        if (output.length > PROJECT_COMMAND_MAX_OUTPUT) {
+          output = output.slice(-PROJECT_COMMAND_MAX_OUTPUT);
+        }
+      };
+      const timeout = setTimeout(() => {
+        child.kill();
+        reject(new Error("命令执行超时"));
+      }, PROJECT_COMMAND_TIMEOUT_MS);
 
-    child.stdout.on("data", appendOutput);
-    child.stderr.on("data", appendOutput);
-    child.on("error", (error: NodeJS.ErrnoException) => {
-      clearTimeout(timeout);
-      reject(new Error(`命令启动失败: ${error.message}`));
-    });
-    child.on("close", (exitCode: number | null) => {
-      clearTimeout(timeout);
-      resolve({
-        output: trimProjectCommandOutput(output.trim()),
-        exitCode: exitCode ?? -1,
+      child.stdout.on("data", appendOutput);
+      child.stderr.on("data", appendOutput);
+      child.on("error", (error: NodeJS.ErrnoException) => {
+        clearTimeout(timeout);
+        reject(new Error(`命令启动失败: ${error.message}`));
       });
-    });
-  });
+      child.on("close", (exitCode: number | null) => {
+        clearTimeout(timeout);
+        resolve({
+          output: trimProjectCommandOutput(output.trim()),
+          exitCode: exitCode ?? -1,
+        });
+      });
+    },
+  );
 };
 
 const findExecutablePaths = async (name: string, cwd: string) => {
@@ -1876,14 +2205,22 @@ const findExecutablePaths = async (name: string, cwd: string) => {
 
 const inspectProjectEnvironment = async (cwd: string) => {
   const versionCommands = [
-    { name: "dotnet", file: process.platform === "win32" ? "dotnet.exe" : "dotnet", args: ["--version"] },
+    {
+      name: "dotnet",
+      file: process.platform === "win32" ? "dotnet.exe" : "dotnet",
+      args: ["--version"],
+    },
     process.platform === "win32"
       ? { name: "npm", file: "npm.cmd", args: ["-v"] }
       : { name: "npm", file: "npm", args: ["-v"] },
     process.platform === "win32"
       ? { name: "npx", file: "npx.cmd", args: ["-v"] }
       : { name: "npx", file: "npx", args: ["-v"] },
-    { name: "node", file: process.platform === "win32" ? "node.exe" : "node", args: ["-v"] },
+    {
+      name: "node",
+      file: process.platform === "win32" ? "node.exe" : "node",
+      args: ["-v"],
+    },
     { name: "git", file: "git", args: ["--version"] },
   ];
 
@@ -1897,10 +2234,14 @@ const inspectProjectEnvironment = async (cwd: string) => {
         cwd,
       });
       versions[command.name] =
-        result.exitCode === 0 ? result.output || "ok" : `exit ${result.exitCode}`;
+        result.exitCode === 0
+          ? result.output || "ok"
+          : `exit ${result.exitCode}`;
     } catch (error) {
       versions[command.name] =
-        error instanceof Error ? `unavailable: ${error.message}` : String(error);
+        error instanceof Error
+          ? `unavailable: ${error.message}`
+          : String(error);
     }
     paths[command.name] = await findExecutablePaths(command.name, cwd);
   }
@@ -1909,10 +2250,13 @@ const inspectProjectEnvironment = async (cwd: string) => {
     cwd,
     versions,
     paths,
-    entries: fs.readdirSync(cwd, { withFileTypes: true }).slice(0, 50).map((item) => ({
-      name: item.name,
-      type: item.isDirectory() ? "directory" : "file",
-    })),
+    entries: fs
+      .readdirSync(cwd, { withFileTypes: true })
+      .slice(0, 50)
+      .map((item) => ({
+        name: item.name,
+        type: item.isDirectory() ? "directory" : "file",
+      })),
   };
 };
 
@@ -1946,7 +2290,11 @@ const extractArchiveWithinWorkspace = async ({
     });
   }
 
-  if (lower.endsWith(".tar") || lower.endsWith(".tar.gz") || lower.endsWith(".tgz")) {
+  if (
+    lower.endsWith(".tar") ||
+    lower.endsWith(".tar.gz") ||
+    lower.endsWith(".tgz")
+  ) {
     return runSpawnCommand({
       file: "tar",
       args: ["-xf", archive, "-C", destination],
@@ -1987,15 +2335,72 @@ const performProjectCommandReview = async ({
   };
 };
 
+const performServerCommandReview = async ({
+  command,
+  reviewGuid,
+  workingDirectory,
+}: {
+  command: string;
+  reviewGuid?: string;
+  workingDirectory: string;
+}) => {
+  const localReview = buildServerCommandLocalReview(command);
+  if (!localReview.allowed) {
+    return {
+      allowed: false,
+      risk: localReview.risk,
+      localReview,
+      aiReview: {
+        status: "skipped" as const,
+        reason: "本地基础拦截未通过，未继续调用 AI 审核",
+      },
+    };
+  }
+
+  const aiReview = await reviewServerCommandWithAI({
+    command,
+    localReview,
+    reviewGuid,
+    workingDirectory,
+  });
+  const allowed = aiReview.status === "completed" && aiReview.allowed === true;
+  const risk =
+    aiReview.status === "completed" && aiReview.risk
+      ? aiReview.risk
+      : localReview.risk;
+
+  return {
+    allowed,
+    risk,
+    localReview,
+    aiReview,
+  };
+};
+
 /**
  * 确保 Docker 容器已创建并运行
  */
-async function ensureContainerRunning(config: Record<string, any>): Promise<void> {
-  const { containerName, image, memory, cpus, pidsLimit, networkMode, workspacePath } = config;
+async function ensureContainerRunning(
+  config: Record<string, any>,
+): Promise<void> {
+  const {
+    containerName,
+    image,
+    memory,
+    cpus,
+    pidsLimit,
+    networkMode,
+    workspacePath,
+  } = config;
   if (!containerName) return;
 
   return new Promise((resolve, reject) => {
-    const check = spawn("docker", ["inspect", "-f", "{{.State.Running}}", containerName]);
+    const check = spawn("docker", [
+      "inspect",
+      "-f",
+      "{{.State.Running}}",
+      containerName,
+    ]);
     let stdout = "";
     check.stdout.on("data", (d: Buffer) => (stdout += d.toString()));
     check.on("error", (error: NodeJS.ErrnoException) => {
@@ -2029,12 +2434,18 @@ async function ensureContainerRunning(config: Record<string, any>): Promise<void
       }
 
       const args = [
-        "run", "-d",
-        "--name", containerName,
-        "--memory", memory || "256m",
-        "--cpus", cpus || "0.5",
-        "--pids-limit", String(pidsLimit || 64),
-        "--network", networkMode || "none",
+        "run",
+        "-d",
+        "--name",
+        containerName,
+        "--memory",
+        memory || "256m",
+        "--cpus",
+        cpus || "0.5",
+        "--pids-limit",
+        String(pidsLimit || 64),
+        "--network",
+        networkMode || "none",
       ];
 
       if (workspacePath && fs.existsSync(workspacePath)) {
@@ -2115,8 +2526,7 @@ export const availableTools = {
 
         return {
           success: false,
-          error:
-            "chatHistory 的 data 只能为空、guid:id 或 search:关键词",
+          error: "chatHistory 的 data 只能为空、guid:id 或 search:关键词",
         };
       }
     }
@@ -2512,7 +2922,15 @@ export const availableTools = {
    * @param command 命令字符串
    * @returns 命令执行结果
    */
-  exec: async ({ userId, groupId, command }: { userId: string; groupId: string; command: string }) => {
+  exec: async ({
+    userId,
+    groupId,
+    command,
+  }: {
+    userId: string;
+    groupId: string;
+    command: string;
+  }) => {
     const workspace = getWorkspace(userId);
 
     if (commandTargetsAgentWorkspace(command || "")) {
@@ -2522,20 +2940,23 @@ export const availableTools = {
         "如果要查找之前克隆到 public/{guid}/knowledge/ 的仓库，请改用 AgentListWorkspaces 先找 guid，再用 AgentListFiles 或 AgentSearchFiles。",
       ].join("\n");
     }
-    
+
     // 使用新的环境管理获取执行环境
     const envInfo = await getExecCommandEnv(groupId || "private", userId);
-    
+
     // 远程节点环境：通过 SSH 执行
     if (envInfo.type === "remote" && envInfo.nodeName) {
       try {
-        const result = await remoteNodeManager.execute(envInfo.nodeName, command);
+        const result = await remoteNodeManager.execute(
+          envInfo.nodeName,
+          command,
+        );
         return result || "命令执行完成，无输出";
       } catch (err: any) {
         return `远程执行失败: ${err.message}`;
       }
     }
-    
+
     // Singularity 容器环境：通过远程节点的 Singularity 执行
     if (envInfo.type === "singularity" && envInfo.nodeName) {
       try {
@@ -2549,13 +2970,16 @@ export const availableTools = {
         }
         // 构建 singularity exec 命令
         const singularityCmd = `singularity exec ${image} sh -c '${command.replace(/'/g, "'\''")}'`;
-        const result = await remoteNodeManager.execute(envInfo.nodeName, singularityCmd);
+        const result = await remoteNodeManager.execute(
+          envInfo.nodeName,
+          singularityCmd,
+        );
         return result || "命令执行完成，无输出";
       } catch (err: any) {
         return `Singularity 执行失败: ${err.message}`;
       }
     }
-    
+
     // 系统环境：直接在宿主机执行
     if (envInfo.type === "system") {
       return new Promise((resolve) => {
@@ -2571,7 +2995,10 @@ export const availableTools = {
     }
 
     // 容器环境（group/user）：确保容器存在并启动，然后 docker exec
-    const envConfig = await redisClient.getExecEnv(groupId || "private", userId);
+    const envConfig = await redisClient.getExecEnv(
+      groupId || "private",
+      userId,
+    );
     const containerName = envConfig?.containerName;
     if (!containerName) {
       return "错误：未找到执行环境配置，请先切换执行环境";
@@ -2713,6 +3140,57 @@ export const availableTools = {
     }
   },
 
+  RunServerCommand: async ({
+    command,
+    workingDirectory,
+    reviewGuid,
+    timeoutSeconds = SERVER_COMMAND_DEFAULT_TIMEOUT_SECONDS,
+  }: {
+    command: string;
+    workingDirectory?: string;
+    reviewGuid: string;
+    timeoutSeconds?: number;
+  }) => {
+    try {
+      if (!reviewGuid?.trim()) {
+        throw new Error("reviewGuid 必填，请传入当前群号");
+      }
+      const cwd = resolveServerWorkingDirectory(workingDirectory);
+      const timeoutMs = normalizeServerCommandTimeoutMs(timeoutSeconds);
+      const review = await performServerCommandReview({
+        command,
+        reviewGuid,
+        workingDirectory: cwd,
+      });
+      if (!review.allowed) {
+        return {
+          success: false,
+          command,
+          workingDirectory: cwd,
+          error: "服务器指令未通过 AI 自动审核",
+          review,
+        };
+      }
+
+      const result = await runServerShellCommand({
+        command,
+        cwd,
+        timeoutMs,
+      });
+      return {
+        success: result.exitCode === 0,
+        command,
+        workingDirectory: cwd,
+        review,
+        output: result.output,
+        exitCode: result.exitCode,
+        error: result.exitCode === 0 ? undefined : "服务器指令执行失败",
+      };
+    } catch (error) {
+      return toToolError(error);
+    }
+  },
+
   AgentGitOperation: async ({
     guid,
     action,
@@ -2727,7 +3205,10 @@ export const availableTools = {
     includeRemote?: boolean;
   }) => {
     try {
-      const { target: cwd, relativePath } = resolveAgentPath(guid, workingDirectory);
+      const { target: cwd, relativePath } = resolveAgentPath(
+        guid,
+        workingDirectory,
+      );
       await ensureGitRepository(cwd);
 
       if (action === "currentBranch") {
@@ -2810,7 +3291,10 @@ export const availableTools = {
     directoryPath?: string;
   }) => {
     try {
-      const { target: cwd, relativePath } = resolveAgentPath(guid, workingDirectory);
+      const { target: cwd, relativePath } = resolveAgentPath(
+        guid,
+        workingDirectory,
+      );
 
       if (action === "inspect") {
         const info = await inspectProjectEnvironment(cwd);
@@ -2865,7 +3349,10 @@ export const availableTools = {
           throw new Error("action=extract 时必须提供 archivePath");
         }
         const archive = resolveAgentPath(guid, archivePath);
-        if (!fs.existsSync(archive.target) || !fs.statSync(archive.target).isFile()) {
+        if (
+          !fs.existsSync(archive.target) ||
+          !fs.statSync(archive.target).isFile()
+        ) {
           throw new Error("压缩包不存在或不是文件");
         }
         const destination = resolveAgentPath(
@@ -2954,11 +3441,7 @@ export const availableTools = {
       }
 
       const lines = readTextLines(target);
-      const safeStartLine = normalizePositiveInteger(
-        startLine,
-        1,
-        "startLine",
-      );
+      const safeStartLine = normalizePositiveInteger(startLine, 1, "startLine");
       const requestedEndLine = normalizePositiveInteger(
         endLine,
         Math.min(lines.length || 1, safeStartLine + 199),
@@ -3261,10 +3744,7 @@ export const availableTools = {
         fileName: fileName || null,
         uploadType,
         url,
-        sendText:
-          uploadType === "image"
-            ? `<img=${url}>`
-            : `文件链接: ${url}`,
+        sendText: uploadType === "image" ? `<img=${url}>` : `文件链接: ${url}`,
       };
     } catch (error) {
       return toToolError(error);

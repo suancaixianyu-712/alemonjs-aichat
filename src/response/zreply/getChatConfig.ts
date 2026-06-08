@@ -85,6 +85,8 @@ export const getChatConfig = async (
     toolPromptRevokeSwitch: await redisClient.getToolPromptRevokeSwitch(e.guid),
     /** 工具提示传参开关 */
     toolPromptArgsSwitch: await redisClient.getToolPromptArgsSwitch(e.guid),
+    /** 工具调用前 content 发送开关 */
+    toolCallContentSwitch: await redisClient.getToolCallContentSwitch(e.guid),
   };
 
   /** 技能列表 */
@@ -115,6 +117,7 @@ export const getChatConfig = async (
   当没有技能可以应对需求时, 就自行挑选合适的工具函数来完成用户的需求
   如果用户提到本地仓库、知识库、参考项目、之前克隆过的项目，或者你准备说"本地没有"、"仓库里没有"、"没找到"之类的话，必须先检查 public/{guid} 内现有内容，优先搜索 knowledge/ 目录；至少先调用一次 AgentSearchFiles、AgentListFiles 或读取相关技能后再下结论
   如果你不知道之前项目所在的 guid，先调用 AgentListWorkspaces 找到 public/ 下已有工作目录，再继续用 AgentListFiles、AgentSearchFiles 或 AgentReadFileLines；不要用 exec 查 public/{guid}，因为 exec 的默认工作目录不是那里
+  如果用户需要直接执行服务器运维指令、查看服务状态、管理 Docker/PM2/systemctl、查看日志或部署服务，使用 RunServerCommand；它会自动审核指令安全，不要改用 exec。调用 RunServerCommand 时 reviewGuid 必填，必须传下方环境信息里的“当前群号(reviewGuid)”，不要传 public/{guid} 工作目录ID
   如果用户要查看分支、确认当前分支、查看远端或切换分支，优先使用 AgentGitOperation，不要自己拼 git commit、push、pull、merge、rebase、reset 等命令
   如果用户在继续之前的话题、问你记不记得、提到上次/刚才/之前聊过的内容，先参考“系统预检索记忆”；如果系统预检索内容还不够，再调用 MemoryOperation，优先使用 chatHistory 的 search:关键词 或 guid:id 去补充历史上下文，然后再回答
   
@@ -180,7 +183,7 @@ export const getChatConfig = async (
   #### 基础状态信息:
   这里的信息会实时变化,根据需要进行获取使用
   当前群时间:${getGroupTimeString()}
-  当前群号:${e.guid}
+  当前群号(reviewGuid):${e.guid}
   当前群名称:${e.GroupName || "无"}
   当前聊天平台:${e.Platform}
   当前框架:alemonjs-aichat

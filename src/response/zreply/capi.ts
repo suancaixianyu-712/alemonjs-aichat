@@ -238,7 +238,11 @@ export const CApiReply = async (
 
     await redisClient.addAIChatHistory(e.guid, usermessage);
 
-    if (res.choices[0].message?.tool_calls && fullContent.trim() !== "") {
+    if (
+      cfg.toolConfig.toolCallContentSwitch === "1" &&
+      res.choices[0].message?.tool_calls &&
+      fullContent.trim() !== ""
+    ) {
       await sendAIReply(fullContent, cfg, e, message);
     }
 

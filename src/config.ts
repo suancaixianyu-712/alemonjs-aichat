@@ -359,6 +359,22 @@ class db {
     );
   }
 
+  /** 工具调用前是否发送模型返回的 content */
+  async getToolCallContentSwitch(guid: string): Promise<string | null> {
+    return (await this.redis.get(`ai:tool_call_content:switch:${guid}`)) || "0";
+  }
+
+  /** 设置工具调用前 content 发送开关状态 */
+  async setToolCallContentSwitch(
+    guid: string,
+    enable: boolean,
+  ): Promise<void> {
+    await this.redis.set(
+      `ai:tool_call_content:switch:${guid}`,
+      enable ? "1" : "0",
+    );
+  }
+
   /** --------------------------------------------------------- */
 
   /** 获取复杂输出开关状态 */

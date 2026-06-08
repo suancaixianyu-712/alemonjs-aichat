@@ -9,6 +9,7 @@ const cmds = [
   { cmd: "/切换模型 <模型名称>", desc: "切换当前使用的AI模型" },
   { cmd: "/<开启|关闭>仅艾特触发", desc: "开启或关闭仅艾特触发功能" },
   { cmd: "/<开启|关闭>工具", desc: "开启或关闭AI工具" },
+  { cmd: "/<开启|关闭>工具调用内容", desc: "开启或关闭工具调用前内容发送" },
   { cmd: "/<开启|关闭>复杂输出", desc: "开启或关闭复杂输出" },
   { cmd: "/<开启|关闭>好感度", desc: "开启或关闭好感度系统" },
   { cmd: "/清空对话", desc: "清空当前对话历史" },
@@ -97,6 +98,7 @@ export default function App(data: {
   toolPromptSwitch: boolean;
   toolPromptRevokeSwitch: boolean;
   toolPromptArgsSwitch: boolean;
+  toolCallContentSwitch: boolean;
 }) {
   return (
     <html>
@@ -188,6 +190,10 @@ export default function App(data: {
               <StatusItem
                 label="工具提示传参"
                 value={data.toolPromptArgsSwitch}
+              />
+              <StatusItem
+                label="工具调用内容"
+                value={data.toolCallContentSwitch}
               />
             </div>
 

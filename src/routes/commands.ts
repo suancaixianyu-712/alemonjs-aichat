@@ -8,6 +8,12 @@ export const children = [
     handler: lazy(() => import("../response/help/res")),
   },
 
+  // revoke
+  {
+    regular: /^(\/|#)撤回$/i,
+    handler: lazy(() => import("../response/revoke/res")),
+  },
+
   // tools (多条正则合并)
   {
     regular: Regular.or(
@@ -75,6 +81,7 @@ export const children = [
       /(\/|#)(开启|关闭)工具提示$/i,
       /(\/|#)(开启|关闭)工具(调用)?提示撤回$/i,
       /(\/|#)(开启|关闭)工具(调用)?提示详情$/i,
+      /(\/|#)(开启|关闭)工具调用内容$/i,
       /(\/|#)测试$/i,
       /(\/|#)设置渲染精度\s*(中|高|超高)$/i,
     ),

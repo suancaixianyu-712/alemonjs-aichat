@@ -33,6 +33,7 @@ export default defineConfig({
           toolPromptSwitch={true}
           toolPromptRevokeSwitch={false}
           toolPromptArgsSwitch={true}
+          toolCallContentSwitch={false}
         />
       ),
     },

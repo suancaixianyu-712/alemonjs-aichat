@@ -222,6 +222,7 @@ export default onMiddleware(selects, async (event, next) => {
     // 处理回复消息
     const replyData = event.value.message.find((item) => item.type === "reply");
     if (replyData) {
+      event["replyMessageId"] = String(replyData.data.id);
       const msg = await onebotClient.getMsg({
         message_id: Number(replyData.data.id),
       });
@@ -286,6 +287,7 @@ export default onMiddleware(selects, async (event, next) => {
       .join("");
 
     if (event.replyId && event.replyId !== "-1") {
+      event["replyMessageId"] = String(event.replyId);
       const replyMsg = await client.getMessage(event.replyId);
       console.log("获取回复", replyMsg);
 
@@ -338,6 +340,7 @@ export default onMiddleware(selects, async (event, next) => {
         : [];
 
     if (event.value.replyToId) {
+      event["replyMessageId"] = String(event.value.replyToId);
       const channelMessages = await client.request({
         method: "GET",
         url: `/channels/${event.ChannelId}/messages/${event.value.replyToId}`,
