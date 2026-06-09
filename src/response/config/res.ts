@@ -75,11 +75,22 @@ const formatTokenValue = (value?: number | null) => {
   return formatNumberValue(value);
 };
 
+const formatContextLimit = (tokens: number) => {
+  if (tokens >= 1000000 && tokens % 1000000 === 0) {
+    return `${tokens / 1000000}m`;
+  }
+  if (tokens >= 1000 && tokens % 1000 === 0) {
+    return `${tokens / 1000}k`;
+  }
+  return `${tokens}`;
+};
+
 const formatAIContextStatus = (
   stats: Awaited<ReturnType<typeof redisClient.getAIContextStats>>,
+  capiContextLimit: number,
 ) => {
   if (!stats) {
-    return "当前会话还没有 CAPI 上下文统计。";
+    return `当前会话还没有 CAPI 上下文统计。\nCAPI上下文长度: ${formatContextLimit(capiContextLimit)}`;
   }
 
   const updatedAt = new Date(stats.updatedAt).toLocaleString("zh-CN", {
@@ -99,6 +110,7 @@ const formatAIContextStatus = (
     `请求次数: ${formatNumberValue(stats.requestCount)}`,
     divider,
     "最近一次上下文：",
+    `CAPI上下文长度: ${formatContextLimit(capiContextLimit)}`,
     `消息数: ${formatNumberValue(stats.contextMessageCount)}`,
     `上下文字符数: ${formatNumberValue(stats.contextCharLength)}`,
     `上下文估算token: ${formatTokenValue(stats.estimatedContextTokens)}`,
@@ -128,7 +140,8 @@ export default onResponse(selects, async (e, next) => {
   // 查看AI状态
   if (/^(\/|#)ai状态$/i.test(e.msg)) {
     const stats = await redisClient.getAIContextStats(e.guid);
-    message.send(format(Text(formatAIContextStatus(stats))));
+    const capiContextLimit = await redisClient.getCAPIContextLimit(e.guid);
+    message.send(format(Text(formatAIContextStatus(stats, capiContextLimit))));
   }
 
   // 查看AI配置
@@ -153,6 +166,7 @@ export default onResponse(selects, async (e, next) => {
     const toolCallContentSwitch = await redisClient.getToolCallContentSwitch(
       e.guid,
     ); // 工具调用内容发送开关
+    const capiContextLimit = await redisClient.getCAPIContextLimit(e.guid);
 
     // 发送消息
 
@@ -176,6 +190,7 @@ export default onResponse(selects, async (e, next) => {
         toolPromptRevokeSwitch: toolPromptRevokeSwitch == "1",
         toolPromptArgsSwitch: toolPromptArgsSwitch == "1",
         toolCallContentSwitch: toolCallContentSwitch == "1",
+        capiContextLimit: formatContextLimit(capiContextLimit),
       }, {
         playwright: {
           context: { deviceScaleFactor: scale },
@@ -192,6 +207,7 @@ export default onResponse(selects, async (e, next) => {
             Text(
               `工具调用内容: ${toolCallContentSwitch == "1" ? "开启" : "关闭"}\n`,
             ),
+            Text(`CAPI上下文长度: ${formatContextLimit(capiContextLimit)}\n`),
             Text(`复杂输出: ${complexResponse == "1" ? "开启" : "关闭"}\n`),
             Text(`好感度开关: ${affectionIsOpen == "1" ? "开启" : "关闭"}\n`),
             Text(`TTS回复开关: ${isOpenTTSReply == "1" ? "开启" : "关闭"}\n`),
@@ -213,6 +229,7 @@ export default onResponse(selects, async (e, next) => {
           Text(
             `工具调用内容: ${toolCallContentSwitch == "1" ? "开启" : "关闭"}\n`,
           ),
+          Text(`CAPI上下文长度: ${formatContextLimit(capiContextLimit)}\n`),
           Text(`复杂输出: ${complexResponse == "1" ? "开启" : "关闭"}\n`),
           Text(`好感度开关: ${affectionIsOpen == "1" ? "开启" : "关闭"}\n`),
           Text(`TTS回复开关: ${isOpenTTSReply == "1" ? "开启" : "关闭"}\n`),

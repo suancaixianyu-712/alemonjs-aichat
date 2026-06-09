@@ -29,6 +29,7 @@ type ArchivedChatSearchResult = {
 
 const TOOL_LOOP_TTL_SECONDS = 600;
 const TOOL_LOOP_STALE_MS = TOOL_LOOP_TTL_SECONDS * 1000;
+export const DEFAULT_CAPI_CONTEXT_LIMIT = 256000;
 
 type AIToolLoopState = {
   processing: true;
@@ -307,6 +308,21 @@ class db {
 
   /** --------------------------------------------------------- */
   /** 工具相关配置 */
+
+  /** 获取 CAPI 自动压缩上下文长度 */
+  async getCAPIContextLimit(guid: string): Promise<number> {
+    const raw = await this.redis.get(`ai:capi_context_limit:${guid}`);
+    const limit = Number(raw);
+    return Number.isFinite(limit) && limit > 0
+      ? Math.floor(limit)
+      : DEFAULT_CAPI_CONTEXT_LIMIT;
+  }
+
+  /** 设置 CAPI 自动压缩上下文长度 */
+  async setCAPIContextLimit(guid: string, limit: number): Promise<void> {
+    const normalized = Math.max(1, Math.floor(limit));
+    await this.redis.set(`ai:capi_context_limit:${guid}`, String(normalized));
+  }
 
   /** 获取工具开关状态 */
   async getToolSwitch(guid: string): Promise<string | null> {

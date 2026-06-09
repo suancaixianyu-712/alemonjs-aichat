@@ -10,6 +10,7 @@ const cmds = [
   { cmd: "/<开启|关闭>仅艾特触发", desc: "开启或关闭仅艾特触发功能" },
   { cmd: "/<开启|关闭>工具", desc: "开启或关闭AI工具" },
   { cmd: "/<开启|关闭>工具调用内容", desc: "开启或关闭工具调用前内容发送" },
+  { cmd: "/设置AI上下文长度 256k", desc: "设置CAPI自动压缩上下文长度" },
   { cmd: "/<开启|关闭>复杂输出", desc: "开启或关闭复杂输出" },
   { cmd: "/<开启|关闭>好感度", desc: "开启或关闭好感度系统" },
   { cmd: "/清空对话", desc: "清空当前对话历史" },
@@ -99,6 +100,7 @@ export default function App(data: {
   toolPromptRevokeSwitch: boolean;
   toolPromptArgsSwitch: boolean;
   toolCallContentSwitch: boolean;
+  capiContextLimit: string;
 }) {
   return (
     <html>
@@ -195,6 +197,12 @@ export default function App(data: {
                 label="工具调用内容"
                 value={data.toolCallContentSwitch}
               />
+              <div className="flex items-center justify-between py-2 px-2 rounded-lg bg-white/5">
+                <span className=" text-white/70">CAPI上下文长度</span>
+                <span className="px-3 py-0.5 rounded-full text-xs font-mono font-medium border bg-cyan-500/20 text-cyan-300 border-cyan-500/30">
+                  {data.capiContextLimit}
+                </span>
+              </div>
             </div>
 
             {/* 模型信息 */}

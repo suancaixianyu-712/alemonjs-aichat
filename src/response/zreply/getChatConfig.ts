@@ -67,6 +67,8 @@ export const getChatConfig = async (
   const atTriggerSwitch = await redisClient.getAtTriggerSwitch(e.guid);
   /** 历史消息 */
   const historyMessages = await redisClient.getAIChatHistory(e.guid);
+  /** CAPI 自动压缩上下文长度 */
+  const capiContextLimit = await redisClient.getCAPIContextLimit(e.guid);
   /** 好感度信息 */
   const affections = await redisClient.getAffectionLevelAll(e.guid);
   /** 工具相关配置 */
@@ -247,6 +249,8 @@ ${memoryPrompt ? `\n【系统预检索记忆】\n${relevantMemoryContext}\n` : "
     skills,
     /** 历史消息 */
     historyMessages,
+    /** CAPI 自动压缩上下文长度 */
+    capiContextLimit,
     /** 好感度信息 */
     affections,
     /** 工具配置 */

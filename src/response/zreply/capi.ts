@@ -11,7 +11,7 @@ import { log } from "console";
 import OpenAi from "openai";
 import { TTSClient } from "@src/api/tts";
 import { availableTools } from "@src/api/aitools";
-import redisClient from "@src/config";
+import redisClient, { DEFAULT_CAPI_CONTEXT_LIMIT } from "@src/config";
 import {
   buildUserMessage,
   getChatConfig,
@@ -23,6 +23,9 @@ import { parseAIReply } from "./tools";
 
 export const selects = onSelects(["message.create", "private.message.create"]);
 let currentModel = "派蒙-默认"; // 默认音色
+const CAPI_CONTEXT_COMPRESSION_RATIO = 0.9;
+const CAPI_CONTEXT_RETAIN_RATIO = 0.35;
+const AUTO_SUMMARY_DETAIL_MAX_LENGTH = 2000;
 
 const sendAIReply = async (
   reply: string,
@@ -95,6 +98,104 @@ const getTextLength = (value: any): number => {
   return 0;
 };
 
+const estimateContextTokens = (value: any): number => {
+  return Math.ceil(getTextLength(value) / 4);
+};
+
+const trimText = (text: string, maxLength: number): string => {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+  return `${normalized.slice(0, maxLength)}...`;
+};
+
+const takeTailMessagesWithinTokenBudget = (
+  history: any[],
+  tokenBudget: number,
+) => {
+  const kept: any[] = [];
+
+  for (let index = history.length - 1; index >= 0; index -= 1) {
+    kept.unshift(history[index]);
+    if (estimateContextTokens(kept) > tokenBudget) {
+      kept.shift();
+      break;
+    }
+  }
+
+  return kept;
+};
+
+const buildAutoSummaryMessage = (record: any) => {
+  const summary = record?.summary || "较早对话已自动归档";
+  const detail = trimText(
+    record?.detail || record?.transcript || "无详细摘要",
+    AUTO_SUMMARY_DETAIL_MAX_LENGTH,
+  );
+
+  return {
+    role: "system",
+    content: [
+      "【自动压缩上下文】",
+      `较早对话已归档为 ${record?.id || "未知ID"}，当前上下文只保留摘要和最近消息。`,
+      `摘要: ${summary}`,
+      `详细信息: ${detail}`,
+      "如需更完整内容，可按归档ID或关键词调用 MemoryOperation 检索历史归档。",
+    ].join("\n"),
+  };
+};
+
+const prepareCapiMessagesForRequest = async (
+  guid: string,
+  systemMessage: any,
+  currentMessages: any[],
+) => {
+  const limit = await redisClient.getCAPIContextLimit(guid);
+  const threshold = Math.floor(limit * CAPI_CONTEXT_COMPRESSION_RATIO);
+  const estimatedTokens = estimateContextTokens(currentMessages);
+
+  if (estimatedTokens < threshold) {
+    return currentMessages;
+  }
+
+  const history = await redisClient.getAIChatHistory(guid);
+  if (history.length === 0) {
+    return currentMessages;
+  }
+
+  const archived = await redisClient.archiveAIChatHistory(guid, {
+    reason: "auto_context_compress",
+  });
+  if (!archived) {
+    return currentMessages;
+  }
+
+  const minRetainBudget = Math.min(
+    Math.floor(DEFAULT_CAPI_CONTEXT_LIMIT * 0.05),
+    Math.floor(limit * 0.5),
+  );
+  const retainBudget = Math.max(
+    Math.floor(limit * CAPI_CONTEXT_RETAIN_RATIO),
+    minRetainBudget,
+  );
+  const keptHistory = takeTailMessagesWithinTokenBudget(history, retainBudget);
+  const compressedHistory = [buildAutoSummaryMessage(archived), ...keptHistory];
+  await redisClient.setAIChatHistory(guid, compressedHistory);
+
+  const rebuiltMessages = [systemMessage, ...compressedHistory];
+  const pendingMessages = currentMessages.slice(
+    Math.max(1 + history.length, 1),
+  );
+  rebuiltMessages.push(...pendingMessages);
+
+  log(
+    `CAPI上下文接近上限，已自动压缩：${estimatedTokens}/${limit} tokens，归档ID:${archived.id}`,
+  );
+
+  return rebuiltMessages;
+};
+
 const getNumber = (value: any): number | null => {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 };
@@ -139,7 +240,7 @@ const recordCapiContextStats = async (
     model,
     contextMessageCount: messages.length,
     contextCharLength,
-    estimatedContextTokens: Math.ceil(contextCharLength / 4),
+    estimatedContextTokens: estimateContextTokens(messages),
     promptTokens,
     completionTokens,
     totalTokens: getNumber(usage?.total_tokens),
@@ -172,14 +273,21 @@ export const CApiReply = async (
       timeout: 300000,
     });
 
+    const systemMessage = {
+      role: "system",
+      content: cfg.systemPrompt + `\n性格约束:${cfg.config.systemPrompt}`,
+    };
+
     let messages = [
-      {
-        role: "system",
-        content: cfg.systemPrompt + `\n性格约束:${cfg.config.systemPrompt}`,
-      },
+      systemMessage,
       ...cfg.historyMessages,
       usermessage,
     ];
+    messages = await prepareCapiMessagesForRequest(
+      e.guid,
+      systemMessage,
+      messages,
+    );
 
     const createParams: any = {
       model: cfg.config.model,
@@ -262,6 +370,11 @@ export const CApiReply = async (
           if (pendingGuidanceMessages.length === 0) {
             break;
           }
+          messages = await prepareCapiMessagesForRequest(
+            e.guid,
+            systemMessage,
+            messages,
+          );
 
           log(
             "工具调用完成后收到补充引导，继续请求模型：",
@@ -390,6 +503,12 @@ export const CApiReply = async (
         if (guidanceMessages.length > 0) {
           log("工具调用期间收到补充引导：", guidanceMessages.length);
         }
+
+        messages = await prepareCapiMessagesForRequest(
+          e.guid,
+          systemMessage,
+          messages,
+        );
 
         const params: any = {
           model: cfg.config.model,

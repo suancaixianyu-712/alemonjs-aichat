@@ -8,6 +8,25 @@ const value = getConfigValue().aiChat || {};
 const selects = onSelects(["message.create", "private.message.create"]);
 // inline regex checks are used in-place; keep `test` as shorthand
 const test = /(\/|#)测试$/i;
+const capiContextLimitCommand =
+  /^(#|\/)设置(AI)?上下文(长度)? ?([0-9]+)(k|m)$/i;
+
+const formatContextLimit = (tokens: number) => {
+  if (tokens >= 1000000 && tokens % 1000000 === 0) {
+    return `${tokens / 1000000}m`;
+  }
+  if (tokens >= 1000 && tokens % 1000 === 0) {
+    return `${tokens / 1000}k`;
+  }
+  return `${tokens}`;
+};
+
+const parseContextLimit = (value: string, unit: string) => {
+  const count = Number(value);
+  const multiplier = unit.toLowerCase() === "m" ? 1000000 : 1000;
+  return Math.floor(count * multiplier);
+};
+
 export default onResponse(selects, async (e, next) => {
   // 创建
   const [message] = useMessage(e);
@@ -379,6 +398,36 @@ export default onResponse(selects, async (e, next) => {
     await redisClient.setAIConfig(e.guid, aiInfo);
     message.send(
       format(Text(`已将当前 AI 的模型修改为 ${modelName.trim()} !`)),
+    );
+    return;
+  }
+
+  // 设置 CAPI 自动压缩上下文长度
+  if (capiContextLimitCommand.test(e.msg)) {
+    const match = e.msg.match(capiContextLimitCommand);
+    if (!match) {
+      message.send(
+        format(Text("格式错误，请按照 格式：/设置AI上下文长度 256k 进行设置")),
+      );
+      return;
+    }
+
+    const [, , , , value, unit] = match;
+    const limit = parseContextLimit(value, unit);
+    if (!Number.isFinite(limit) || limit <= 0) {
+      message.send(
+        format(Text("上下文长度必须大于 0，例如：/设置AI上下文长度 256k")),
+      );
+      return;
+    }
+
+    await redisClient.setCAPIContextLimit(e.guid, limit);
+    message.send(
+      format(
+        Text(
+          `已设置 CAPI 上下文长度为 ${formatContextLimit(limit)}，接近 90% 时会自动压缩上下文。`,
+        ),
+      ),
     );
     return;
   }
