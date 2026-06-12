@@ -1,0 +1,15 @@
+node_modules
+/data
+/public
+/logs
+/lib
+/log
+/packages
+*.logs
+*.log
+yarn.lock
+alemon.config.yaml
+._*
+.DS_Store
+/alemonjs-SKILL
+.idea/

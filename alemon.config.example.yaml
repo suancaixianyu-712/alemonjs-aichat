@@ -1,0 +1,28 @@
+
+aiChat:
+  searchApiKey: '63706fc3e6827a90e8219913297b510ff053d5238b24f64251a066e4ecea7408'
+  xaiImgProxy: ''
+  ttsServer:
+    host: ""
+  redis:
+    host: ''
+    port: 6379
+    password: ''
+    user: ''
+  baidu:
+    ak: ''
+    sk: ''
+  skills_dir: ['./skills']
+
+
+login: onebot
+
+apps:
+  - alemonjs-aichat
+
+onebot:
+  url: '' # 正向url
+  token: '' # access_token
+  reverse_enable: false # 启用后正向连接配置失效，地址：ws://127.0.0.1:17158
+  reverse_port: 17158 # 返向连接服务端口，启用反向连接后生效
+  master_id: ['3501869534'] # 主人QQ号列表，启用反向连接后生效
