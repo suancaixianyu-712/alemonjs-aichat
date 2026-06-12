@@ -172,6 +172,12 @@ export const sendReplyMessages = async (
   }
 };
 
+const sendParsedReplyToCustomOutput = async (message: any, aireply: any) => {
+  if (typeof message?.sendAIReply !== "function") return false;
+  await message.sendAIReply(aireply);
+  return true;
+};
+
 export const parseAIReply = async (
   newText: string,
   cfg: any,
@@ -216,7 +222,7 @@ export const parseAIReply = async (
   };
 };
 
-type MessageIR =
+export type MessageIR =
   | { type: "text"; content: string }
   | { type: "image"; url: string }
   | { type: "audio"; text: string; voice?: string }
@@ -270,7 +276,7 @@ export const parseAIOutput = (raw: string): MessageIR[] => {
         const imgs = text.match(/!\[[^\]]+\]\([^\)]+\)/g) || [];
         if (imgs.length) {
           imgs.forEach((img) => {
-            const urlMatch = img.match(/!\[[^\]]+\]\([^\)]+\)/);
+            const urlMatch = img.match(/!\[[^\]]+\]\(([^)]+)\)/);
             if (urlMatch) {
               result.push({ type: "image", url: urlMatch[1] });
             }
@@ -317,6 +323,11 @@ export const parseAIOutput = (raw: string): MessageIR[] => {
 };
 
 export const renderMessages = async (items: MessageIR[], message: any) => {
+  if (typeof message?.sendRapiItems === "function") {
+    await message.sendRapiItems(items);
+    return;
+  }
+
   const components: any[] = [];
 
   for (const item of items) {
@@ -346,3 +357,5 @@ export const renderMessages = async (items: MessageIR[], message: any) => {
 
   await message.send(format(...components));
 };
+
+export const sendAIReplyToOutput = sendParsedReplyToCustomOutput;

@@ -19,7 +19,7 @@ import {
   shouldSkipAIReply,
 } from "./getChatConfig";
 import { createTTSMessage } from "./tts";
-import { parseAIReply } from "./tools";
+import { parseAIReply, sendAIReplyToOutput } from "./tools";
 
 export const selects = onSelects(["message.create", "private.message.create"]);
 let currentModel = "派蒙-默认"; // 默认音色
@@ -35,6 +35,10 @@ const sendAIReply = async (
 ) => {
   const aireply = await parseAIReply(reply, cfg, e, message);
   console.log("aireply", aireply);
+
+  if (await sendAIReplyToOutput(message, aireply)) {
+    return aireply;
+  }
 
   if (aireply?.ttsMessages) {
     for (const ttsMsg of aireply.ttsMessages) {
@@ -64,6 +68,14 @@ const sendAIReply = async (
   return aireply;
 };
 
+const sendOutputText = async (message: any, text: string) => {
+  if (typeof message?.sendText === "function") {
+    return await message.sendText(text);
+  }
+
+  return await message.send(format(Text(text)));
+};
+
 const appendPendingGuidanceMessages = async (guid: string, messages: any[]) => {
   const queuedMessages = await redisClient.drainAIGuidanceMessages(guid);
   if (!queuedMessages.length) {
@@ -80,6 +92,34 @@ const appendPendingGuidanceMessages = async (guid: string, messages: any[]) => {
   messages.push(...guidanceMessages);
   await redisClient.addAIChatHistoryBatch(guid, guidanceMessages);
   return guidanceMessages;
+};
+
+const extractTextValue = (value: any): string => {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => extractTextValue(item))
+      .filter((text) => text.trim() !== "")
+      .join("\n");
+  }
+  if (value && typeof value === "object") {
+    return extractTextValue(value.text ?? value.content ?? value.summary ?? "");
+  }
+  return "";
+};
+
+const getToolCallDisplayContent = (message: any): string => {
+  const content = extractTextValue(message?.content);
+  if (content.trim() !== "") {
+    return content;
+  }
+  return extractTextValue(
+    message?.reasoning_content ??
+      message?.reasoningContent ??
+      message?.reasoning,
+  );
 };
 
 const getTextLength = (value: any): number => {
@@ -252,6 +292,7 @@ const recordCapiContextStats = async (
 
 export const CApiReply = async (
   e: Events["message.create"] | Events["private.message.create"],
+  outputMessage?: any,
 ) => {
   console.log("e.UserId", e.UserId, e.bot);
 
@@ -263,7 +304,7 @@ export const CApiReply = async (
   }
 
   // 创建消息
-  const [message] = useMessage(e);
+  const [message] = outputMessage ? [outputMessage] : useMessage(e);
   const usermessage = await buildUserMessage(e, cfg, "capi");
 
   try {
@@ -272,6 +313,98 @@ export const CApiReply = async (
       apiKey: cfg.config.key,
       timeout: 300000,
     });
+    const shouldStreamToOutput =
+      typeof outputMessage?.streamTextDelta === "function";
+
+    const requestChatCompletion = async (
+      params: any,
+      requestMessages: any[],
+    ) => {
+      if (!shouldStreamToOutput) {
+        const completion = await openai.chat.completions.create(params);
+        await recordCapiContextStats(
+          e.guid,
+          cfg.config.model,
+          requestMessages,
+          completion,
+        );
+        return completion as any;
+      }
+
+      const streamParams = {
+        ...params,
+        stream: true,
+      };
+      const stream = (await openai.chat.completions.create(streamParams)) as any;
+      let content = "";
+      let reasoningContent = "";
+      const toolCalls: any[] = [];
+
+      const ensureToolCall = (index: number) => {
+        if (!toolCalls[index]) {
+          toolCalls[index] = {
+            id: "",
+            type: "function",
+            function: {
+              name: "",
+              arguments: "",
+            },
+          };
+        }
+        return toolCalls[index];
+      };
+
+      for await (const chunk of stream) {
+        const delta = chunk?.choices?.[0]?.delta || {};
+        const text = extractTextValue(delta.content ?? "");
+        if (text) {
+          content += text;
+          await outputMessage.streamTextDelta(text);
+        }
+
+        const reasoningDelta = extractTextValue(
+          delta.reasoning_content ?? delta.reasoningContent ?? "",
+        );
+        if (reasoningDelta) {
+          reasoningContent += reasoningDelta;
+        }
+
+        if (Array.isArray(delta.tool_calls)) {
+          for (const item of delta.tool_calls) {
+            const indexValue = Number(item.index);
+            const index = Number.isFinite(indexValue) ? indexValue : 0;
+            const toolCall = ensureToolCall(index);
+            if (item.id) toolCall.id = item.id;
+            if (item.type) toolCall.type = item.type;
+            if (item.function?.name) {
+              toolCall.function.name += item.function.name;
+            }
+            if (item.function?.arguments) {
+              toolCall.function.arguments += item.function.arguments;
+            }
+          }
+        }
+      }
+
+      const normalizedToolCalls = toolCalls.filter(
+        (item) => item?.function?.name,
+      );
+
+      return {
+        choices: [
+          {
+            message: {
+              role: "assistant",
+              content,
+              reasoning_content: reasoningContent,
+              tool_calls: normalizedToolCalls.length
+                ? normalizedToolCalls
+                : undefined,
+            },
+          },
+        ],
+      };
+    };
 
     const systemMessage = {
       role: "system",
@@ -300,11 +433,12 @@ export const CApiReply = async (
     }
     const deepThoughtReasoning = getDeepThoughtReasoning(cfg);
     Object.assign(createParams, deepThoughtReasoning);
-    createParams["stream"] = false;
+    if (!shouldStreamToOutput) {
+      createParams["stream"] = false;
+    }
 
     // log("请求AI，参数：", createParams);
-    const stream = (await openai.chat.completions.create(createParams)) as any;
-    await recordCapiContextStats(e.guid, cfg.config.model, messages, stream);
+    const stream = await requestChatCompletion(createParams, messages);
 
     log("AI回复原始数据:\n", JSON.stringify(stream, null, 2));
     let fullContent = "";
@@ -313,9 +447,7 @@ export const CApiReply = async (
     const completion: any = stream;
     const aiReplyMessage = completion?.choices?.[0]?.message;
 
-    if (aiReplyMessage?.content) {
-      fullContent = aiReplyMessage.content;
-    }
+    fullContent = getToolCallDisplayContent(aiReplyMessage);
 
     if (Array.isArray(aiReplyMessage?.tool_calls)) {
       toolCalls = aiReplyMessage.tool_calls.map((tc: any) => ({
@@ -389,8 +521,7 @@ export const CApiReply = async (
             params.tool_choice = "auto";
           }
           Object.assign(params, getDeepThoughtReasoning(cfg));
-          res = await openai.chat.completions.create(params);
-          await recordCapiContextStats(e.guid, cfg.config.model, messages, res);
+          res = await requestChatCompletion(params, messages);
           if (!res.choices || res.choices.length === 0) {
             log("AI未返回内容");
             return;
@@ -404,8 +535,9 @@ export const CApiReply = async (
 
         // 先处理对话
         if (toolRound >= 10 && toolRound % 10 === 0) {
-          await message.send(
-            format(Text(`AI正在连续调用工具，第 ${toolRound} 轮处理中，请稍等`)),
+          await sendOutputText(
+            message,
+            `AI正在连续调用工具，第 ${toolRound} 轮处理中，请稍等`,
           );
         }
         messages.push(responseMessage);
@@ -416,13 +548,14 @@ export const CApiReply = async (
           const useToolsMessage = responseMessage.tool_calls.map((toolCall) => {
             return `工具调用: ${toolCall.function.name}(${cfg.toolConfig.toolPromptArgsSwitch === "1" ? toolCall.function.arguments : ""})`;
           });
-          const msgId = await message.send(
-            format(Text(useToolsMessage.join("\n"))),
-          );
+          const msgId = await sendOutputText(message, useToolsMessage.join("\n"));
           if (cfg.toolConfig.toolPromptRevokeSwitch === "1") {
             // 10秒后撤回工具调用提示
             setTimeout(() => {
-              message.delete({ messageId: msgId[0].data.message_id });
+              const messageId = msgId?.[0]?.data?.message_id;
+              if (messageId && typeof message?.delete === "function") {
+                message.delete({ messageId });
+              }
             }, 10000);
           }
         }
@@ -471,6 +604,10 @@ export const CApiReply = async (
                 error: err?.message || String(err) || "工具执行失败",
               };
             }
+          }
+
+          if (typeof message?.sendToolResult === "function") {
+            await message.sendToolResult(functionName, functionResult);
           }
 
           const toolContent = JSON.stringify(
@@ -523,8 +660,7 @@ export const CApiReply = async (
         // log("重新请求AI，参数：", params);
 
         // 重新请求
-        res = await openai.chat.completions.create(params);
-        await recordCapiContextStats(e.guid, cfg.config.model, messages, res);
+        res = await requestChatCompletion(params, messages);
 
         // 检查是否还有工具调用需要处理
         if (!res.choices || res.choices.length === 0) {
@@ -561,7 +697,7 @@ export const CApiReply = async (
   } catch (error) {
     await redisClient.setAIToolLoopProcessing(e.guid, false);
     console.error("AI回复出错", error);
-    message.send(format(Text("AI回复出错了\n" + error)));
+    await sendOutputText(message, "AI回复出错了\n" + error);
     return {
       next: true,
     };

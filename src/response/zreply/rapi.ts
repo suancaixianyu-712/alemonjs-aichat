@@ -23,6 +23,7 @@ const drainPendingGuidanceInputs = async (guid: string) => {
 
 export const RApiReply = async (
   e: Events["message.create"] | Events["private.message.create"],
+  outputMessage?: any,
 ) => {
   const cfg = await getChatConfig(e);
   if (await shouldSkipAIReply(e, cfg)) {
@@ -31,7 +32,7 @@ export const RApiReply = async (
     };
   }
 
-  const [message] = useMessage();
+  const [message] = outputMessage ? [outputMessage] : useMessage(e);
 
   const openai = new OpenAi({
     baseURL: cfg.config.host,
@@ -79,6 +80,9 @@ export const RApiReply = async (
         if (event.type === "response.output_text.delta") {
           const text = event.delta ?? "";
           fullText += text;
+          if (text && typeof message?.streamTextDelta === "function") {
+            await message.streamTextDelta(text);
+          }
         }
 
         // 更稳妥：从 output_item.done 读取完整 function_call
@@ -194,7 +198,11 @@ export const RApiReply = async (
 
       for await (const event of toolResponse as any) {
         if (event.type === "response.output_text.delta") {
-          newText += event.delta;
+          const text = event.delta ?? "";
+          newText += text;
+          if (text && typeof message?.streamTextDelta === "function") {
+            await message.streamTextDelta(text);
+          }
         }
 
         if (event.type === "response.completed") {

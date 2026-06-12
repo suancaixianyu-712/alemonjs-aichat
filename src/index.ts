@@ -1,6 +1,18 @@
 import { redis } from "./redis";
 import commands from "./routes/commands";
 import middleware from "./routes/middleware";
+import { createPanelServer } from "./panel/server";
+
+const startPanelServer = () => {
+  if (process.env.AICHAT_PANEL_DISABLED === "1") return;
+
+  createPanelServer().catch((error) => {
+    logger.error({
+      message: "网页控制台启动失败",
+      error: error instanceof Error ? error.message : String(error),
+    });
+  });
+};
 
 export default defineChildren({
   register() {
@@ -19,5 +31,6 @@ export default defineChildren({
         error: error.message,
       });
     });
+    startPanelServer();
   },
 });
