@@ -22,7 +22,7 @@
     "@alemonjs/onebot": "^2.1.16",
     "@types/node": "^22.19.17",
     "@types/ssh2": "^1.15.5",
-    "alemonjs": "2.1.65",
+    "alemonjs": "2.1.95",
     "cssnano": "^7",
     "jsxp": "^1.4.0",
     "lvyjs": "^0.2.25",
