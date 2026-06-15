@@ -10,8 +10,14 @@ import { availableTools } from "@src/api/aitools";
 import { parseAIOutput, renderMessages } from "./tools";
 import { log } from "console";
 
-const drainPendingGuidanceInputs = async (guid: string) => {
-  const queuedMessages = await redisClient.drainAIGuidanceMessages(guid);
+const drainPendingGuidanceInputs = async (
+  guid: string,
+  platform: string | undefined,
+) => {
+  const queuedMessages = await redisClient.drainAIGuidanceMessages(
+    guid,
+    platform,
+  );
   if (!queuedMessages.length) {
     return [];
   }
@@ -134,7 +140,7 @@ export const RApiReply = async (
       }
 
       console.log("模型触发工具调用：", toolCalls);
-      await redisClient.setAIToolLoopProcessing(e.guid, true);
+      await redisClient.setAIToolLoopProcessing(e.guid, true, e.Platform);
 
       // ===============================
       // 3. 执行工具
@@ -179,7 +185,10 @@ export const RApiReply = async (
       // ===============================
       // 4. 回填工具结果，继续下一轮
       // ===============================
-      const guidanceInputs = await drainPendingGuidanceInputs(e.guid);
+      const guidanceInputs = await drainPendingGuidanceInputs(
+        e.guid,
+        e.Platform,
+      );
       if (guidanceInputs.length > 0) {
         log("RAPI 工具调用期间收到补充引导：", guidanceInputs.length);
       }
@@ -219,7 +228,7 @@ export const RApiReply = async (
       }
     }
   } finally {
-    await redisClient.setAIToolLoopProcessing(e.guid, false);
+    await redisClient.setAIToolLoopProcessing(e.guid, false, e.Platform);
   }
 
   // ===============================

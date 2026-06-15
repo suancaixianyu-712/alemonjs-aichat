@@ -76,8 +76,15 @@ const sendOutputText = async (message: any, text: string) => {
   return await message.send(format(Text(text)));
 };
 
-const appendPendingGuidanceMessages = async (guid: string, messages: any[]) => {
-  const queuedMessages = await redisClient.drainAIGuidanceMessages(guid);
+const appendPendingGuidanceMessages = async (
+  guid: string,
+  platform: string | undefined,
+  messages: any[],
+) => {
+  const queuedMessages = await redisClient.drainAIGuidanceMessages(
+    guid,
+    platform,
+  );
   if (!queuedMessages.length) {
     return [];
   }
@@ -489,7 +496,7 @@ export const CApiReply = async (
     // 检查是否有工具调用需要处理
     let toolRound = 0;
     if (res.choices[0].message?.tool_calls?.length) {
-      await redisClient.setAIToolLoopProcessing(e.guid, true);
+      await redisClient.setAIToolLoopProcessing(e.guid, true, e.Platform);
     }
 
     try {
@@ -497,6 +504,7 @@ export const CApiReply = async (
         if (!res.choices[0].message?.tool_calls?.length) {
           const pendingGuidanceMessages = await appendPendingGuidanceMessages(
             e.guid,
+            e.Platform,
             messages,
           );
           if (pendingGuidanceMessages.length === 0) {
@@ -635,6 +643,7 @@ export const CApiReply = async (
 
         const guidanceMessages = await appendPendingGuidanceMessages(
           e.guid,
+          e.Platform,
           messages,
         );
         if (guidanceMessages.length > 0) {
@@ -669,7 +678,7 @@ export const CApiReply = async (
         }
       }
     } finally {
-      await redisClient.setAIToolLoopProcessing(e.guid, false);
+      await redisClient.setAIToolLoopProcessing(e.guid, false, e.Platform);
     }
 
     // 如果没有工具调用，处理最终回复
@@ -695,7 +704,7 @@ export const CApiReply = async (
       commands: aireply.nextCommands[0] ? aireply.nextCommands : undefined,
     };
   } catch (error) {
-    await redisClient.setAIToolLoopProcessing(e.guid, false);
+    await redisClient.setAIToolLoopProcessing(e.guid, false, e.Platform);
     console.error("AI回复出错", error);
     await sendOutputText(message, "AI回复出错了\n" + error);
     return {

@@ -737,15 +737,43 @@ class db {
       return;
     }
 
-    await this.redis.del(
+    const keyPatterns = [
       `ai:tool_loop_processing:${guid}`,
+      `ai:tool_loop_processing:${guid}:*`,
       `ai:guidance:${guid}`,
+      `ai:guidance:${guid}:*`,
       `ai:session:${guid}`,
-    );
+    ];
+    const keys = (
+      await Promise.all(keyPatterns.map((pattern) => this.redis.keys(pattern)))
+    ).flat();
+
+    if (keys.length > 0) {
+      await this.redis.del(...keys);
+    }
+    return;
+  }
+
+  private getToolLoopStateKey(guid: string, platform?: string) {
+    if (platform) {
+      return `ai:tool_loop_processing:${guid}:${platform}`;
+    }
+    return `ai:tool_loop_processing:${guid}`;
+  }
+
+  private getGuidanceMessageKey(guid: string, platform?: string) {
+    if (platform) {
+      return `ai:guidance:${guid}:${platform}`;
+    }
+    return `ai:guidance:${guid}`;
   }
 
   /** 设置工具调用中的处理状态 */
-  async setAIToolLoopProcessing(guid: string, processing: boolean): Promise<void> {
+  async setAIToolLoopProcessing(
+    guid: string,
+    processing: boolean,
+    platform?: string,
+  ): Promise<void> {
     if (processing) {
       const now = Date.now();
       const state: AIToolLoopState = {
@@ -754,20 +782,27 @@ class db {
         updatedAt: now,
       };
       await this.redis.set(
-        `ai:tool_loop_processing:${guid}`,
+        this.getToolLoopStateKey(guid, platform),
         JSON.stringify(state),
         "EX",
         TOOL_LOOP_TTL_SECONDS,
       );
       return;
     }
-    await this.redis.del(`ai:tool_loop_processing:${guid}`);
+    const keys = [
+      this.getToolLoopStateKey(guid, platform),
+      `ai:tool_loop_processing:${guid}`,
+    ];
+    await this.redis.del(...keys);
   }
 
   /** 获取工具调用中的处理状态 */
-  async getAIToolLoopProcessing(guid: string): Promise<string> {
-    const key = `ai:tool_loop_processing:${guid}`;
-    const processing = await this.redis.get(key);
+  async getAIToolLoopProcessing(guid: string, platform?: string): Promise<string> {
+    const key = this.getToolLoopStateKey(guid, platform);
+    let processing = await this.redis.get(key);
+    if (!processing && platform) {
+      processing = await this.redis.get(`ai:tool_loop_processing:${guid}`);
+    }
     if (!processing) {
       return "0";
     }
@@ -804,8 +839,12 @@ class db {
   }
 
   /** 获取工具调用期间追加的引导消息 */
-  async getAIGuidanceMessages(guid: string): Promise<any[]> {
-    const queueStr = await this.redis.get(`ai:guidance:${guid}`);
+  async getAIGuidanceMessages(guid: string, platform?: string): Promise<any[]> {
+    const key = this.getGuidanceMessageKey(guid, platform);
+    let queueStr = await this.redis.get(key);
+    if (!queueStr && platform) {
+      queueStr = await this.redis.get(`ai:guidance:${guid}`);
+    }
     if (!queueStr) {
       return [];
     }
@@ -819,11 +858,15 @@ class db {
   }
 
   /** 追加工具调用期间的引导消息 */
-  async addAIGuidanceMessage(guid: string, data: any): Promise<any[]> {
-    const queue = await this.getAIGuidanceMessages(guid);
+  async addAIGuidanceMessage(
+    guid: string,
+    data: any,
+    platform?: string,
+  ): Promise<any[]> {
+    const queue = await this.getAIGuidanceMessages(guid, platform);
     queue.push(data);
     await this.redis.set(
-      `ai:guidance:${guid}`,
+      this.getGuidanceMessageKey(guid, platform),
       JSON.stringify(queue),
       "EX",
       TOOL_LOOP_TTL_SECONDS,
@@ -832,15 +875,22 @@ class db {
   }
 
   /** 提取并清空工具调用期间的引导消息 */
-  async drainAIGuidanceMessages(guid: string): Promise<any[]> {
-    const queue = await this.getAIGuidanceMessages(guid);
-    await this.clearAIGuidanceMessages(guid);
+  async drainAIGuidanceMessages(
+    guid: string,
+    platform?: string,
+  ): Promise<any[]> {
+    const queue = await this.getAIGuidanceMessages(guid, platform);
+    await this.clearAIGuidanceMessages(guid, platform);
     return queue;
   }
 
   /** 清空工具调用期间的引导消息 */
-  async clearAIGuidanceMessages(guid: string): Promise<void> {
-    await this.redis.del(`ai:guidance:${guid}`);
+  async clearAIGuidanceMessages(guid: string, platform?: string): Promise<void> {
+    const keys = [
+      this.getGuidanceMessageKey(guid, platform),
+      `ai:guidance:${guid}`,
+    ];
+    await this.redis.del(...keys);
   }
 
   /** 存储摘要,全局共享 */

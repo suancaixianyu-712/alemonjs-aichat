@@ -392,7 +392,7 @@ export default onMiddleware(selects, async (event, next) => {
   }
 
   const shouldHandleAsGuidance =
-    (await redisClient.getAIToolLoopProcessing(event.guid)) === "1" &&
+    (await redisClient.getAIToolLoopProcessing(event.guid, event.Platform)) === "1" &&
     (await canPassReplyTriggerGate(event));
 
   if (shouldHandleAsGuidance) {
@@ -400,6 +400,7 @@ export default onMiddleware(selects, async (event, next) => {
     const queue = await redisClient.addAIGuidanceMessage(
       event.guid,
       guidanceMessage,
+      event.Platform,
     );
     if (queue.length === 1) {
       const [message] = useMessage(event);
