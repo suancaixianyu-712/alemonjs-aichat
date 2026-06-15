@@ -37,7 +37,6 @@
     "@ai-sdk/xai": "^3.0.60",
     "@aws-sdk/client-s3": "^3.975.0",
     "@aws-sdk/s3-request-presigner": "^3.975.0",
-    "alemonjs-aichat": "^1.0.40",
     "ai": "^6.0.105",
     "mime-types": "^3.0.2",
     "node-fetch": "^3.3.2",

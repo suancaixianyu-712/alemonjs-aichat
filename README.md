@@ -3,47 +3,21 @@
 
 安装中遇到问题可访问alemonjs官网查询[https://alemonjs.com/docs](https://alemonjs.com/docs)
 
-### yarn安装方式(推荐)
-前置条件:
-安装alemonjs: [alemonjs官网](https://alemonjs.com)
-
-``` sh
-yarn add alemonjs-aichat
-```
-
-```sh
-## 运行
-yarn start
-```
-
 ### git拉取项目安装
 
 ```sh
-git clone git@gitee.com:suancaixianyu/alemonjs-aichat.git
-cd alemonjs-aichat
+git clone https://gitee.com/suancaixianyu/alemonjs-aichat.git ./alemon
+cd alemon
+git clone -b release https://gitee.com/suancaixianyu/alemonjs-aichat.git ./packages/alemonjs-aichat
 yarn
 ```
 
 ```sh
 ## 运行
-yarn dev
+node index
 
 ## 打包
 yarn build
-```
-### 从零开始安装
-
-1. 拉取仓库
-```sh
-git clone -b release git@gitee.com:suancaixianyu/alemonjs-aichat.git
-cd alemonjs-aichat
-yarn
-```
-
-2. 配置`alemon.config.yaml`连接平台
-3. 启动
-```sh
-node index
 ```
 
 ## 2.配置
