@@ -3,8 +3,15 @@ import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const includes = (value: string) => process.argv.includes(value);
+const cbpPort = process.env.ALEMON_PORT || process.env.port;
 const alemonjs = () =>
-  import("alemonjs").then((res) => res.start("src/index.ts"));
+  import("alemonjs").then((res) => {
+    const options = {
+      input: "src/index.ts",
+      ...(cbpPort ? { port: Number(cbpPort) } : {}),
+    };
+    res.start(options);
+  });
 const jsxp = () => import("./src/panel/server").then((res) => res.createPanelServer());
 export default defineConfig({
   plugins: [() => (includes("--view") ? jsxp : alemonjs)],
