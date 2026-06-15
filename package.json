@@ -29,20 +29,10 @@
     "pm2": "^5",
     "tailwindcss": "3"
   },
-  "export": {
-    ".": "./lib/index.js",
-    "./package": "./package.json",
-    "./desktop": "./lib/desktop.js"
-  },
-  "exports": {
-    ".": "./lib/index.js",
-    "./package": "./package.json",
-    "./desktop": "./lib/desktop.js"
-  },
-  "publishConfig": {
-    "registry": "https://registry.npmjs.org",
-    "access": "public"
-  },
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
   "dependencies": {
     "@ai-sdk/xai": "^3.0.60",
     "@aws-sdk/client-s3": "^3.975.0",
