@@ -21,6 +21,7 @@ description: 使用项目文件工具在 public/{guid}/ 工作目录内搜索、
 - `AgentCreateFile`: 创建新文件。默认不覆盖已有文件。
 - `AgentWriteFile`: 覆盖或追加写入文件。覆盖前必须确认目标文件内容。
 - `AgentInsertFile`: 在指定行之前插入内容。适合添加 import、函数、配置项或局部代码块。
+- `AgentReplaceFileRange`: 按行替换一段连续内容。适合修改已有代码、配置或文案，不必重写整文件。
 - `AgentDeleteFile`: 删除文件。只在用户明确要求或确认文件确实不再需要时使用。
 
 ## Workflow
@@ -32,7 +33,7 @@ description: 使用项目文件工具在 public/{guid}/ 工作目录内搜索、
 5. 在开始写代码前，先用 `AgentSearchFiles` 搜当前项目和 `knowledge/`；如果用户提到“参考项目”“本地仓库”“知识库”，优先搜索 `knowledge/`。
 6. 调用 `AgentListFiles` 查看相关目录。
 7. 调用 `AgentReadFileLines` 读取要修改的文件片段；大文件按范围分段读取。
-8. 优先使用 `AgentInsertFile` 或小范围 `AgentWriteFile` 修改文件；避免无依据地重写整个文件。
+8. 新增内容优先使用 `AgentInsertFile`，修改已有内容优先使用 `AgentReplaceFileRange`；只有在确认需要整体覆盖时才使用 `AgentWriteFile`。
 9. 新文件使用 `AgentCreateFile`，已有文件需要覆盖时才使用 `overwrite=true` 或 `AgentWriteFile` 的 `overwrite` 模式。
 10. 修改后再次读取关键行，确认结果符合预期。
 
@@ -46,6 +47,7 @@ description: 使用项目文件工具在 public/{guid}/ 工作目录内搜索、
 - 在回复“本地没有”“仓库里没有”“没找到对应实现”之前，先对 `knowledge/` 和当前项目至少执行一次 `AgentSearchFiles` 或 `AgentListFiles` 检查。
 - 不要传绝对路径，不要使用 `../` 试图离开 `public/{guid}/`。
 - 读取行号从 1 开始；插入时 `lineNumber` 表示插入到该行之前。
+- 替换行范围时，`startLine` 和 `endLine` 都是包含关系；如果只是删除一段内容，可以传空字符串作为 `content`。
 - 如果要在文件末尾插入，先读取文件总行数，然后把 `lineNumber` 设为 `totalLines + 1`。
 - 对代码文件保持原有风格，尽量做小而清晰的改动。
 - 如果工具返回 `success: false`，先根据 `error` 调整路径或行号，不要连续重复同一个失败调用。
