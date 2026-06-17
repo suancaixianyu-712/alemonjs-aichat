@@ -277,6 +277,13 @@ export default onResponse(selects, async (e, next) => {
     );
   }
 
+  // 删除对话
+  if (/^(\/|#)删除对话$/i.test(e.msg)) {
+    await redisClient.clearAIChatHistory(e.guid);
+    await redisClient.deleteSessionId(e.guid);
+    message.send(format(Text("当前对话已删除")));
+  }
+
   // 清空所有对话
   if (/^(\/|#)清空(所有|全部)对话$/i.test(e.msg) && e.IsMaster) {
     await redisClient.clearAIChatHistory();

@@ -30,6 +30,13 @@ type ArchivedChatSearchResult = {
 const TOOL_LOOP_TTL_SECONDS = 600;
 const TOOL_LOOP_STALE_MS = TOOL_LOOP_TTL_SECONDS * 1000;
 export const DEFAULT_CAPI_CONTEXT_LIMIT = 256000;
+const ARCHIVED_CHAT_SUMMARY_MAX_LENGTH = 240;
+const ARCHIVED_CHAT_DETAIL_MAX_LENGTH = 4000;
+const ARCHIVED_CHAT_MESSAGE_MAX_LENGTH = 1200;
+const ARCHIVED_CHAT_TRANSCRIPT_MAX_LENGTH = 12000;
+const ARCHIVED_CHAT_HISTORY_PREVIEW_LIMIT = 12;
+const ARCHIVED_CHAT_RECORD_MAX_STORE_BYTES = 128 * 1024;
+const ARCHIVED_CHAT_RECORD_MAX_PARSE_BYTES = 1024 * 1024;
 
 type AIToolLoopState = {
   processing: true;
@@ -184,6 +191,10 @@ class db {
     return `${normalized.slice(0, maxLength)}...`;
   }
 
+  private getUtf8ByteLength(text: string): number {
+    return Buffer.byteLength(text, "utf8");
+  }
+
   private formatHistoryMessage(message: any): string {
     if (!message || typeof message !== "object") {
       return "";
@@ -192,7 +203,10 @@ class db {
     const role = String(message.role || "unknown");
     const name = message.name ? `(${message.name})` : "";
     const content = this.extractMessageText(message.content);
-    const trimmed = content.trim();
+    const trimmed = this.trimText(
+      content.trim(),
+      ARCHIVED_CHAT_MESSAGE_MAX_LENGTH,
+    );
 
     if (!trimmed) {
       return `${role}${name}: [空内容]`;
@@ -202,10 +216,155 @@ class db {
   }
 
   private buildChatHistoryTranscript(history: any[]): string {
-    return history
+    const transcript = history
       .map((message) => this.formatHistoryMessage(message))
       .filter(Boolean)
       .join("\n");
+
+    return this.trimText(transcript, ARCHIVED_CHAT_TRANSCRIPT_MAX_LENGTH);
+  }
+
+  private compactToolCalls(toolCalls: any[]): any[] {
+    if (!Array.isArray(toolCalls)) {
+      return [];
+    }
+
+    return toolCalls.slice(0, 5).map((toolCall) => ({
+      id: toolCall?.id || "",
+      type: toolCall?.type || "function",
+      function: {
+        name: toolCall?.function?.name || "",
+        arguments: this.trimText(
+          String(toolCall?.function?.arguments || ""),
+          ARCHIVED_CHAT_MESSAGE_MAX_LENGTH,
+        ),
+      },
+    }));
+  }
+
+  private compactArchivedHistory(history: any[]): any[] {
+    if (!Array.isArray(history) || history.length === 0) {
+      return [];
+    }
+
+    return history.slice(-ARCHIVED_CHAT_HISTORY_PREVIEW_LIMIT).map((message) => {
+      const compactMessage: Record<string, any> = {
+        role: String(message?.role || "unknown"),
+        content: this.trimText(
+          this.extractMessageText(message?.content),
+          ARCHIVED_CHAT_MESSAGE_MAX_LENGTH,
+        ),
+      };
+
+      if (message?.name) {
+        compactMessage.name = String(message.name);
+      }
+
+      if (message?.tool_call_id) {
+        compactMessage.tool_call_id = String(message.tool_call_id);
+      }
+
+      if (Array.isArray(message?.tool_calls) && message.tool_calls.length > 0) {
+        compactMessage.tool_calls = this.compactToolCalls(message.tool_calls);
+      }
+
+      return compactMessage;
+    });
+  }
+
+  private buildArchivedChatFallbackRecord(
+    guid: string,
+    id: string,
+    summary?: string | null,
+    detail?: string | null,
+  ): ArchivedChatRecord | null {
+    if (!summary && !detail) {
+      return null;
+    }
+
+    const normalizedSummary = this.trimText(
+      summary || "无摘要",
+      ARCHIVED_CHAT_SUMMARY_MAX_LENGTH,
+    );
+    const normalizedDetail = this.trimText(
+      detail || "",
+      ARCHIVED_CHAT_DETAIL_MAX_LENGTH,
+    );
+
+    return {
+      id,
+      guid,
+      summary: normalizedSummary,
+      detail: normalizedDetail,
+      transcript: normalizedDetail,
+      history: [],
+      reason: "legacy",
+      createdAt: Number(id) || 0,
+    };
+  }
+
+  private buildStoredArchivedChatRecord(record: ArchivedChatRecord) {
+    const baseRecord: ArchivedChatRecord = {
+      ...record,
+      summary: this.trimText(
+        record.summary || "无摘要",
+        ARCHIVED_CHAT_SUMMARY_MAX_LENGTH,
+      ),
+      detail: this.trimText(
+        record.detail || "",
+        ARCHIVED_CHAT_DETAIL_MAX_LENGTH,
+      ),
+      transcript: this.trimText(
+        record.transcript || "",
+        ARCHIVED_CHAT_TRANSCRIPT_MAX_LENGTH,
+      ),
+      history: this.compactArchivedHistory(record.history || []),
+    };
+
+    const candidates: ArchivedChatRecord[] = [
+      baseRecord,
+      {
+        ...baseRecord,
+        history: [],
+      },
+      {
+        ...baseRecord,
+        detail: this.trimText(baseRecord.detail, 2000),
+        transcript: this.trimText(baseRecord.transcript, 4000),
+        history: [],
+      },
+      {
+        ...baseRecord,
+        detail: this.trimText(baseRecord.detail, 800),
+        transcript: "",
+        history: [],
+      },
+    ];
+
+    for (const candidate of candidates) {
+      const serialized = JSON.stringify(candidate);
+      if (
+        this.getUtf8ByteLength(serialized) <=
+        ARCHIVED_CHAT_RECORD_MAX_STORE_BYTES
+      ) {
+        return {
+          record: candidate,
+          serialized,
+        };
+      }
+    }
+
+    const fallbackRecord: ArchivedChatRecord = {
+      ...baseRecord,
+      detail: "",
+      transcript: "",
+      history: [],
+    };
+
+    return {
+      record: fallbackRecord,
+      serialized: JSON.stringify(fallbackRecord),
+    };
   }
 
   private buildFallbackSummary(history: any[], transcript: string): string {
@@ -697,10 +856,14 @@ class db {
 
     const transcript = this.buildChatHistoryTranscript(history);
     const id = Date.now().toString();
-    const summary =
-      options?.summary?.trim() || this.buildFallbackSummary(history, transcript);
-    const detail =
-      options?.detail?.trim() || this.buildFallbackDetail(history, transcript);
+    const summary = this.trimText(
+      options?.summary?.trim() || this.buildFallbackSummary(history, transcript),
+      ARCHIVED_CHAT_SUMMARY_MAX_LENGTH,
+    );
+    const detail = this.trimText(
+      options?.detail?.trim() || this.buildFallbackDetail(history, transcript),
+      ARCHIVED_CHAT_DETAIL_MAX_LENGTH,
+    );
 
     const record: ArchivedChatRecord = {
       id,
@@ -708,16 +871,20 @@ class db {
       summary,
       detail,
       transcript,
-      history,
+      history: this.compactArchivedHistory(history),
       reason: options?.reason || "manual",
       createdAt: Date.now(),
     };
+    const storedRecord = this.buildStoredArchivedChatRecord(record);
 
-    await this.setSummary(guid, id, summary);
-    await this.setSummaryDetail(guid, id, detail);
-    await this.redis.set(this.getArchiveRecordKey(guid, id), JSON.stringify(record));
+    await this.setSummary(guid, id, storedRecord.record.summary);
+    await this.setSummaryDetail(guid, id, storedRecord.record.detail);
+    await this.redis.set(
+      this.getArchiveRecordKey(guid, id),
+      storedRecord.serialized,
+    );
 
-    return record;
+    return storedRecord.record;
   }
 
   /** 清理工具循环等临时会话状态 */
@@ -895,7 +1062,10 @@ class db {
 
   /** 存储摘要,全局共享 */
   async setSummary(guid: string, id: string, summary: string): Promise<void> {
-    await this.redis.set(`ai:summary:${guid}:${id}`, `${summary}`);
+    await this.redis.set(
+      `ai:summary:${guid}:${id}`,
+      this.trimText(summary, ARCHIVED_CHAT_SUMMARY_MAX_LENGTH),
+    );
   }
   /** 获取摘要 */
   async getSummary(guid: string, id: string): Promise<string | null> {
@@ -927,7 +1097,10 @@ class db {
     id: string,
     detail: string,
   ): Promise<void> {
-    await this.redis.set(`ai:summary_detail:${guid}:${id}`, `${detail}`);
+    await this.redis.set(
+      `ai:summary_detail:${guid}:${id}`,
+      this.trimText(detail, ARCHIVED_CHAT_DETAIL_MAX_LENGTH),
+    );
   }
   /** 获取摘要中的详细内容 */
   async getSummaryDetail(guid: string, id: string): Promise<string | null> {
@@ -943,29 +1116,46 @@ class db {
     guid: string,
     id: string,
   ): Promise<ArchivedChatRecord | null> {
-    const raw = await this.redis.get(this.getArchiveRecordKey(guid, id));
+    const recordKey = this.getArchiveRecordKey(guid, id);
+    const [rawSize, summary, detail] = await Promise.all([
+      this.redis.strlen(recordKey),
+      this.getSummary(guid, id),
+      this.getSummaryDetail(guid, id),
+    ]);
+
+    if (rawSize <= 0) {
+      return this.buildArchivedChatFallbackRecord(guid, id, summary, detail);
+    }
+
+    if (rawSize > ARCHIVED_CHAT_RECORD_MAX_PARSE_BYTES) {
+      return this.buildArchivedChatFallbackRecord(guid, id, summary, detail);
+    }
+
+    const raw = await this.redis.get(recordKey);
     if (!raw) {
-      const summary = await this.getSummary(guid, id);
-      const detail = await this.getSummaryDetail(guid, id);
-      if (!summary && !detail) {
-        return null;
-      }
-      return {
-        id,
-        guid,
-        summary: summary || "无摘要",
-        detail: detail || "",
-        transcript: detail || "",
-        history: [],
-        reason: "legacy",
-        createdAt: Number(id) || 0,
-      };
+      return this.buildArchivedChatFallbackRecord(guid, id, summary, detail);
     }
 
     try {
-      return JSON.parse(raw) as ArchivedChatRecord;
+      const parsed = JSON.parse(raw) as ArchivedChatRecord;
+      return {
+        ...parsed,
+        transcript: this.trimText(
+          parsed?.transcript || detail || "",
+          ARCHIVED_CHAT_TRANSCRIPT_MAX_LENGTH,
+        ),
+        detail: this.trimText(
+          parsed?.detail || detail || "",
+          2000,
+        ),
+        summary: this.trimText(
+          parsed?.summary || summary || "无摘要",
+          180,
+        ),
+        history: this.compactArchivedHistory(parsed?.history || []),
+      };
     } catch {
-      return null;
+      return this.buildArchivedChatFallbackRecord(guid, id, summary, detail);
     }
   }
 
@@ -974,53 +1164,24 @@ class db {
     guid?: string,
     limit = 20,
   ): Promise<ArchivedChatRecord[]> {
-    const pattern = guid
-      ? this.getArchiveRecordKey(guid, "*")
-      : this.getArchiveRecordKey("*", "*");
-    const keys = await this.redis.keys(pattern);
-    const records = await Promise.all(
-      keys.map(async (key) => {
-        const raw = await this.redis.get(key);
-        if (!raw) return null;
-        try {
-          return JSON.parse(raw) as ArchivedChatRecord;
-        } catch {
-          return null;
-        }
-      }),
-    );
-
     const merged = new Map<string, ArchivedChatRecord>();
-    for (const record of records) {
-      if (!record) continue;
-      merged.set(`${record.guid}:${record.id}`, record);
-    }
-
     const summaryPattern = guid ? `ai:summary:${guid}:*` : "ai:summary:*";
     const summaryKeys = await this.redis.keys(summaryPattern);
     for (const key of summaryKeys) {
       const [, , summaryGuid, summaryId] = key.split(":");
-      const recordKey = `${summaryGuid}:${summaryId}`;
-      if (merged.has(recordKey)) {
-        continue;
-      }
       const [summary, detail] = await Promise.all([
         this.redis.get(key),
         this.getSummaryDetail(summaryGuid, summaryId),
       ]);
-      if (!summary && !detail) {
-        continue;
+      const record = this.buildArchivedChatFallbackRecord(
+        summaryGuid,
+        summaryId,
+        summary,
+        detail,
+      );
+      if (record) {
+        merged.set(`${summaryGuid}:${summaryId}`, record);
       }
-      merged.set(recordKey, {
-        id: summaryId,
-        guid: summaryGuid,
-        summary: summary || "无摘要",
-        detail: detail || "",
-        transcript: detail || "",
-        history: [],
-        reason: "legacy",
-        createdAt: Number(summaryId) || 0,
-      });
     }
 
     return [...merged.values()]
