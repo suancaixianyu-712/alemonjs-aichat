@@ -550,7 +550,7 @@ export const tools: ChatCompletionTool[] = [
     function: {
       name: "AgentInsertFile",
       description:
-        "向项目 public/{guid}/ 目录内指定文本文件的指定行之前插入内容。路径必须是相对 public/{guid}/ 的相对路径。",
+        "向项目 public/{guid}/ 目录内指定文本文件的指定行之前插入内容。这个工具只负责插入，不会替换原有行；路径必须是相对 public/{guid}/ 的相对路径。",
       parameters: {
         type: "object",
         properties: {
@@ -574,6 +574,41 @@ export const tools: ChatCompletionTool[] = [
           },
         },
         required: ["guid", "filePath", "lineNumber", "content"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "AgentReplaceFileRange",
+      description:
+        "替换项目 public/{guid}/ 目录内指定文本文件的一段连续行内容。适合修改已有代码、配置或文案，而不是覆盖整个文件。路径必须是相对 public/{guid}/ 的相对路径。",
+      parameters: {
+        type: "object",
+        properties: {
+          guid: {
+            type: "string",
+            description: "项目工作目录ID，对应 public/{guid}/",
+          },
+          filePath: {
+            type: "string",
+            description:
+              "要替换内容的文本文件路径，必须是 public/{guid}/ 下的相对路径",
+          },
+          startLine: {
+            type: "number",
+            description: "起始行号，从 1 开始，且为包含关系",
+          },
+          endLine: {
+            type: "number",
+            description: "结束行号，从 1 开始，且为包含关系",
+          },
+          content: {
+            type: "string",
+            description: "替换后的文本内容。传空字符串表示删除该行范围",
+          },
+        },
+        required: ["guid", "filePath", "startLine", "endLine", "content"],
       },
     },
   },
@@ -1283,9 +1318,42 @@ const switchGitBranch = async (cwd: string, branch: string) => {
   };
 };
 
-const readTextLines = (target: string) => {
-  const content = fs.readFileSync(target, "utf-8");
-  return content.length ? content.split(/\r?\n/) : [];
+const readStructuredTextFile = (target: string) => {
+  const raw = fs.readFileSync(target, "utf-8");
+  const eol = raw.includes("\r\n") ? "\r\n" : "\n";
+  const hasTrailingNewline = raw.endsWith("\r\n") || raw.endsWith("\n");
+  const withoutTrailingNewline = hasTrailingNewline
+    ? raw.replace(/(?:\r\n|\n)$/, "")
+    : raw;
+
+  return {
+    raw,
+    lines: withoutTrailingNewline.length
+      ? withoutTrailingNewline.split(/\r?\n/)
+      : [],
+    eol,
+    hasTrailingNewline,
+  };
+};
+
+const readTextLines = (target: string) => readStructuredTextFile(target).lines;
+
+const writeStructuredTextFile = ({
+  target,
+  lines,
+  eol,
+  hasTrailingNewline,
+}: {
+  target: string;
+  lines: string[];
+  eol: "\n" | "\r\n";
+  hasTrailingNewline: boolean;
+}) => {
+  let nextContent = lines.join(eol);
+  if (hasTrailingNewline && lines.length > 0) {
+    nextContent += eol;
+  }
+  fs.writeFileSync(target, nextContent, "utf-8");
 };
 
 const isLikelyTextFile = (filePath: string) => {
@@ -3530,7 +3598,8 @@ export const availableTools = {
         throw new Error("目标路径不是文件");
       }
 
-      const lines = readTextLines(target);
+      const structured = readStructuredTextFile(target);
+      const lines = [...structured.lines];
       const safeLineNumber = normalizePositiveInteger(
         lineNumber,
         1,
@@ -3542,13 +3611,92 @@ export const availableTools = {
       }
 
       lines.splice(safeLineNumber - 1, 0, ...content.split(/\r?\n/));
-      fs.writeFileSync(target, lines.join("\n"), "utf-8");
+      writeStructuredTextFile({
+        target,
+        lines,
+        eol: structured.eol,
+        hasTrailingNewline: structured.hasTrailingNewline,
+      });
 
       return {
         success: true,
         path: relativePath,
         lineNumber: safeLineNumber,
         insertedLines: content.split(/\r?\n/).length,
+        totalLines: lines.length,
+      };
+    } catch (error) {
+      return toToolError(error);
+    }
+  },
+
+  AgentReplaceFileRange: async ({
+    guid,
+    filePath,
+    startLine,
+    endLine,
+    content,
+  }: {
+    guid: string;
+    filePath: string;
+    startLine: number;
+    endLine: number;
+    content: string;
+  }) => {
+    try {
+      const { target, relativePath } = resolveAgentPath(guid, filePath);
+      if (!fs.existsSync(target)) {
+        throw new Error("文件不存在");
+      }
+      if (!fs.statSync(target).isFile()) {
+        throw new Error("目标路径不是文件");
+      }
+
+      const structured = readStructuredTextFile(target);
+      const lines = [...structured.lines];
+      if (lines.length === 0) {
+        throw new Error("文件为空，请改用 AgentWriteFile 或 AgentInsertFile");
+      }
+
+      const safeStartLine = normalizePositiveInteger(
+        startLine,
+        1,
+        "startLine",
+      );
+      const safeEndLine = normalizePositiveInteger(
+        endLine,
+        safeStartLine,
+        "endLine",
+      );
+
+      if (safeEndLine < safeStartLine) {
+        throw new Error("endLine 不能小于 startLine");
+      }
+      if (safeStartLine > lines.length) {
+        throw new Error("startLine 不能大于总行数");
+      }
+      if (safeEndLine > lines.length) {
+        throw new Error("endLine 不能大于总行数");
+      }
+
+      const replacementLines = content.length ? content.split(/\r?\n/) : [];
+      const replacedLines = safeEndLine - safeStartLine + 1;
+
+      lines.splice(safeStartLine - 1, replacedLines, ...replacementLines);
+      writeStructuredTextFile({
+        target,
+        lines,
+        eol: structured.eol,
+        hasTrailingNewline: structured.hasTrailingNewline,
+      });
+
+      return {
+        success: true,
+        path: relativePath,
+        startLine: safeStartLine,
+        endLine: safeEndLine,
+        replacedLines,
+        insertedLines: replacementLines.length,
         totalLines: lines.length,
       };
     } catch (error) {
