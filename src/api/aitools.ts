@@ -152,18 +152,20 @@ export const tools: ChatCompletionTool[] = [
     type: "function",
     function: {
       name: "Photoshop",
-      description: "AI修图工具",
+      description:
+        "AI图片工具。不传 image_url 时按 instruction 直接生成图片；传入 image_url 时按 instruction 编辑图片。",
       parameters: {
         type: "object",
         properties: {
           image_url: {
             type: "string",
-            description: "需要修改的图片URL地址，必须是你所收到的图片地址",
+            description:
+              "可选。需要编辑的图片URL地址，必须是你所收到的图片地址；不传时进入文生图模式。",
           },
           instruction: {
             type: "string",
             description:
-              "修改需求的文本描述，尽量详细和具体，例如：'请将图片中的人物换成一个穿着宇航服的宇航员，背景改成月球表面，保持其他元素不变'",
+              "图片需求描述，尽量详细和具体。不传 image_url 时描述要生成什么图；传入 image_url 时描述要怎么修改图片。例如：'生成一只在月球上奔跑的柯基，电影感光影' 或 '请将图片中的人物换成一个穿着宇航服的宇航员，背景改成月球表面，保持其他元素不变'",
           },
         },
         required: ["instruction"],
