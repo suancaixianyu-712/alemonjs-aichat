@@ -1,4 +1,4 @@
-import {
+﻿import {
   getConfigValue,
   Image,
   Text,
@@ -200,6 +200,62 @@ export default onResponse(selects, async (e) => {
 
     message.send(format(Text("画图失败了喵~")));
   }
+
+  // gpt画图
+  if (/(\/|#)gpt画图(.*)$/i.test(e.msg)) {
+    const match = e.msg.match(/(\/|#)gpt画图(.*)$/i);
+    const [, , content] = match;
+    if (!content.trim()) {
+      message.send(format(Text("请提供画图内容，例如：\n#gpt画图 画一只猫")));
+      return;
+    }
+
+    message.send(format(Text("开始用 GPT 画图喵~")));
+
+    const R18Switch = await redisClient.getR18Switch(e.guid);
+
+    const res = await availableTools.GPTGenerateImage({
+      prompt: content.trim(),
+    });
+
+    if (res && Array.isArray(res) && res.length > 0) {
+      const imgItem = res[0];
+      const imgUrl = typeof imgItem === 'string' ? imgItem : imgItem.url;
+
+      let r2Url = imgUrl;
+      try {
+        r2Url = await uploadImageToR2(imgUrl);
+      } catch (err) {
+        console.error("GPT画图上传R2失败:", err);
+      }
+
+      if (R18Switch === "1") {
+        message.send(
+          format(Text("画图完成喵~\n"), Text(content), ImageURL(r2Url)),
+        );
+      } else {
+        const reviewRes = await imageReview(r2Url);
+        if (reviewRes && reviewRes.conclusion === "不合规") {
+          message.send(
+            format(
+              Text(
+                "你又再骗我画涩图了喵~已经保存到主人的收藏夹了，不给你看，哼!~",
+              ),
+            ),
+          );
+        } else {
+          message.send(
+            format(Text("画图完成喵~\n"), Text(content), ImageURL(r2Url)),
+          );
+        }
+      }
+
+      await redisClient.addImgUrl(e.guid, r2Url);
+    } else {
+      message.send(format(Text("GPT 画图失败了喵~\n" + (typeof res === "string" ? res : JSON.stringify(res)))));
+    }
+  }
+
 
   // 生成视频
   if (/(\/|#)(ai)?(生成视频)(.*)$/i.test(e.msg)) {

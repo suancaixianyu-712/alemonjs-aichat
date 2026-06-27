@@ -2,6 +2,7 @@ import redisClient from "@src/config";
 
 export type PanelGroupSwitchKey =
   | "chatSwitch"
+  | "imageBedSwitch"
   | "toolSwitch"
   | "toolCallContentSwitch"
   | "complexOutput"
@@ -31,6 +32,11 @@ export const panelGroupSwitchDefinitions: Array<{
   desc: string;
 }> = [
   { key: "chatSwitch", label: "聊天总开关", desc: "控制这个群是否启用聊天能力" },
+  {
+    key: "imageBedSwitch",
+    label: "全局图床开关",
+    desc: "控制 WebUI 是否允许通过代理访问图片，影响全部群",
+  },
   { key: "toolSwitch", label: "工具总开关", desc: "允许模型调用已启用工具" },
   {
     key: "toolCallContentSwitch",
@@ -102,6 +108,7 @@ export const loadPanelGroupConfig = async (
     currentAI,
     aiConfig,
     capiContextLimit,
+    imageBedSwitch,
     toolSwitch,
     toolCallContentSwitch,
     complexOutput,
@@ -118,6 +125,7 @@ export const loadPanelGroupConfig = async (
     redisClient.getCurrentAI(guid),
     redisClient.getAIConfig(guid),
     redisClient.getCAPIContextLimit(guid),
+    redisClient.getImageBedSwitch(guid),
     redisClient.getToolSwitch(guid),
     redisClient.getToolCallContentSwitch(guid),
     redisClient.getComplexOutput(guid),
@@ -139,6 +147,7 @@ export const loadPanelGroupConfig = async (
     capiContextLimit,
     switches: {
       chatSwitch: Boolean(aiConfig.model && aiConfig.model.trim()),
+      imageBedSwitch: toBool(imageBedSwitch),
       toolSwitch: toBool(toolSwitch),
       toolCallContentSwitch: toBool(toolCallContentSwitch),
       complexOutput: toBool(complexOutput),
@@ -233,6 +242,7 @@ export const updatePanelGroupConfig = async (input: {
   }
 
   await Promise.all([
+    redisClient.setImageBedSwitch(input.switches.imageBedSwitch),
     redisClient.setToolSwitch(guid, input.switches.toolSwitch),
     redisClient.setToolCallContentSwitch(
       guid,

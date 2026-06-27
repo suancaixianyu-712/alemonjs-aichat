@@ -293,6 +293,32 @@ export default onResponse(selects, async (e, next) => {
     return;
   }
 
+  // 设置图床开关
+  if (/(\/|#)(开启|关闭)图床$/i.test(e.msg)) {
+    if (!e.IsMaster) {
+      message.send(format(Text("仅管理员可设置全局图床开关。")));
+      return;
+    }
+    const match = e.msg.match(/(\/|#)(开启|关闭)图床$/i);
+    if (!match) {
+      message.send(
+        format(Text("格式错误，请按照 格式：/开启图床 或 /关闭图床 进行设置")),
+      );
+      return;
+    }
+    const [, , action] = match;
+    const enable = action === "开启";
+    await redisClient.setImageBedSwitch(enable);
+    message.send(
+      format(
+        Text(
+          `已${enable ? "开启" : "关闭"}全局图床功能 !${enable ? "" : "\n当前全部 WebUI 将不再通过链接访问图片。"}`,
+        ),
+      ),
+    );
+    return;
+  }
+
   // 设置工具开关
   if (/(\/|#)(开启|关闭)(MCP)?工具$/i.test(e.msg)) {
     const match = e.msg.match(/(\/|#)(开启|关闭)(MCP)?工具$/i);

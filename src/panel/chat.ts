@@ -22,6 +22,8 @@ export type PanelChatIdentity = {
   botId: string;
 };
 
+const PANEL_IMAGE_HIDDEN_TEXT = "图片已隐藏，图床已关闭";
+
 export type PanelChatStreamEvent =
   | { type: "delta"; text: string }
   | { type: "clear" }
@@ -102,6 +104,16 @@ export const getPanelChatMessages = async (
   }
 };
 
+export const getPanelChatMessagesForDisplay = async (
+  guid: string,
+  userId: string,
+): Promise<PanelChatMessage[]> => {
+  const messages = await getPanelChatMessages(guid, userId);
+  return Promise.all(
+    messages.map((message) => mapPanelMessageForDisplay(guid, message)),
+  );
+};
+
 export const appendPanelChatMessages = async (
   guid: string,
   userId: string,
@@ -150,6 +162,43 @@ const normalizePanelImageUrl = (url: string) => {
 const uniquePanelImages = (images: string[]) => [
   ...new Set(images.map(normalizePanelImageUrl).filter(Boolean)),
 ];
+
+const buildPanelImageProxyUrl = (guid: string, source: string) =>
+  `/panel/image?guid=${encodeURIComponent(guid)}&source=${encodeURIComponent(source)}`;
+
+const mapPanelMessageForDisplay = async (
+  guid: string,
+  message: PanelChatMessage,
+): Promise<PanelChatMessage> => {
+  const rawImages = uniquePanelImages(message.images || []);
+  if (!rawImages.length) {
+    return {
+      ...message,
+      images: [],
+    };
+  }
+
+  const imageBedSwitch = await withTimeout(
+    redisClient.getImageBedSwitch(guid),
+    "1",
+    800,
+  );
+  if (imageBedSwitch !== "1") {
+    return {
+      ...message,
+      text:
+        !message.text || message.text === "[图片]"
+          ? PANEL_IMAGE_HIDDEN_TEXT
+          : message.text,
+      images: [],
+    };
+  }
+
+  return {
+    ...message,
+    images: rawImages.map((image) => buildPanelImageProxyUrl(guid, image)),
+  };
+};
 
 const isPanelImageUrl = (url: string) => {
   const value = String(url || "").trim().replace(/\\/g, "/");
@@ -521,7 +570,10 @@ export const sendPanelChatMessageStream = async (
       await clearStreamMessage();
     }
 
-    await emit({ type: "message", message });
+    await emit({
+      type: "message",
+      message: await mapPanelMessageForDisplay(identity.guid, message),
+    });
   };
 
   const pushSystemMessage = async (message: string) => {

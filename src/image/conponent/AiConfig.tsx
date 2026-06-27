@@ -9,6 +9,7 @@ const cmds = [
   { cmd: "/切换模型 <模型名称>", desc: "切换当前使用的AI模型" },
   { cmd: "/<开启|关闭>仅艾特触发", desc: "开启或关闭仅艾特触发功能" },
   { cmd: "/<开启|关闭>工具", desc: "开启或关闭AI工具" },
+  { cmd: "/<开启|关闭>图床", desc: "按管理员权限开启或关闭全局 WebUI 图片链接访问" },
   { cmd: "/<开启|关闭>工具调用内容", desc: "开启或关闭工具调用前内容发送" },
   { cmd: "/设置AI上下文长度 256k", desc: "设置CAPI自动压缩上下文长度" },
   { cmd: "/<开启|关闭>复杂输出", desc: "开启或关闭复杂输出" },
@@ -93,6 +94,7 @@ export default function App(data: {
   model: string;
   prompt: string;
   atTrigger: boolean;
+  imageBedSwitch: boolean;
   currentAI: string;
   aiList: string[];
   skillList: Array<{ name: string; description: string }>;
@@ -181,6 +183,7 @@ export default function App(data: {
               <StatusItem label="语音回复开关" value={data.tts} />
               <StatusItem label="深度思考" value={data.deep} isDeep />
               <StatusItem label="仅艾特触发" value={data.atTrigger} />
+              <StatusItem label="全局图床开关" value={data.imageBedSwitch} />
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 border-t border-white/10 pt-2">

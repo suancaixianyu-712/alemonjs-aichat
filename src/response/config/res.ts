@@ -152,6 +152,7 @@ export default onResponse(selects, async (e, next) => {
     const toolsIsOpen = await redisClient.getToolSwitch(e.guid); // 工具开关
     const deepThinkingIsOpen = await redisClient.getDeepThoughtSwitch(e.guid); // 深度思考开关
     const atTriggerSwitch = await redisClient.getAtTriggerSwitch(e.guid); // 仅艾特触发
+    const imageBedSwitch = await redisClient.getImageBedSwitch(e.guid); // 全局图床开关
     const currentAI = await redisClient.getCurrentAI(e.guid); // 当前AI名称
     const aiList = await redisClient.getAIList();
     const skillList = loadSkills();
@@ -182,6 +183,7 @@ export default onResponse(selects, async (e, next) => {
         model: config.model,
         prompt: config.systemPrompt,
         atTrigger: atTriggerSwitch == "1",
+        imageBedSwitch: imageBedSwitch == "1",
         aiList: aiList,
         currentAI: currentAI,
         skillList,
@@ -213,6 +215,7 @@ export default onResponse(selects, async (e, next) => {
             Text(`TTS回复开关: ${isOpenTTSReply == "1" ? "开启" : "关闭"}\n`),
             Text(`深度思考: ${deepThinkingIsOpen == "1" ? "默认" : "关闭"}\n`),
             Text(`仅艾特触发: ${atTriggerSwitch == "1" ? "开启" : "关闭"}\n`),
+            Text(`全局图床开关: ${imageBedSwitch == "1" ? "开启" : "关闭"}\n`),
             Text(`模型: ${config.model || "未设置"}\n`),
             Text(`提示词: ${config.systemPrompt || "未设置"}\n`),
             Text(`当前AI: ${currentAI || "未设置"}\n`),
@@ -235,6 +238,7 @@ export default onResponse(selects, async (e, next) => {
           Text(`TTS回复开关: ${isOpenTTSReply == "1" ? "开启" : "关闭"}\n`),
           Text(`深度思考: ${deepThinkingIsOpen == "1" ? "默认" : "关闭"}\n`),
           Text(`仅艾特触发: ${atTriggerSwitch == "1" ? "开启" : "关闭"}\n`),
+          Text(`全局图床开关: ${imageBedSwitch == "1" ? "开启" : "关闭"}\n`),
           Text(`模型: ${config.model || "未设置"}\n`),
           Text(`提示词: ${config.systemPrompt || "未设置"}\n`),
           Text(`当前AI: ${currentAI || "未设置"}\n`),

@@ -582,6 +582,26 @@ class db {
     return await this.redis.get(`ai:image_bed:${guid}`);
   }
 
+  /** 获取图床开关状态 */
+  async getImageBedSwitch(guid?: string): Promise<string> {
+    const globalValue = await this.redis.get("ai:image_bed:switch:global");
+    if (globalValue !== null) {
+      return globalValue;
+    }
+    if (guid) {
+      const legacyValue = await this.redis.get(`ai:image_bed:switch:${guid}`);
+      if (legacyValue !== null) {
+        return legacyValue;
+      }
+    }
+    return "1";
+  }
+
+  /** 设置图床开关状态 */
+  async setImageBedSwitch(enable: boolean): Promise<void> {
+    await this.redis.set("ai:image_bed:switch:global", enable ? "1" : "0");
+  }
+
   /** 获取AI配置 */
   async getAIConfig(guid?: string): Promise<AIConfig> {
     const id = guid ?? "global";

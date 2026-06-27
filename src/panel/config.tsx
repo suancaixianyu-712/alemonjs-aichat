@@ -12,7 +12,7 @@ import {
   listPanelGroupGuids,
 } from "@src/panel/groupConfig";
 import {
-  getPanelChatMessages,
+  getPanelChatMessagesForDisplay,
   PANEL_BOT_ID,
   resolvePanelChatIdentity,
 } from "@src/panel/chat";
@@ -183,7 +183,7 @@ const loadPanelProps = async (page: PanelPage, ctx?: any) => {
       getPanelQueryText(ctx, "nickname"),
     );
     const chatMessages = await withTimeout(
-      getPanelChatMessages(identity.guid, identity.userId),
+      getPanelChatMessagesForDisplay(identity.guid, identity.userId),
       1200,
       "读取网页聊天记录超时",
     ).catch(() => []);
@@ -335,6 +335,7 @@ export default defineConfig({
           toolPromptRevokeSwitch={false}
           toolPromptArgsSwitch={true}
           toolCallContentSwitch={false}
+          imageBedSwitch={true}
         />
       ),
     },
