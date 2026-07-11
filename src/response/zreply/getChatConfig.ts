@@ -6,6 +6,7 @@ import { emojiMap } from "@src/emoji";
 import { uploadImageToR2 } from "@src/s3";
 
 type ToolMode = "capi" | "rapi";
+type BuildMode = "capi" | "rapi";
 
 /**
  * 将 tools 在 CAPI / RAPI 之间转换
@@ -46,6 +47,291 @@ export const normalizeTools = (tools: any[], mode: ToolMode) => {
   }));
 };
 
+/**
+ * 明确不支持看图（无 vision / 多模态输入）的模型关键词
+ * 匹配规则：model 名小写后 includes 任一关键词
+ * 注意：若同时命中 VISION_MODEL_KEYWORDS，则视为可看图（如 deepseek-vl、qwen-vl）
+ */
+export const NON_VISION_MODEL_KEYWORDS: string[] = [
+  // DeepSeek 文本/推理/代码（不含 vl）
+  "deepseek",
+  "deepseek-chat",
+  "deepseek-reasoner",
+  "deepseek-r1",
+  "deepseek-v3",
+  "deepseek-v2",
+  "deepseek-coder",
+  // OpenAI 纯文本 / 无图推理
+  "gpt-3.5",
+  "gpt-35",
+  "gpt-4-32k",
+  "o1-mini",
+  "o1-preview",
+  "o3-mini",
+  "o4-mini",
+  // 通义千问文本（vl 由 VISION 列表排除）
+  "qwen-turbo",
+  "qwen-plus",
+  "qwen-max",
+  "qwen-long",
+  "qwen2.5",
+  "qwen2-",
+  "qwen-coder",
+  "qwq",
+  // 月之暗面 Kimi / Moonshot 文本
+  "moonshot",
+  "kimi",
+  "moonshot-v1",
+  // 智谱 GLM 文本（glm-4v 可看图）
+  "glm-4-flash",
+  "glm-4-air",
+  "glm-4-plus",
+  "glm-4-long",
+  "glm-4-0520",
+  "glm-4",
+  "chatglm",
+  // 文心一言文本
+  "ernie-3.5",
+  "ernie-4.0",
+  "ernie-speed",
+  "ernie-lite",
+  "ernie-tiny",
+  "ernie-character",
+  "ernie-novel",
+  // 豆包文本（vision 型号会走 VISION 覆盖）
+  "doubao",
+  "doubao-pro",
+  "doubao-lite",
+  "doubao-1.5",
+  // 百川 / 零一 / MiniMax
+  "baichuan",
+  "yi-large",
+  "yi-medium",
+  "yi-spark",
+  "yi-lightning",
+  "minimax",
+  "abab6",
+  "abab5",
+  // 讯飞星火 / 腾讯混元 文本向
+  "spark",
+  "generalv3",
+  "generalv3.5",
+  "hunyuan",
+  // 开源/常见纯文本
+  "llama-3",
+  "llama3",
+  "llama-2",
+  "llama2",
+  "mistral-large",
+  "mistral-medium",
+  "mistral-small",
+  "mistral-nemo",
+  "mixtral",
+  "codestral",
+  "command-r",
+  "command-light",
+  "gemma",
+  "phi-3",
+  "phi-4",
+  "phi3",
+  "phi4",
+];
+
+/**
+ * 名称中出现这些关键词时，视为支持看图，优先生效
+ * （避免 deepseek-vl、qwen2.5-vl、glm-4v 等被 NON_VISION 误伤）
+ */
+export const VISION_MODEL_KEYWORDS: string[] = [
+  "-vl",
+  "vl-",
+  "vl.",
+  "vision",
+  "omni",
+  "gpt-4o",
+  "gpt-4.1",
+  "gpt-4-turbo",
+  "gpt-4-vision",
+  "chatgpt-4o",
+  "claude-3",
+  "claude-4",
+  "claude-sonnet",
+  "claude-opus",
+  "claude-haiku",
+  "gemini",
+  "qwen-vl",
+  "qwen2-vl",
+  "qwen2.5-vl",
+  "qwen3-vl",
+  "glm-4v",
+  "glm-4.1v",
+  "glm-4.5v",
+  "cogvlm",
+  "internvl",
+  "llava",
+  "pixtral",
+  "kimi-vl",
+  "step-1v",
+  "yi-vision",
+  "doubao-vision",
+  "doubao-1.5-vision",
+  "sensechat-vision",
+  "ernie-vilg",
+  "ernie-4.0-8k-preview-vl",
+];
+
+const normalizeModelId = (model?: string) =>
+  String(model || "")
+    .toLowerCase()
+    .trim();
+
+/**
+ * 是否为明确无法直接看图的模型
+ * - 先排除明显 vision 型号
+ * - 再匹配 NON_VISION_MODEL_KEYWORDS
+ */
+export const isNonVisionModel = (model?: string) => {
+  const normalized = normalizeModelId(model);
+  if (!normalized) {
+    return false;
+  }
+
+  if (VISION_MODEL_KEYWORDS.some((keyword) => normalized.includes(keyword))) {
+    return false;
+  }
+
+  return NON_VISION_MODEL_KEYWORDS.some((keyword) =>
+    normalized.includes(keyword),
+  );
+};
+
+/** @deprecated 请使用 isNonVisionModel；保留别名避免外部引用报错 */
+export const isDeepSeekModel = isNonVisionModel;
+
+const extractImageUrlFromPart = (part: any): string => {
+  if (!part || typeof part !== "object") {
+    return "";
+  }
+  if (typeof part.image_url === "string") {
+    return part.image_url.trim();
+  }
+  if (part.image_url && typeof part.image_url.url === "string") {
+    return part.image_url.url.trim();
+  }
+  return "";
+};
+
+const extractTextFromPart = (part: any): string => {
+  if (typeof part === "string") {
+    return part;
+  }
+  if (!part || typeof part !== "object") {
+    return "";
+  }
+  if (typeof part.text === "string") {
+    return part.text;
+  }
+  if (typeof part.content === "string") {
+    return part.content;
+  }
+  return "";
+};
+
+/** 将未出现在正文中的图片 URL 追加为文本链接 */
+const appendImageLinksToText = (text: string, urls: string[]) => {
+  const base = String(text || "");
+  const missing = (urls || []).filter(
+    (url) => typeof url === "string" && url.trim() && !base.includes(url),
+  );
+  if (!missing.length) {
+    return base;
+  }
+  const linkBlock = missing
+    .map((url, index) => `[图片链接${index + 1}] ${url}`)
+    .join("\n");
+  return base ? `${base}\n${linkBlock}` : linkBlock;
+};
+
+/**
+ * 将多模态 content 中的图片压成文本链接
+ * （无法看图的模型不支持 image_url / input_image）
+ */
+const flattenMultimodalContentToText = (content: any): string => {
+  if (typeof content === "string") {
+    return content;
+  }
+  if (!Array.isArray(content)) {
+    return extractTextFromPart(content);
+  }
+
+  const textParts: string[] = [];
+  const imageUrls: string[] = [];
+
+  for (const part of content) {
+    const imageUrl = extractImageUrlFromPart(part);
+    if (imageUrl) {
+      imageUrls.push(imageUrl);
+      continue;
+    }
+    const type = String(part?.type || "");
+    if (type === "image_url" || type === "input_image") {
+      continue;
+    }
+    if (
+      type === "text" ||
+      type === "input_text" ||
+      type === "output_text" ||
+      !type
+    ) {
+      const text = extractTextFromPart(part);
+      if (text) {
+        textParts.push(text);
+      }
+    }
+  }
+
+  return appendImageLinksToText(textParts.join("\n"), imageUrls);
+};
+
+/**
+ * 无法看图的模型：请求前适配历史消息，去掉 image_url，只保留图片链接文本
+ * 不写回 Redis，仅影响本轮请求
+ */
+export const adaptHistoryMessagesForModel = (
+  historyMessages: any[],
+  model?: string,
+) => {
+  if (!Array.isArray(historyMessages) || !isNonVisionModel(model)) {
+    return historyMessages;
+  }
+
+  return historyMessages.map((message) => {
+    if (!message || typeof message !== "object") {
+      return message;
+    }
+    if (!Array.isArray(message.content)) {
+      const { validImageUrls: _v, rawMessage: _r, ...rest } = message;
+      return rest;
+    }
+
+    const hasImagePart = message.content.some(
+      (part: any) =>
+        part?.type === "image_url" ||
+        part?.type === "input_image" ||
+        Boolean(extractImageUrlFromPart(part)),
+    );
+    if (!hasImagePart) {
+      const { validImageUrls: _v, rawMessage: _r, ...rest } = message;
+      return rest;
+    }
+
+    const { validImageUrls: _v, rawMessage: _r, ...rest } = message;
+    return {
+      ...rest,
+      content: flattenMultimodalContentToText(message.content),
+    };
+  });
+};
+
 export const getChatConfig = async (
   e: Events["message.create"] | Events["private.message.create"],
 ) => {
@@ -65,8 +351,11 @@ export const getChatConfig = async (
   const deepThoughtSwitch = await redisClient.getDeepThoughtSwitch(e.guid);
   /** @触发开关 */
   const atTriggerSwitch = await redisClient.getAtTriggerSwitch(e.guid);
-  /** 历史消息 */
-  const historyMessages = await redisClient.getAIChatHistory(e.guid);
+  /** 历史消息（无法看图时把多模态图片压成链接文本，避免 vision 400） */
+  const historyMessages = adaptHistoryMessagesForModel(
+    await redisClient.getAIChatHistory(e.guid),
+    config.model,
+  );
   /** CAPI 自动压缩上下文长度 */
   const capiContextLimit = await redisClient.getCAPIContextLimit(e.guid);
   /** 好感度信息 */
@@ -102,6 +391,10 @@ export const getChatConfig = async (
   );
   /** 机器人昵称 */
   const botName = e.bot.nickname || "小咸鱼";
+  /** 识图 AI（主模型无法看图时用） */
+  const ocrAIName = await redisClient.getOCRAIName(e.guid);
+  const ocrAIConfig = await redisClient.getOCRAIConfig(e.guid);
+  const textOnlyVision = isNonVisionModel(config.model);
   const memoryPrompt = relevantMemoryContext
     ? `
   ## 系统预检索记忆
@@ -109,6 +402,27 @@ export const getChatConfig = async (
   ${relevantMemoryContext}
   `
     : "";
+  const nonVisionImagePrompt = textOnlyVision
+    ? `
+  ## 图片理解（当前主模型 ${config.model} 无法直接看图）
+  - 用户消息里的图片只会以文本链接出现，例如 https://... 或 [图片链接N] https://...
+  - 你不能假装已经看到图片。凡是需要理解图片内容、读图中文字、或回答与图片相关的问题，必须先调用工具 DescribeImage
+  - 调用时：image_url=消息中的完整图片URL；guid=下方「当前群号(reviewGuid)」；question=可选的关注点
+  - 拿到工具返回的 description 后，再基于描述回答用户
+  ${
+    ocrAIConfig
+      ? `- 已配置识图 AI：${ocrAIConfig.name}（模型 ${ocrAIConfig.model}）`
+      : ocrAIName
+        ? `- 识图 AI 名称「${ocrAIName}」已记录，但配置无效或不完整，请用户重新 /设置识图ai <AI列表名称>`
+        : `- 尚未配置识图 AI。若工具返回未配置，请提示用户发送：/设置识图ai <AI列表名称>（需支持多模态/vision 的模型）`
+  }
+  `
+    : ocrAIConfig
+      ? `
+  ## 图片理解
+  需要更仔细地描述图片、OCR 读字时，可调用 DescribeImage（guid 传当前群号）。当前识图 AI：${ocrAIConfig.name}（${ocrAIConfig.model}）
+  `
+      : "";
   /** 系统提示词 */
   const systemPrompt = `
   # AI助手回复规范
@@ -122,7 +436,7 @@ export const getChatConfig = async (
   如果用户需要直接执行服务器运维指令、查看服务状态、管理 Docker/PM2/systemctl、查看日志或部署服务，使用 RunServerCommand；它会自动审核指令安全，不要改用 exec。调用 RunServerCommand 时 reviewGuid 必填，必须传下方环境信息里的“当前群号(reviewGuid)”，不要传 public/{guid} 工作目录ID
   如果用户要查看分支、确认当前分支、查看远端或切换分支，优先使用 AgentGitOperation，不要自己拼 git commit、push、pull、merge、rebase、reset 等命令
   如果用户在继续之前的话题、问你记不记得、提到上次/刚才/之前聊过的内容，先参考“系统预检索记忆”；如果系统预检索内容还不够，再调用 MemoryOperation，优先使用 chatHistory 的 search:关键词 或 guid:id 去补充历史上下文，然后再回答
-  
+  ${nonVisionImagePrompt}
   调用执行脚本类型的工具时, 务必确保脚本安全, 不得执行对服务器有伤害的脚本
   ---
   技能列表:
@@ -314,8 +628,6 @@ export const shouldSkipAIReply = async (
   return false;
 };
 
-type BuildMode = "capi" | "rapi";
-
 /**
  * 打包消息内容（兼容 CAPI / RAPI）
  */
@@ -326,6 +638,7 @@ export const buildUserMessage = async (
 ) => {
   const imgs: string[] = [];
   let rawMessage = e.value.raw_message || e.raw_message || e.msg;
+  const textOnlyImages = isNonVisionModel(cfg?.config?.model);
 
   // =========================
   // 回复处理
@@ -367,7 +680,7 @@ export const buildUserMessage = async (
   // 上传图片
   // =========================
   const imageurls = await Promise.all(imgs.map((url) => uploadImageToR2(url)));
-  const validImageUrls = imageurls.filter(Boolean);
+  const validImageUrls = imageurls.filter(Boolean) as string[];
 
   // =========================
   // CQ 图片替换
@@ -377,6 +690,11 @@ export const buildUserMessage = async (
     const url = validImageUrls[index++];
     return url ? url : "[图片]";
   });
+
+  // 无法看图的模型：正文补全未写入文本的图片链接（e.img / 回复图等）
+  if (textOnlyImages) {
+    rawMessage = appendImageLinksToText(rawMessage, validImageUrls);
+  }
 
   // =========================
   // 表情
@@ -392,6 +710,16 @@ export const buildUserMessage = async (
   // 🔥 CAPI (chat.completions)
   // =========================
   if (mode === "capi") {
+    // 无法看图：不传 image_url，只保留文本中的图片链接
+    if (textOnlyImages) {
+      return {
+        role: "user",
+        content: text,
+        rawMessage,
+        validImageUrls,
+      };
+    }
+
     return {
       role: "user",
       content: [
@@ -412,6 +740,18 @@ export const buildUserMessage = async (
   // =========================
   // 🔥 RAPI (responses API)
   // =========================
+  if (textOnlyImages) {
+    return {
+      role: "user",
+      content: [
+        {
+          type: "input_text",
+          text,
+        },
+      ],
+    };
+  }
+
   return {
     role: "user",
     content: [

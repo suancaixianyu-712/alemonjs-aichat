@@ -171,7 +171,47 @@ const takeTailMessagesWithinTokenBudget = (
     }
   }
 
-  return kept;
+  // 截断可能切在 tool 组中间，必须再清洗一次
+  return redisClient.sanitizeChatMessages(kept);
+};
+
+const normalizeAssistantToolCalls = (toolCalls: any[] | undefined | null) => {
+  if (!Array.isArray(toolCalls) || toolCalls.length === 0) {
+    return [];
+  }
+
+  return toolCalls
+    .filter((item) => item?.function?.name)
+    .map((item, index) => ({
+      id: String(item.id || "").trim() || `call_${Date.now()}_${index}`,
+      type: item.type || "function",
+      function: {
+        name: String(item.function.name),
+        arguments:
+          typeof item.function.arguments === "string"
+            ? item.function.arguments
+            : JSON.stringify(item.function.arguments ?? {}),
+      },
+    }));
+};
+
+const buildToolResultMessage = (
+  toolCall: any,
+  functionName: string,
+  functionResult: any,
+) => {
+  const toolContent = JSON.stringify(
+    typeof functionResult === "undefined"
+      ? { ok: true, result: null }
+      : functionResult,
+  );
+
+  return {
+    role: "tool" as const,
+    tool_call_id: String(toolCall?.id || "").trim(),
+    name: functionName,
+    content: toolContent,
+  };
 };
 
 const buildAutoSummaryMessage = (record: any) => {
@@ -227,14 +267,19 @@ const prepareCapiMessagesForRequest = async (
     minRetainBudget,
   );
   const keptHistory = takeTailMessagesWithinTokenBudget(history, retainBudget);
-  const compressedHistory = [buildAutoSummaryMessage(archived), ...keptHistory];
-  await redisClient.setAIChatHistory(guid, compressedHistory);
+  const compressedSeed = [buildAutoSummaryMessage(archived), ...keptHistory];
+  await redisClient.setAIChatHistory(guid, compressedSeed);
+  // set 后重新读取，确保与 sanitize 后的 redis 历史一致，避免本地未清洗副本
+  const compressedHistory = await redisClient.getAIChatHistory(guid);
 
-  const rebuiltMessages = [systemMessage, ...compressedHistory];
   const pendingMessages = currentMessages.slice(
     Math.max(1 + history.length, 1),
   );
-  rebuiltMessages.push(...pendingMessages);
+  const rebuiltMessages = redisClient.sanitizeChatMessages([
+    systemMessage,
+    ...compressedHistory,
+    ...pendingMessages,
+  ]);
 
   log(
     `CAPI上下文接近上限，已自动压缩：${estimatedTokens}/${limit} tokens，归档ID:${archived.id}`,
@@ -393,9 +438,7 @@ export const CApiReply = async (
         }
       }
 
-      const normalizedToolCalls = toolCalls.filter(
-        (item) => item?.function?.name,
-      );
+      const normalizedToolCalls = normalizeAssistantToolCalls(toolCalls);
 
       return {
         choices: [
@@ -403,7 +446,9 @@ export const CApiReply = async (
             message: {
               role: "assistant",
               content,
-              reasoning_content: reasoningContent,
+              ...(reasoningContent
+                ? { reasoning_content: reasoningContent }
+                : {}),
               tool_calls: normalizedToolCalls.length
                 ? normalizedToolCalls
                 : undefined,
@@ -418,16 +463,17 @@ export const CApiReply = async (
       content: cfg.systemPrompt + `\n性格约束:${cfg.config.systemPrompt}`,
     };
 
-    let messages = [
+    let messages = redisClient.sanitizeChatMessages([
       systemMessage,
       ...cfg.historyMessages,
       usermessage,
-    ];
+    ]);
     messages = await prepareCapiMessagesForRequest(
       e.guid,
       systemMessage,
       messages,
     );
+    messages = redisClient.sanitizeChatMessages(messages);
 
     const createParams: any = {
       model: cfg.config.model,
@@ -456,16 +502,7 @@ export const CApiReply = async (
 
     fullContent = getToolCallDisplayContent(aiReplyMessage);
 
-    if (Array.isArray(aiReplyMessage?.tool_calls)) {
-      toolCalls = aiReplyMessage.tool_calls.map((tc: any) => ({
-        id: tc.id || "",
-        type: "function",
-        function: {
-          name: tc.function?.name || "",
-          arguments: tc.function?.arguments || "",
-        },
-      }));
-    }
+    toolCalls = normalizeAssistantToolCalls(aiReplyMessage?.tool_calls);
 
     let res: any = {
       choices: [
@@ -515,6 +552,7 @@ export const CApiReply = async (
             systemMessage,
             messages,
           );
+          messages = redisClient.sanitizeChatMessages(messages);
 
           log(
             "工具调用完成后收到补充引导，继续请求模型：",
@@ -538,8 +576,22 @@ export const CApiReply = async (
         }
 
         toolRound += 1;
-        const responseMessage = res.choices[0].message as any;
-        log("AI返回工具调用，内容：-----", res.choices[0]);
+        const rawResponseMessage = res.choices[0].message as any;
+        const normalizedToolCalls = normalizeAssistantToolCalls(
+          rawResponseMessage?.tool_calls,
+        );
+
+        if (normalizedToolCalls.length === 0) {
+          log("工具调用列表无效，跳过本轮工具处理");
+          break;
+        }
+
+        const responseMessage = {
+          ...rawResponseMessage,
+          role: "assistant",
+          tool_calls: normalizedToolCalls,
+        };
+        log("AI返回工具调用，内容：-----", responseMessage);
 
         // 先处理对话
         if (toolRound >= 10 && toolRound % 10 === 0) {
@@ -583,6 +635,16 @@ export const CApiReply = async (
             functionArgs = {};
           }
 
+          // DescribeImage 未带 guid 时自动注入当前群号，便于读取识图 AI 配置
+          if (
+            functionName === "DescribeImage" &&
+            functionArgs &&
+            typeof functionArgs === "object" &&
+            !String(functionArgs.guid || "").trim()
+          ) {
+            functionArgs.guid = e.guid;
+          }
+
           const functionToCall = availableTools[functionName];
           let functionResult: any;
 
@@ -618,20 +680,12 @@ export const CApiReply = async (
             await message.sendToolResult(functionName, functionResult);
           }
 
-          const toolContent = JSON.stringify(
-            typeof functionResult === "undefined"
-              ? { ok: true, result: null }
-              : functionResult,
+          // 只保留 OpenAI 合法字段，避免把 reasoning_content 塞进 tool 消息
+          const toolMessage = buildToolResultMessage(
+            toolCall,
+            functionName,
+            functionResult,
           );
-
-          // 把工具执行结果作为 tool role 消息加回对话
-          const toolMessage = {
-            role: "tool",
-            tool_call_id: toolCall.id,
-            name: functionName,
-            content: toolContent,
-            reasoning_content: responseMessage.reasoning_content || "",
-          };
           messages.push(toolMessage);
           toolMessages.push(toolMessage);
         }
@@ -655,6 +709,7 @@ export const CApiReply = async (
           systemMessage,
           messages,
         );
+        messages = redisClient.sanitizeChatMessages(messages);
 
         const params: any = {
           model: cfg.config.model,

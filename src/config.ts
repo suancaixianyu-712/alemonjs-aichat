@@ -29,7 +29,7 @@ type ArchivedChatSearchResult = {
 
 const TOOL_LOOP_TTL_SECONDS = 600;
 const TOOL_LOOP_STALE_MS = TOOL_LOOP_TTL_SECONDS * 1000;
-export const DEFAULT_CAPI_CONTEXT_LIMIT = 256000;
+export const DEFAULT_CAPI_CONTEXT_LIMIT = 512000;
 const ARCHIVED_CHAT_SUMMARY_MAX_LENGTH = 240;
 const ARCHIVED_CHAT_DETAIL_MAX_LENGTH = 4000;
 const ARCHIVED_CHAT_MESSAGE_MAX_LENGTH = 1200;
@@ -73,6 +73,12 @@ class db {
   redis: Redis;
   systemPrompt = "";
 
+  /**
+   * 校验并修复 OpenAI chat messages 中 tool 配对：
+   * - role=tool 必须紧跟在带 tool_calls 的 assistant 之后，且 tool_call_id 一一对应
+   * - 截断/压缩导致的孤儿 tool、不完整 tool_calls 组会被清理
+   * - 避免 400: Messages with role 'tool' must be a response to a preceding message with 'tool_calls'
+   */
   private sanitizeAIChatHistory(history: any[]): any[] {
     if (!Array.isArray(history) || history.length === 0) {
       return [];
@@ -89,54 +95,137 @@ class db {
         continue;
       }
 
-      const toolCalls = Array.isArray(message.tool_calls)
-        ? message.tool_calls.filter((toolCall) => toolCall?.id)
-        : [];
-
+      // 孤儿 tool：前面没有完整的 assistant.tool_calls
       if (message.role === "tool") {
         index += 1;
         continue;
       }
 
-      if (message.role !== "assistant" || toolCalls.length === 0) {
-        sanitized.push(message);
+      const isAssistant = message.role === "assistant";
+      const rawToolCalls =
+        isAssistant && Array.isArray(message.tool_calls)
+          ? message.tool_calls.filter(
+              (toolCall: any) =>
+                toolCall &&
+                (toolCall.function?.name || toolCall.name),
+            )
+          : [];
+
+      if (!isAssistant || rawToolCalls.length === 0) {
+        // assistant 带了无效/空 tool_calls 时去掉该字段，避免 API 校验失败
+        if (isAssistant && Array.isArray(message.tool_calls)) {
+          const { tool_calls: _ignored, ...rest } = message;
+          sanitized.push(rest);
+        } else {
+          sanitized.push(message);
+        }
         index += 1;
         continue;
       }
 
-      const toolCallIds = new Set(
-        toolCalls.map((toolCall: any) => String(toolCall.id)),
-      );
-      const matchedToolIds = new Set<string>();
-      const toolMessages: any[] = [];
+      const followingToolMessages: any[] = [];
       let cursor = index + 1;
+      while (cursor < history.length && history[cursor]?.role === "tool") {
+        followingToolMessages.push(history[cursor]);
+        cursor += 1;
+      }
 
-      while (cursor < history.length) {
-        const nextMessage = history[cursor];
+      const normalizedToolCalls = rawToolCalls.map(
+        (toolCall: any, toolIndex: number) => {
+          const existingId = String(toolCall.id || "").trim();
+          const orderedTool = followingToolMessages[toolIndex];
+          const orderedId = String(orderedTool?.tool_call_id || "").trim();
+          const id = existingId || orderedId || `call_${index}_${toolIndex}`;
 
-        if (nextMessage?.role !== "tool") {
+          return {
+            id,
+            type: toolCall.type || "function",
+            function: {
+              name: String(toolCall.function?.name || toolCall.name || ""),
+              arguments:
+                typeof toolCall.function?.arguments === "string"
+                  ? toolCall.function.arguments
+                  : JSON.stringify(
+                      toolCall.function?.arguments ?? toolCall.arguments ?? {},
+                    ),
+            },
+          };
+        },
+      );
+
+      const usedToolIndexes = new Set<number>();
+      const matchedToolMessages: any[] = [];
+      let allMatched = true;
+
+      for (let toolIndex = 0; toolIndex < normalizedToolCalls.length; toolIndex += 1) {
+        const toolCall = normalizedToolCalls[toolIndex];
+        let foundIndex = followingToolMessages.findIndex(
+          (toolMessage, candidateIndex) =>
+            !usedToolIndexes.has(candidateIndex) &&
+            String(toolMessage?.tool_call_id || "").trim() === toolCall.id,
+        );
+
+        if (foundIndex < 0 && !usedToolIndexes.has(toolIndex) && followingToolMessages[toolIndex]) {
+          // 部分上游流式响应会丢 id，按顺序兜底配对
+          foundIndex = toolIndex;
+        }
+
+        if (foundIndex < 0) {
+          allMatched = false;
           break;
         }
 
-        const toolCallId = String(nextMessage.tool_call_id || "");
-        if (toolCallIds.has(toolCallId)) {
-          matchedToolIds.add(toolCallId);
-          toolMessages.push(nextMessage);
-          cursor += 1;
-          continue;
-        }
+        usedToolIndexes.add(foundIndex);
+        const toolMessage = followingToolMessages[foundIndex];
+        const content =
+          typeof toolMessage.content === "string"
+            ? toolMessage.content
+            : JSON.stringify(toolMessage.content ?? null);
 
-        break;
+        matchedToolMessages.push({
+          role: "tool",
+          tool_call_id: toolCall.id,
+          content,
+          ...(toolMessage.name || toolCall.function.name
+            ? { name: String(toolMessage.name || toolCall.function.name) }
+            : {}),
+        });
       }
 
-      if (matchedToolIds.size === toolCallIds.size) {
-        sanitized.push(message, ...toolMessages);
+      if (allMatched && matchedToolMessages.length === normalizedToolCalls.length) {
+        sanitized.push(
+          {
+            ...message,
+            tool_calls: normalizedToolCalls,
+          },
+          ...matchedToolMessages,
+        );
+      } else {
+        // 不完整 tool 组：降级为普通 assistant，丢掉残缺 tool，避免 400
+        const { tool_calls: _ignored, ...rest } = message;
+        const content =
+          typeof rest.content === "string" && rest.content.trim()
+            ? rest.content
+            : `[此前调用了工具: ${normalizedToolCalls
+                .map((item) => item.function.name)
+                .filter(Boolean)
+                .join(", ")}]`;
+        sanitized.push({
+          ...rest,
+          role: "assistant",
+          content,
+        });
       }
 
       index = cursor;
     }
 
     return sanitized;
+  }
+
+  /** 对外暴露：请求模型前清洗 messages，防止 tool 配对错误 */
+  sanitizeChatMessages(history: any[]): any[] {
+    return this.sanitizeAIChatHistory(history);
   }
 
   private async getToolDefinitions() {
@@ -481,6 +570,50 @@ class db {
   async setCAPIContextLimit(guid: string, limit: number): Promise<void> {
     const normalized = Math.max(1, Math.floor(limit));
     await this.redis.set(`ai:capi_context_limit:${guid}`, String(normalized));
+  }
+
+  /** 获取识图/OCR 专用 AI 名称（AI 列表中的名称） */
+  async getOCRAIName(guid: string): Promise<string> {
+    return (await this.redis.get(`ai:ocr_ai:${guid}`)) || "";
+  }
+
+  /** 设置识图/OCR 专用 AI 名称 */
+  async setOCRAIName(guid: string, name: string): Promise<void> {
+    const trimmed = name.trim();
+    if (!trimmed) {
+      await this.redis.del(`ai:ocr_ai:${guid}`);
+      return;
+    }
+    await this.redis.set(`ai:ocr_ai:${guid}`, trimmed);
+  }
+
+  /** 清除识图/OCR 专用 AI */
+  async clearOCRAIName(guid: string): Promise<void> {
+    await this.redis.del(`ai:ocr_ai:${guid}`);
+  }
+
+  /**
+   * 获取识图/OCR 专用 AI 完整配置
+   * 从 ai:list 中解析，用于 DeepSeek 等纯文本模型的看图描述
+   */
+  async getOCRAIConfig(guid: string): Promise<(AIConfig & { name: string }) | null> {
+    const name = await this.getOCRAIName(guid);
+    if (!name) {
+      return null;
+    }
+    const aiConfigStr = await this.redis.get(`ai:list:${name}`);
+    if (!aiConfigStr) {
+      return null;
+    }
+    try {
+      const config = JSON.parse(aiConfigStr) as AIConfig;
+      if (!config.host?.trim() || !config.key?.trim() || !config.model?.trim()) {
+        return null;
+      }
+      return { ...config, name };
+    } catch {
+      return null;
+    }
   }
 
   /** 获取工具开关状态 */

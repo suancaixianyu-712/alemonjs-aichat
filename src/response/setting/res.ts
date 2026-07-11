@@ -10,6 +10,8 @@ const selects = onSelects(["message.create", "private.message.create"]);
 const test = /(\/|#)测试$/i;
 const capiContextLimitCommand =
   /^(#|\/)设置(AI)?上下文(长度)? ?([0-9]+)(k|m)$/i;
+// 例: /设置识图ai gpt4v  /配置ocr xxx  /设置识图 关闭
+const ocrAICommand = /^(#|\/)(配|配置|设置)(ocr|识图)(ai)?\s*(.*)$/i;
 
 const formatContextLimit = (tokens: number) => {
   if (tokens >= 1000000 && tokens % 1000000 === 0) {
@@ -428,12 +430,99 @@ export default onResponse(selects, async (e, next) => {
     return;
   }
 
+  // 设置识图/OCR 专用 AI（DeepSeek 等纯文本模型看图时调用）
+  if (ocrAICommand.test(e.msg)) {
+    const match = e.msg.match(ocrAICommand);
+    if (!match) {
+      message.send(
+        format(
+          Text(
+            "格式错误，请按照：/设置识图ai <AI列表名称>\n查看：/设置识图\n关闭：/设置识图 关闭",
+          ),
+        ),
+      );
+      return;
+    }
+
+    const rawName = (match[5] || "").trim();
+    const currentName = await redisClient.getOCRAIName(e.guid);
+    const currentConfig = await redisClient.getOCRAIConfig(e.guid);
+
+    // 无参数：查看当前配置
+    if (!rawName) {
+      if (!currentName) {
+        message.send(
+          format(
+            Text(
+              "当前未配置识图 AI。\n用法：/设置识图ai <AI列表名称>\n关闭：/设置识图 关闭\n提示：主模型无法看图时（deepseek、gpt-3.5、qwen 文本版等），收到图片会通过 DescribeImage 工具用该配置描述图片。",
+            ),
+          ),
+        );
+        return;
+      }
+
+      message.send(
+        format(
+          Text(
+            [
+              `当前识图 AI：${currentName}`,
+              currentConfig
+                ? `模型：${currentConfig.model}\n主机：${currentConfig.host}`
+                : "警告：该名称在 AI 列表中不存在或配置不完整，请重新设置。",
+              "关闭：/设置识图 关闭",
+            ].join("\n"),
+          ),
+        ),
+      );
+      return;
+    }
+
+    // 关闭/清空
+    if (/^(关闭|清空|清除|无|off|none|null)$/i.test(rawName)) {
+      await redisClient.clearOCRAIName(e.guid);
+      message.send(format(Text("已关闭识图 AI 配置。")));
+      return;
+    }
+
+    // 设置到 AI 列表中的某个名称
+    const aiList = await redisClient.getAIList();
+    if (!aiList.includes(rawName)) {
+      message.send(
+        format(
+          Text(
+            `未找到 AI「${rawName}」。请先用 /添加ai 添加，或用 /ai列表 查看可用名称。`,
+          ),
+        ),
+      );
+      return;
+    }
+
+    await redisClient.setOCRAIName(e.guid, rawName);
+    const ocrConfig = await redisClient.getOCRAIConfig(e.guid);
+    message.send(
+      format(
+        Text(
+          [
+            `已设置识图 AI 为「${rawName}」`,
+            ocrConfig
+              ? `模型：${ocrConfig.model}\n主机：${ocrConfig.host}`
+              : "",
+            "当主模型无法看图时（deepseek、gpt-3.5、qwen 文本版等），收到图片会调用 DescribeImage 工具用此配置描述图片内容。",
+          ]
+            .filter(Boolean)
+            .join("\n"),
+        ),
+      ),
+    );
+    return;
+  }
+
   // 设置 CAPI 自动压缩上下文长度
   if (capiContextLimitCommand.test(e.msg)) {
     const match = e.msg.match(capiContextLimitCommand);
     if (!match) {
       message.send(
-        format(Text("格式错误，请按照 格式：/设置AI上下文长度 256k 进行设置")),
+        format(Text("格式错误，请按照 格式：/设置AI上下文长度 512k 进行设置")),
       );
       return;
     }
@@ -442,7 +531,7 @@ export default onResponse(selects, async (e, next) => {
     const limit = parseContextLimit(value, unit);
     if (!Number.isFinite(limit) || limit <= 0) {
       message.send(
-        format(Text("上下文长度必须大于 0，例如：/设置AI上下文长度 256k")),
+        format(Text("上下文长度必须大于 0，例如：/设置AI上下文长度 512k")),
       );
       return;
     }

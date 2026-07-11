@@ -330,14 +330,14 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
       timeout: 300000,
     });
 
-    let messages = [
+    let messages = redisClient.sanitizeChatMessages([
       {
         role: "system",
         content: systemPrompt + `\n性格约束:${config.systemPrompt}`,
       },
       ...historyMessages,
       { ...usermessage },
-    ];
+    ]);
 
     const isTool = await redisClient.getToolSwitch(e.guid);
 
@@ -389,13 +389,33 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
       }
     }
 
+    const normalizeToolCalls = (items: any[]) =>
+      (Array.isArray(items) ? items : [])
+        .filter((item) => item?.function?.name)
+        .map((item, index) => ({
+          id: String(item.id || "").trim() || `call_${Date.now()}_${index}`,
+          type: item.type || "function",
+          function: {
+            name: String(item.function.name),
+            arguments:
+              typeof item.function.arguments === "string"
+                ? item.function.arguments
+                : JSON.stringify(item.function.arguments ?? {}),
+          },
+        }));
+
+    const normalizedInitialToolCalls = normalizeToolCalls(toolCalls);
+
     let res: any = {
       choices: [
         {
           message: {
             role: "assistant",
             content: fullContent || null,
-            tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
+            tool_calls:
+              normalizedInitialToolCalls.length > 0
+                ? normalizedInitialToolCalls
+                : undefined,
           },
         },
       ],
@@ -410,7 +430,20 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
 
     // 检查是否有工具调用需要处理
     while (res.choices[0].message?.tool_calls?.length) {
-      const responseMessage = res.choices[0].message as any;
+      const rawResponseMessage = res.choices[0].message as any;
+      const normalizedToolCalls = normalizeToolCalls(
+        rawResponseMessage?.tool_calls,
+      );
+
+      if (normalizedToolCalls.length === 0) {
+        break;
+      }
+
+      const responseMessage = {
+        ...rawResponseMessage,
+        role: "assistant",
+        tool_calls: normalizedToolCalls,
+      };
 
       // 先处理对话
       messages.push(responseMessage);
@@ -478,7 +511,7 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
             : functionResult,
         );
 
-        // 把工具执行结果作为 tool role 消息加回对话
+        // 把工具执行结果作为 tool role 消息加回对话（仅保留合法字段）
         const toolMessage = {
           role: "tool",
           tool_call_id: toolCall.id,
@@ -493,6 +526,8 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
         responseMessage,
         ...toolMessages,
       ]);
+
+      messages = redisClient.sanitizeChatMessages(messages);
 
       // 重新请求
       res = await openai.chat.completions.create({

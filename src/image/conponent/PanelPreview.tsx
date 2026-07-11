@@ -53,7 +53,7 @@ master_id:
 
 ai:
   current: OpenAI
-  capiContextLimit: 256k
+  capiContextLimit: 512k
 
 features:
   chat: true
@@ -2082,7 +2082,7 @@ const ConfigPage = ({
               </div>
               <div className="field">
                 <label htmlFor="context">上下文长度</label>
-                <input id="context" defaultValue="256k" />
+                <input id="context" defaultValue="512k" />
               </div>
               <div className="field">
                 <label htmlFor="master">管理员</label>
