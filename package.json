@@ -1,6 +1,6 @@
 {
   "name": "alemonjs-aichat",
-  "version": "1.0.40",
+  "version": "1.0.47",
   "description": "alemonjs-aichat",
   "author": "suancaixianyu",
   "license": "MIT",
@@ -22,7 +22,7 @@
     "@alemonjs/onebot": "^2.1.16",
     "@types/node": "^22.19.17",
     "@types/ssh2": "^1.15.5",
-    "alemonjs": "2.1.95",
+    "alemonjs": "2.1.92",
     "cssnano": "^7",
     "jsxp": "^1.4.0",
     "lvyjs": "^0.2.25",
