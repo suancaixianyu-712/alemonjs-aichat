@@ -358,6 +358,10 @@ export const CApiReply = async (
   // 创建消息
   const [message] = outputMessage ? [outputMessage] : useMessage(e);
   const usermessage = await buildUserMessage(e, cfg, "capi");
+  console.log(
+    "发送给AI的当前消息:\n",
+    JSON.stringify(usermessage, null, 2),
+  );
 
   try {
     const openai = new OpenAi({
@@ -743,8 +747,6 @@ export const CApiReply = async (
       log("AI选择不回复");
       return;
     }
-
-    console.log("AI回复原文:\n", JSON.stringify(res, null, 2));
 
     // 处理消息
     // 提取ai发送的消息有多少条

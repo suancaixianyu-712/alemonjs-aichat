@@ -23,12 +23,30 @@ const sanitizeR2FileName = (name: string) =>
     .replace(/-+/g, "-")
     .replace(/^\.+|\.+$/g, "");
 
-const buildR2ObjectKey = (key: string | undefined, fallbackBaseName: string, extension: string) => {
-  const normalizedExtension = extension.startsWith(".") ? extension : `.${extension}`;
-  const rawName = key?.trim() || fallbackBaseName;
-  const parsed = path.parse(rawName);
-  const safeBaseName = sanitizeR2FileName(parsed.name || rawName || "file") || "file";
-  return `${safeBaseName}${normalizedExtension}`;
+/** 生成唯一 object key 片段：时间戳 + 随机串，避免同名覆盖（如 download.webp） */
+const randomObjectId = () =>
+  `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+
+/**
+ * 构建 R2 对象 key。
+ * - 传入 key 时：使用自定义名（仍做安全化）
+ * - 未传 key 时：始终用时间戳+随机，避免源文件名相同（如 CDN 的 /download）互相覆盖
+ */
+const buildR2ObjectKey = (
+  key: string | undefined,
+  _fallbackBaseName: string,
+  extension: string,
+) => {
+  const normalizedExtension = extension.startsWith(".")
+    ? extension
+    : `.${extension}`;
+  if (key?.trim()) {
+    const parsed = path.parse(key.trim());
+    const safeBaseName =
+      sanitizeR2FileName(parsed.name || key.trim() || "file") || "file";
+    return `${safeBaseName}${normalizedExtension}`;
+  }
+  return `${randomObjectId()}${normalizedExtension}`;
 };
 
 /**
@@ -317,7 +335,7 @@ export const uploadImageToR2 = async (
   // 添加处理日志
   const animatedMessage = wasAnimated ? " (原为动图，已取第一帧)" : "";
   console.log(
-    `上传成功: [原始: ${originalContentType}, 转换后: ${contentType}${animatedMessage}]`,
+    `上传成功: ${publicUrl} [原始: ${originalContentType}, 转换后: ${contentType}${animatedMessage}]`,
   );
 
   return publicUrl;
