@@ -2,8 +2,10 @@ import { getConfigValue, Text, useClient, useMessage } from "alemonjs";
 import { API } from "@alemonjs/onebot";
 import redisClient from "@src/config";
 import { CApiReply } from "@src/response/zreply/capi";
-import { RApiReply } from "@src/response/zreply/rapi";
-import { buildUserMessage, getChatConfig } from "@src/response/zreply/getChatConfig";
+import {
+  buildUserMessage,
+  getChatConfig,
+} from "@src/response/zreply/getChatConfig";
 
 const selects = onSelects(["message.create", "private.message.create"]);
 
@@ -85,7 +87,7 @@ const canPassReplyTriggerGate = async (event: any) => {
 
 // 中间件
 export default onMiddleware(selects, async (event, next) => {
-  const config = getConfigValue().aiChat || {};
+  // const config = getConfigValue().aiChat || {};
   // console.log("原始事件:", event.value);
 
   // 新增字段
@@ -104,6 +106,7 @@ export default onMiddleware(selects, async (event, next) => {
     await redisClient.initExecEnv(event.guid, event.UserId);
   }
 
+  // 终端
   if (event.Platform == "testone") {
     // 处理图片消息
     event["img"] = event.value
@@ -244,6 +247,7 @@ export default onMiddleware(selects, async (event, next) => {
     }
   }
 
+  // sc社区
   if (event.Platform == "scbbs") {
     const ScbbsAPI = await import("@alemonjs/scbbs");
 
@@ -256,19 +260,13 @@ export default onMiddleware(selects, async (event, next) => {
     event["msg"] = `${event["msg"] ?? ""}`;
     // 私聊用 toUser，群聊用事件 BotId
     event["self_id"] = isPrivate
-      ? event.value?.toUser?.id ?? event.BotId
+      ? (event.value?.toUser?.id ?? event.BotId)
       : event.BotId;
     event["originalMsg"] = contentList;
     event["group_id"] = isPrivate
       ? undefined
-      : event.ChannelId ?? event.GuildId ?? event.value?.group?.id;
+      : (event.ChannelId ?? event.GuildId ?? event.value?.group?.id);
     event["group_name"] = isPrivate ? undefined : event.value?.group?.name;
-
-    // 私聊默认视为对机器人会话；群聊依赖 @ / 回复机器人 / 适配器 IsAtMe
-    event["atBot"] =
-      (isPrivate && event.Platform == "scbbs") ||
-      Boolean(event.IsAtMe) ||
-      false;
 
     // 处理图片消息
     event["img"] = contentList
@@ -277,13 +275,13 @@ export default onMiddleware(selects, async (event, next) => {
         (item.data?.url || "").replace("!/fwfh/368x238", ""),
       );
 
-    // 处理 at
+    // 处理 at：后端格式 { type: "at", data: { qq, name } }
     event["at"] = contentList
       .filter((item: { type: string }) => item.type === "at")
       .map((item: { data: any }) => ({
         type: "at",
         data: {
-          qq: String(item.data?.id ?? item.data?.qq ?? ""),
+          qq: String(item.data?.qq ?? item.data?.id ?? item.data?.userId ?? ""),
           nickname: item.data?.name || item.data?.nickname || "",
         },
       }));
@@ -299,6 +297,20 @@ export default onMiddleware(selects, async (event, next) => {
       user_id: event["self_id"],
     };
 
+    // 私聊默认视为对机器人会话；群聊依赖适配器 IsAtMe / at.qq 是否等于自己
+    const selfId = String(event["self_id"] ?? event.BotId ?? "");
+    const atSelf = (event["at"] as { data?: { qq?: string } }[]).some(
+      (item) => {
+        const qq = String(item?.data?.qq ?? "").trim();
+        return qq !== "" && qq === selfId;
+      },
+    );
+    event["atBot"] =
+      (isPrivate && event.Platform == "scbbs") ||
+      Boolean(event.IsAtMe) ||
+      atSelf ||
+      false;
+
     event["raw_message"] = contentList
       .map((item: { type: string; data: any }) => {
         if (item.type === "text") {
@@ -306,7 +318,7 @@ export default onMiddleware(selects, async (event, next) => {
         } else if (item.type === "image") {
           return `[CQ:image,${item.data?.url}]`;
         } else if (item.type === "at") {
-          return `[CQ:at,qq=${item.data?.id ?? item.data?.qq}]`;
+          return `[CQ:at,qq=${item.data?.qq ?? item.data?.id}]`;
         } else {
           return `[${String(item.type || "unknown").toUpperCase()}]`;
         }
@@ -323,13 +335,15 @@ export default onMiddleware(selects, async (event, next) => {
 
         // useClient 可能包装成结果数组，也兼容直接返回 data
         const replyData = Array.isArray(replyMsg)
-          ? replyMsg[0]?.data ?? replyMsg[0]
+          ? (replyMsg[0]?.data ?? replyMsg[0])
           : replyMsg;
 
         if (replyData) {
           event["reply"] = replyData;
           const fromUserId =
-            replyData.fromUserId ?? replyData.author?.id ?? replyData.data?.fromUserId;
+            replyData.fromUserId ??
+            replyData.author?.id ??
+            replyData.data?.fromUserId;
           if (String(fromUserId) === String(event.self_id)) {
             event["atBot"] = true;
           }
@@ -340,6 +354,7 @@ export default onMiddleware(selects, async (event, next) => {
     }
   }
 
+  // 泡泡平台
   if (event.Platform == "bubble") {
     const BubbleAPI = await import("@alemonjs/bubble");
     const CDN_URL = "https://bubble-oss-files.alemonjs.com/";
@@ -431,9 +446,10 @@ export default onMiddleware(selects, async (event, next) => {
     }
   }
 
+  // ai工具
   const shouldHandleAsGuidance =
-    (await redisClient.getAIToolLoopProcessing(event.guid, event.Platform)) === "1" &&
-    (await canPassReplyTriggerGate(event));
+    (await redisClient.getAIToolLoopProcessing(event.guid, event.Platform)) ===
+      "1" && (await canPassReplyTriggerGate(event));
 
   if (shouldHandleAsGuidance) {
     const guidanceMessage = await buildGuidanceMessage(event);

@@ -12,9 +12,15 @@ const alemonjs = () =>
     };
     res.start(options);
   });
-const jsxp = () => import("./src/panel/server").then((res) => res.createPanelServer());
+const jsxp = () =>
+  import("./src/panel/server").then((res) => res.createPanelServer());
+const jsxpPreview = () =>
+  import("jsxp").then(({ createServer }) => createServer());
 export default defineConfig({
-  plugins: [() => (includes("--view") ? jsxp : alemonjs)],
+  plugins: [
+    () =>
+      includes("--jsxp") ? jsxpPreview : includes("--view") ? jsxp : alemonjs,
+  ],
   alias: {
     entries: [{ find: "@src", replacement: join(__dirname, "src") }],
   },
