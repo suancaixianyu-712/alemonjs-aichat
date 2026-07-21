@@ -164,6 +164,10 @@ export const RApiReply = async (
           result = { ok: false, error: `未找到工具: ${functionName}` };
         } else {
           try {
+            // 覆盖式注入主人权限标识（alemonjs 框架的 e.IsMaster），防止模型伪造参数；主人执行指令无需审核
+            if (functionArgs && typeof functionArgs === "object") {
+              functionArgs.isMaster = e.IsMaster === true;
+            }
             result = await functionToCall(functionArgs);
           } catch (err: any) {
             result = { ok: false, error: err.message || String(err) };

@@ -669,6 +669,10 @@ export const CApiReply = async (
                   error: `工具被禁用：${functionName}`,
                 };
               } else {
+                // 覆盖式注入主人权限标识（alemonjs 框架的 e.IsMaster），防止模型伪造参数；主人执行指令无需审核
+                if (functionArgs && typeof functionArgs === "object") {
+                  functionArgs.isMaster = e.IsMaster === true;
+                }
                 functionResult = await functionToCall(functionArgs);
               }
             } catch (err: any) {

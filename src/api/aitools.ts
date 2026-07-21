@@ -2452,10 +2452,29 @@ const extractArchiveWithinWorkspace = async ({
 const performProjectCommandReview = async ({
   command,
   reviewGuid,
+  isMaster,
 }: {
   command: string;
   reviewGuid?: string;
+  isMaster?: boolean;
 }) => {
+  // 主人权限无需审核，直接放行
+  if (isMaster) {
+    return {
+      allowed: true,
+      risk: "low" as const,
+      localReview: {
+        allowed: true,
+        risk: "low" as const,
+        reasons: ["主人权限，跳过项目命令安全审核"],
+      },
+      aiReview: {
+        status: "skipped" as const,
+        reason: "主人权限，无需 AI 审核",
+      },
+    };
+  }
+
   const localReview = buildProjectCommandReview(command);
   const aiReview = await reviewProjectCommandWithAI({
     command,
@@ -2483,11 +2502,30 @@ const performServerCommandReview = async ({
   command,
   reviewGuid,
   workingDirectory,
+  isMaster,
 }: {
   command: string;
   reviewGuid?: string;
   workingDirectory: string;
+  isMaster?: boolean;
 }) => {
+  // 主人权限无需审核，直接放行
+  if (isMaster) {
+    return {
+      allowed: true,
+      risk: "low" as const,
+      localReview: {
+        allowed: true,
+        risk: "low" as const,
+        reasons: ["主人权限，跳过服务器指令安全审核"],
+      },
+      aiReview: {
+        status: "skipped" as const,
+        reason: "主人权限，无需 AI 审核",
+      },
+    };
+  }
+
   const localReview = buildServerCommandLocalReview(command);
   if (!localReview.allowed) {
     return {
@@ -3428,17 +3466,20 @@ export const availableTools = {
     command,
     workingDirectory = ".",
     reviewGuid,
+    isMaster,
   }: {
     guid: string;
     command: string;
     workingDirectory?: string;
     reviewGuid?: string;
+    isMaster?: boolean;
   }) => {
     try {
       const { relativePath } = resolveAgentPath(guid, workingDirectory);
       const review = await performProjectCommandReview({
         command,
         reviewGuid,
+        isMaster,
       });
 
       return {
@@ -3457,11 +3498,13 @@ export const availableTools = {
     command,
     workingDirectory,
     reviewGuid,
+    isMaster,
     timeoutSeconds = SERVER_COMMAND_DEFAULT_TIMEOUT_SECONDS,
   }: {
     command: string;
     workingDirectory?: string;
     reviewGuid: string;
+    isMaster?: boolean;
     timeoutSeconds?: number;
   }) => {
     try {
@@ -3474,6 +3517,7 @@ export const availableTools = {
         command,
         reviewGuid,
         workingDirectory: cwd,
+        isMaster,
       });
       if (!review.allowed) {
         return {
@@ -3586,6 +3630,7 @@ export const availableTools = {
     workingDirectory = ".",
     command,
     reviewGuid,
+    isMaster,
     archivePath,
     destinationPath,
     sourcePath,
@@ -3597,6 +3642,7 @@ export const availableTools = {
     workingDirectory?: string;
     command?: string;
     reviewGuid?: string;
+    isMaster?: boolean;
     archivePath?: string;
     destinationPath?: string;
     sourcePath?: string;
@@ -3695,6 +3741,7 @@ export const availableTools = {
         const review = await performProjectCommandReview({
           command,
           reviewGuid,
+          isMaster,
         });
         if (!review.allowed) {
           return {
