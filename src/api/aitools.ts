@@ -3090,29 +3090,22 @@ export const availableTools = {
     size?: string;
     quality?: string;
   }) => {
-    // 从 ai:list:* 中查找 gpt|chatgpt|openai 配置
-    const keys = await redis.keys("ai:list:*");
-    const gptKey = keys.find((key) =>
-      /gpt|chatgpt|openai/i.test(key.replace("ai:list:", "")),
-    );
-    if (!gptKey) {
-      return "未找到 GPT/OpenAI 相关的 AI 配置，请先添加一个包含 gpt/chatgpt/openai 关键词的 AI 配置";
+    const gptImageConfig = await redisClient.getGPTImageConfig();
+    if (!gptImageConfig || !gptImageConfig.host || !gptImageConfig.key) {
+      return "未配置 GPT 画图接口，请使用命令：\n#gpt画图配置 <主机地址> <api_key> <模型>";
     }
-    const aiConfigStr = await redis.get(gptKey);
-    if (!aiConfigStr) {
-      return "读取 AI 配置失败";
-    }
-    const aiConfig = JSON.parse(aiConfigStr);
 
     try {
       const openai = new OpenAi({
-        baseURL: aiConfig.host,
-        apiKey: aiConfig.key,
+        baseURL: gptImageConfig.host,
+        apiKey: gptImageConfig.key,
         timeout: 120000,
       });
 
+      const model = gptImageConfig.model || "gpt-image-2";
+
       const response = await openai.images.generate({
-        model: "gpt-image-2",
+        model,
         prompt,
         n: 1,
         size: size as any,

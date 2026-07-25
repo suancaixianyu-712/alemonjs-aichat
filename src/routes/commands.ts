@@ -26,6 +26,7 @@ export const children = [
       /^(\/|#)安装语音(模型)?(.+)$/i,
       /^(\/|#)看魔法$/i,
       /(\/|#)gpt画图(.*)$/i,
+      /(\/|#)gpt画图配置\s+(\S+)\s+(\S+)\s+(\S+)/i,
     ),
     handler: lazy(() => import("../response/tools/res")),
   },

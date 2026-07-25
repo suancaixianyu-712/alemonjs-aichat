@@ -592,6 +592,22 @@ class db {
     await this.redis.del(`ai:ocr_ai:${guid}`);
   }
 
+  /** 获取 GPT 画图工具专用配置 */
+  async getGPTImageConfig(): Promise<{ host: string; key: string; model: string } | null> {
+    const configStr = await this.redis.get("ai:tool:gptimage");
+    if (!configStr) return null;
+    try {
+      return JSON.parse(configStr);
+    } catch {
+      return null;
+    }
+  }
+
+  /** 设置 GPT 画图工具专用配置 */
+  async setGPTImageConfig(host: string, key: string, model: string): Promise<void> {
+    await this.redis.set("ai:tool:gptimage", JSON.stringify({ host, key, model }));
+  }
+
   /**
    * 获取识图/OCR 专用 AI 完整配置
    * 从 ai:list 中解析，用于 DeepSeek 等纯文本模型的看图描述
