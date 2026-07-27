@@ -13,6 +13,7 @@ import { TTSClient } from "@src/api/tts";
 import { availableTools } from "@src/api/aitools";
 import redisClient, { DEFAULT_CAPI_CONTEXT_LIMIT } from "@src/config";
 import {
+  bindDescribeImageUrl,
   buildUserMessage,
   getChatConfig,
   getDeepThoughtReasoning,
@@ -358,6 +359,10 @@ export const CApiReply = async (
   // 创建消息
   const [message] = outputMessage ? [outputMessage] : useMessage(e);
   const usermessage = await buildUserMessage(e, cfg, "capi");
+  const currentImageUrls = Array.isArray((usermessage as any).validImageUrls)
+    ? (usermessage as any).validImageUrls
+    : [];
+  const describedCurrentImageUrls = new Set<string>();
   console.log(
     "发送给AI的当前消息:\n",
     JSON.stringify(usermessage, null, 2),
@@ -643,10 +648,16 @@ export const CApiReply = async (
           if (
             functionName === "DescribeImage" &&
             functionArgs &&
-            typeof functionArgs === "object" &&
-            !String(functionArgs.guid || "").trim()
+            typeof functionArgs === "object"
           ) {
-            functionArgs.guid = e.guid;
+            bindDescribeImageUrl(
+              functionArgs,
+              currentImageUrls,
+              describedCurrentImageUrls,
+            );
+            if (!String(functionArgs.guid || "").trim()) {
+              functionArgs.guid = e.guid;
+            }
           }
 
           const functionToCall = availableTools[functionName];

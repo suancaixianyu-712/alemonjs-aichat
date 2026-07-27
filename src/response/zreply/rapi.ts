@@ -1,6 +1,7 @@
 import { Events, useMessage } from "alemonjs";
 import OpenAi from "openai";
 import {
+  bindDescribeImageUrl,
   buildUserMessage,
   getChatConfig,
   shouldSkipAIReply,
@@ -47,6 +48,10 @@ export const RApiReply = async (
   });
 
   const usermessage = await buildUserMessage(e, cfg, "rapi");
+  const currentImageUrls = Array.isArray((usermessage as any).validImageUrls)
+    ? (usermessage as any).validImageUrls
+    : [];
+  const describedCurrentImageUrls = new Set<string>();
   console.log(
     "发送给AI的当前消息:\n",
     JSON.stringify(usermessage, null, 2),
@@ -164,6 +169,20 @@ export const RApiReply = async (
           result = { ok: false, error: `未找到工具: ${functionName}` };
         } else {
           try {
+            if (
+              functionName === "DescribeImage" &&
+              functionArgs &&
+              typeof functionArgs === "object"
+            ) {
+              bindDescribeImageUrl(
+                functionArgs,
+                currentImageUrls,
+                describedCurrentImageUrls,
+              );
+              if (!String(functionArgs.guid || "").trim()) {
+                functionArgs.guid = e.guid;
+              }
+            }
             // 覆盖式注入主人权限标识（alemonjs 框架的 e.IsMaster），防止模型伪造参数；主人执行指令无需审核
             if (functionArgs && typeof functionArgs === "object") {
               functionArgs.isMaster = e.IsMaster === true;

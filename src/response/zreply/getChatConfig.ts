@@ -252,6 +252,46 @@ const appendImageLinksToText = (text: string, urls: string[]) => {
 };
 
 /**
+ * 校正 DescribeImage 的图片参数。
+ * 当前消息带图时，优先使用本轮真实 URL，避免模型从历史消息里重复拷贝旧链接。
+ */
+export const bindDescribeImageUrl = (
+  args: any,
+  currentImageUrls: string[],
+  usedImageUrls: Set<string>,
+) => {
+  if (!args || typeof args !== "object") {
+    return args;
+  }
+
+  const urls = [...new Set((currentImageUrls || []).filter(Boolean))];
+  if (!urls.length) {
+    return args;
+  }
+
+  const requestedUrl = String(args.image_url || "").trim();
+  const requestedIsCurrent = urls.includes(requestedUrl);
+  const selectedUrl =
+    requestedIsCurrent && !usedImageUrls.has(requestedUrl)
+      ? requestedUrl
+      : urls.find((url) => !usedImageUrls.has(url)) ||
+        (requestedIsCurrent ? requestedUrl : urls[0]);
+
+  args.image_url = selectedUrl;
+  usedImageUrls.add(selectedUrl);
+  return args;
+};
+
+/** 给 RAPI 本地执行链保留图片 URL，但不将内部字段序列化给模型 API */
+const attachImageUrls = <T extends object>(message: T, urls: string[]) => {
+  Object.defineProperty(message, "validImageUrls", {
+    value: urls,
+    enumerable: false,
+  });
+  return message;
+};
+
+/**
  * 将多模态 content 中的图片压成文本链接
  * （无法看图的模型不支持 image_url / input_image）
  */
@@ -741,30 +781,36 @@ export const buildUserMessage = async (
   // 🔥 RAPI (responses API)
   // =========================
   if (textOnlyImages) {
-    return {
+    return attachImageUrls(
+      {
+        role: "user",
+        content: [
+          {
+            type: "input_text",
+            text,
+          },
+        ],
+      },
+      validImageUrls,
+    );
+  }
+
+  return attachImageUrls(
+    {
       role: "user",
       content: [
+        ...validImageUrls.map((url) => ({
+          type: "input_image",
+          image_url: url,
+        })),
         {
           type: "input_text",
           text,
         },
       ],
-    };
-  }
-
-  return {
-    role: "user",
-    content: [
-      ...validImageUrls.map((url) => ({
-        type: "input_image",
-        image_url: url,
-      })),
-      {
-        type: "input_text",
-        text,
-      },
-    ],
-  };
+    },
+    validImageUrls,
+  );
 };
 
 export const getDeepThoughtReasoning = (cfg: any) => {

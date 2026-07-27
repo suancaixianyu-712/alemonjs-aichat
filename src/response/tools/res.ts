@@ -201,10 +201,33 @@ export default onResponse(selects, async (e) => {
     message.send(format(Text("画图失败了喵~")));
   }
 
-  // gpt画图
-  if (/(\/|#)gpt画图(.*)$/i.test(e.msg)) {
-    const match = e.msg.match(/(\/|#)gpt画图(.*)$/i);
-    const [, , content] = match;
+  // GPT 画图配置必须先于普通画图处理，避免被“gpt画图”前缀吞掉
+  if (/^(\/|#)gpt画图配置(?:\s+[\s\S]*)?$/i.test(e.msg)) {
+    const match = e.msg.match(
+      /^(\/|#)gpt画图配置\s+(\S+)\s+(\S+)\s+(\S+)\s*$/i,
+    );
+    if (!match) {
+      message.send(
+        format(
+          Text(
+            "格式错误，请按照格式：\n#gpt画图配置 <主机地址> <api_key> <模型>",
+          ),
+        ),
+      );
+      return;
+    }
+    const [, , host, key, model] = match;
+    await redisClient.setGPTImageConfig(host, key, model);
+    message.send(
+      format(Text(`GPT 画图配置已更新！\n主机: ${host}\n模型: ${model}`)),
+    );
+    return;
+  }
+
+  // gpt画图：“画图”后必须是空白或结束，不匹配“gpt画图配置”
+  if (/^(\/|#)gpt画图(?:\s+[\s\S]*)?$/i.test(e.msg)) {
+    const match = e.msg.match(/^(\/|#)gpt画图(?:\s+([\s\S]*))?$/i);
+    const content = match?.[2] || "";
     if (!content.trim()) {
       message.send(format(Text("请提供画图内容，例如：\n#gpt画图 画一只猫")));
       return;
@@ -256,18 +279,6 @@ export default onResponse(selects, async (e) => {
     }
   }
 
-
-  if (/(\/|#)gpt画图配置\s+(\S+)\s+(\S+)\s+(\S+)/i.test(e.msg)) {
-    const match = e.msg.match(/(\/|#)gpt画图配置\s+(\S+)\s+(\S+)\s+(\S+)/i);
-    if (!match) {
-      message.send(format(Text("格式错误，请按照格式：\n#gpt画图配置 <主机地址> <api_key> <模型>")));
-      return;
-    }
-    const [, , host, key, model] = match;
-    await redisClient.setGPTImageConfig(host, key, model);
-    message.send(format(Text(`GPT 画图配置已更新！\n主机: ${host}\n模型: ${model}`)));
-    return;
-  }
 
   // 生成视频
   if (/(\/|#)(ai)?(生成视频)(.*)$/i.test(e.msg)) {
