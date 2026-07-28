@@ -358,7 +358,7 @@ export const CApiReply = async (
 
   // 创建消息
   const [message] = outputMessage ? [outputMessage] : useMessage(e);
-  const usermessage = await buildUserMessage(e, cfg, "capi");
+  const usermessage = await buildUserMessage(e, cfg);
   const currentImageUrls = Array.isArray((usermessage as any).validImageUrls)
     ? (usermessage as any).validImageUrls
     : [];
@@ -658,6 +658,18 @@ export const CApiReply = async (
             if (!String(functionArgs.guid || "").trim()) {
               functionArgs.guid = e.guid;
             }
+          }
+
+          // 下一条消息订阅只能绑定当前会话和当前发言用户，禁止模型伪造目标
+          if (
+            functionName === "SubscribeNextUserMessage" &&
+            functionArgs &&
+            typeof functionArgs === "object"
+          ) {
+            functionArgs.guid = e.guid;
+            functionArgs.userID = String(e.UserId || "");
+            functionArgs.platform = e.Platform;
+            functionArgs.isGroup = e.name !== "private.message.create";
           }
 
           const functionToCall = availableTools[functionName];

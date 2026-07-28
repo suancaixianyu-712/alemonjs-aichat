@@ -25,7 +25,7 @@ const runtimeRoot = join(panelDir, "..");
 const panelPort = Number(process.env.JSXP_PORT || process.env.PORT || 8080);
 
 type PanelPage = "config" | "chat";
-type PanelAIConfig = Pick<AIConfig, "host" | "key" | "model" | "rapi"> & {
+type PanelAIConfig = Pick<AIConfig, "host" | "key" | "model"> & {
   name: string;
 };
 
@@ -117,7 +117,6 @@ const loadPanelAIConfigs = async () => {
           host: config.host || "",
           key: config.key || "",
           model: config.model || "",
-          rapi: Boolean(config.rapi),
         };
       }),
     ),
@@ -227,7 +226,6 @@ const loadPanelProps = async (page: PanelPage, ctx?: any) => {
       chatUserId: identity.userId,
       chatNickname: identity.nickname,
       chatBotId: PANEL_BOT_ID,
-      chatMode: aiConfig?.rapi ? "rapi" : "capi",
       chatModel: aiConfig?.model || "",
       groupGuidOptions,
       workspaceNames,

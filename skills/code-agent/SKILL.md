@@ -39,8 +39,8 @@ description: 使用项目文件工具在 public/{guid}/ 工作目录内搜索、
 
 ## Rules
 
-- 只能使用本技能列出的 `Agent*` 工具做增、查、改、删和受限仓库克隆；不要调用 `exec`、终端命令、Docker、容器、远程节点或任何代码执行工具。
-- 查找 `public/{guid}` 下已有项目或知识库时，先用 `AgentListWorkspaces`、`AgentListFiles`、`AgentSearchFiles`；不要用 `exec`，因为它的默认工作目录不是 `public/{guid}`。
+- 只能使用本技能列出的 `Agent*` 工具做增、查、改、删和受限仓库克隆；不要调用终端命令、Docker、容器、远程节点或其他代码执行工具。
+- 查找 `public/{guid}` 下已有项目或知识库时，先用 `AgentListWorkspaces`、`AgentListFiles`、`AgentSearchFiles`。
 - Git 操作优先使用 `AgentGitOperation`；目前只允许看分支、看远端和切换到已有分支，不要尝试提交、推送、拉取、合并、变基、重置或打标签。
 - 项目命令只通过 `AgentProjectCommand` 执行；不要绕过它直接跑 shell。
 - 克隆下来的仓库只作为知识库阅读参考，除非用户明确要求，否则不要修改知识库仓库内容。

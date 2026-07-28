@@ -1,6 +1,4 @@
-﻿import { availableTools } from "@src/api/aitools";
-import redisClient from "@src/config";
-import { switchToGroupById } from "@src/userEnv";
+﻿import redisClient from "@src/config";
 import { Text, useMessage, getConfigValue } from "alemonjs";
 import { log } from "console";
 const value = getConfigValue().aiChat || {};
@@ -44,12 +42,6 @@ export default onResponse(selects, async (e, next) => {
     //     data: "",
     //   }),
     // );
-    availableTools.exec({
-      command: "echo hello world",
-      userId: e.UserId,
-      groupId: e.guid || "private",
-    });
-
     message.send(format(Text("测试消息")));
 
     // 1. 获取技能列表（简要信息）
@@ -641,61 +633,6 @@ export default onResponse(selects, async (e, next) => {
     return;
   }
 
-  // 设置ai的RAPI模式开关
-  if (/(\/|#)(设置|修改)(ai)?(.*)rapi模式(开启|关闭)$/i.test(e.msg)) {
-    const match = e.msg.match(
-      /(\/|#)(设置|修改)(ai)?(.*)rapi模式(开启|关闭)$/i,
-    );
-    if (!match) {
-      message.send(
-        format(
-          Text(
-            "格式错误，请按照 格式：/设置 rapi模式 开启 或 /设置 rapi模式 关闭 进行设置",
-          ),
-        ),
-      );
-      return;
-    }
-    const [, , , , aiName, action] = match;
-    const enable = action === "开启";
-    if (aiName.trim()) {
-      await redisClient.switchModelRAPI(aiName.trim(), enable);
-      message.send(
-        format(
-          Text(
-            `已${enable ? "开启" : "关闭"} AI ${aiName.trim()} 的 RAPI 模式 !`,
-          ),
-        ),
-      );
-    }
-  }
-
-  // 设置当前ai的RAPI模式开关
-  if (/(\/|#)切换rapi模式(开启|关闭)$/i.test(e.msg)) {
-    const match = e.msg.match(/(\/|#)切换rapi模式(开启|关闭)$/i);
-    if (!match) {
-      message.send(
-        format(
-          Text(
-            "格式错误，请按照 格式：/切换rapi模式 开启 或 /切换rapi模式 关闭 进行设置",
-          ),
-        ),
-      );
-      return;
-    }
-    const [, , action] = match;
-    const enable = action === "开启";
-    const aiInfo = await redisClient.getAIConfig(e.guid);
-    if (!aiInfo.model) {
-      message.send(format(Text(`当前没有可用的 AI 配置！`)));
-      return;
-    }
-    await redisClient.setAIConfig(e.guid, { ...aiInfo, rapi: enable });
-    message.send(
-      format(Text(`已${enable ? "开启" : "关闭"}当前 AI 的 RAPI 模式 !`)),
-    );
-  }
-
   // 添加正则规则
   if (/(\/|#)添加正则规则 (.+)$/i.test(e.msg)) {
     const match = e.msg.match(/(\/|#)添加正则规则 (.+)$/i);
@@ -914,94 +851,6 @@ export default onResponse(selects, async (e, next) => {
     message.send(
       format(Text(`已${enable ? "开启" : "关闭"}工具 ${toolName.trim()} !`)),
     );
-    return;
-  }
-
-  // 切换指定群容器（管理员可指定群号切换，支持私聊）
-  if (/(\/|#)切换群容器\s+(\S+)$/i.test(e.msg)) {
-    if (!e.IsMaster && !redisClient.isSuperAdmin(e.UserId)) {
-      return;
-    }
-    const match = e.msg.match(/(\/|#)切换群容器\s+(\S+)$/i);
-    if (!match) return;
-    const targetGroupId = match[2];
-    const result = await switchToGroupById(targetGroupId, e.UserId);
-    message.send(format(Text(result)));
-    return;
-  }
-
-  // 切换群容器
-  if (/(\/|#)切换群容器$/i.test(e.msg)) {
-    if (e.name === "private.message.create") {
-      message.send(format(Text("私聊中无法切换群容器，请在群聊中使用！")));
-      return;
-    }
-    const groupId = e.guid;
-    const config = await redisClient.switchToGroupContainer(groupId, e.UserId);
-    message.send(
-      format(Text(`已切换到群容器\n容器: ${config.containerName}\n镜像: ${config.image}`)),
-    );
-    return;
-  }
-
-  // 切换用户容器
-  if (/(\/|#)切换用户容器$/i.test(e.msg)) {
-    const groupId = e.name === "private.message.create" ? "private" : e.guid;
-    const config = await redisClient.switchToUserContainer(groupId, e.UserId);
-    message.send(
-      format(Text(`已切换到用户容器\n容器: ${config.containerName}\n镜像: ${config.image}`)),
-    );
-    return;
-  }
-
-  // 切换系统环境
-  if (/(\/|#)切换系统环境$/i.test(e.msg)) {
-    if (e.name !== "private.message.create") {
-      message.send(format(Text("切换系统环境需要在私聊中进行，请在私聊中使用此命令")));
-      return;
-    }
-    if (!e.IsMaster) {
-      return;
-    }
-    await redisClient.switchToSystemEnv("private", e.UserId);
-    message.send(format(Text("已切换到系统环境，exec 指令将在宿主机上执行。")));
-    return;
-  }
-
-  // 清理闲置容器（仅主人可用）
-  if (/(\/|#)清理容器$/i.test(e.msg)) {
-    if (!e.IsMaster) {
-      return;
-    }
-    message.send(format(Text("正在清理容器...")));
-    try {
-      const { execSync } = await import("child_process");
-      const names = ["aichat_grp_", "aichat_usr_"];
-      let cleaned = 0;
-      for (const prefix of names) {
-        try {
-          const output = execSync(
-            `docker ps -a --filter "name=${prefix}" --format "{{.Names}}"`,
-            { stdio: "pipe" },
-          ).toString().trim();
-          if (!output) continue;
-          const containers = output.split("\n");
-          for (const name of containers) {
-            try {
-              execSync(`docker rm -f ${name}`, { stdio: "pipe" });
-              cleaned++;
-            } catch {}
-          }
-        } catch {}
-      }
-      const keys = await redisClient.getAllContainerKeys();
-      for (const key of keys) {
-        await redisClient.deleteContainer(key);
-      }
-      message.send(format(Text(`清理完成，共清理 ${cleaned} 个容器及 ${keys.length} 条配置`)));
-    } catch (err: any) {
-      message.send(format(Text(`清理失败: ${err.message}`)));
-    }
     return;
   }
 

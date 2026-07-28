@@ -14,9 +14,6 @@ import { spawn } from "child_process";
 import * as dns from "node:dns/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { getWorkspace } from "./workspace";
-import { getExecCommandEnv } from "../userEnv";
-import { remoteNodeManager } from "../remoteNodes";
 
 const value = getConfigValue().aiChat || {};
 
@@ -259,32 +256,6 @@ export const tools: ChatCompletionTool[] = [
   {
     type: "function",
     function: {
-      name: "exec",
-      description:
-        "执行终端命令. 禁止用于 AI agent 编程文件操作；public/{guid}/ 内的文件增查改删只能使用 Agent* 文件工具，不能通过 exec、Docker 或容器完成. 你可以使用这个工具来执行一些简单的命令, 例如查看当前目录下的文件ls, 查看系统状态top等. 当你想要执行一个命令时, 请提供具体的命令文本, 例如'ls -la'或'top -n 1'. 执行结果将会返回给你, 但请注意, 由于安全限制, 某些命令可能无法执行或返回受限的结果",
-      parameters: {
-        type: "object",
-        properties: {
-          userId: {
-            type: "string",
-            description: "执行命令的用户ID",
-          },
-          groupId: {
-            type: "string",
-            description: "当前群聊ID，私聊时传'private'",
-          },
-          command: {
-            type: "string",
-            description: "要执行的终端命令",
-          },
-        },
-        required: ["userId", "groupId", "command"],
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
       name: "getSKILLDetail",
       description: "获取技能详情",
       parameters: {
@@ -328,7 +299,7 @@ export const tools: ChatCompletionTool[] = [
     function: {
       name: "AgentCreateWorkspace",
       description:
-        "在项目 public/ 下创建一个新的 AI agent 工作目录，并返回可用于后续文件工具的 guid。需要新项目目录时使用它，不要用 exec 调用 uuidgen。",
+        "在项目 public/ 下创建一个新的 AI agent 工作目录，并返回可用于后续文件工具的 guid。",
       parameters: {
         type: "object",
         properties: {
@@ -880,9 +851,21 @@ export const tools: ChatCompletionTool[] = [
   {
     type: "function",
     function: {
+      name: "SubscribeNextUserMessage",
+      description:
+        "在群聊中订阅当前用户的下一条发言。是否调用完全由你根据当前对话自行判断，没有关键词、用户表态、提问状态或其他前置条件；只要你想获取该用户的下一条发言，就直接调用。调用后，该用户接下来的一条非命令群消息即使没有艾特机器人，也会触发 AI 回复；订阅触发一次后自动失效，10 分钟内没有新消息也会过期。订阅对象、群聊和平台由框架根据当前消息注入，不要向用户索要参数。若还想获取后续下一条发言，可再次调用。",
+      parameters: {
+        type: "object",
+        properties: {},
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "MemoryOperation",
       description:
-        "这个工具用于获取或修改对于用户的记忆数据, 包括用户形象, 用户偏好, 历史对话等. 你可以使用这个工具来存储一些需要长期记忆的信息, 例如用户的兴趣爱好, 重要事件等, 在不认识对方时可以尝试一下获取. 当你想要获取或修改这些信息时, 可以调用这个工具并提供具体的操作指令和数据. 例如, 在聊天过程中他对你的态度,以及他喜欢的东西等,可以通过这个工具及时记录下来, 也可以通过这个工具获取之前的对话记录,便于继续之前的话题",
+        "用于主动读写用户的长期记忆，以及检索历史聊天归档。聊天中只要用户透露了以后可能有用的稳定信息，就应当主动调用，而不必等用户说“记住”：例如用户的兴趣偏好、身份与习惯、重要经历、正在做的事情、与他人的关系，或用户对某人的稳定看法。记录第三方评价时要写成“用户认为某人……”这类主观表述，不要把评价当成客观事实。user 类型的 set 会覆盖原内容，因此更新前必须先 get 现有 user 记忆，再保留旧信息、合并本轮新增或修正的信息后 set。不要记录密码、令牌等秘密，也不要记录一次性请求、短暂情绪或未经用户表达的推测。需要延续旧话题时，可获取或搜索 chatHistory。",
       parameters: {
         type: "object",
         properties: {
@@ -905,9 +888,10 @@ export const tools: ChatCompletionTool[] = [
           data: {
             type: "string",
             description:
-              "要获取或修改的数据内容, 例如当operation为'set'时,dataType为'user'时, data应该是要存储的数据内容, 例如用户喜欢的颜色是蓝色, 则data可以是'favoriteColor:blue', 当operation为'get'时,dataType为'user'时,data可以留空; 当operation为'get'且dataType为'chatHistory'时,data留空会返回摘要列表, 传入'guid:id'获取该归档详情, 传入'search:关键词'可搜索相关历史归档",
+              "要获取或修改的数据内容。当 operation=set、dataType=user 时，data 必须是合并旧记忆后的完整长期记忆，而不是只传本轮新增内容；例如“用户喜欢蓝色；用户认为张三为人可靠”。当 operation=get、dataType=user 时可留空；当 operation=get、dataType=chatHistory 时，留空返回摘要列表，传入 guid:id 获取归档详情，传入 search:关键词 搜索相关历史归档。",
           },
         },
+        required: ["userID", "operation", "dataType"],
       },
     },
   },
@@ -1187,16 +1171,6 @@ const listAgentWorkspaces = (includeKnowledge = true, maxResults = 50) => {
     })
     .sort((a, b) => a.guid.localeCompare(b.guid))
     .slice(0, limit);
-};
-
-const commandTargetsAgentWorkspace = (command: string) => {
-  const normalized = command.replace(/["']/g, "").toLowerCase();
-  return (
-    normalized.includes("public/") ||
-    normalized.includes("public\\") ||
-    normalized.includes("knowledge/") ||
-    normalized.includes("knowledge\\")
-  );
 };
 
 const sanitizeRepositoryName = (repoUrl: string) => {
@@ -2559,110 +2533,42 @@ const performServerCommandReview = async ({
   };
 };
 
-/**
- * 确保 Docker 容器已创建并运行
- */
-async function ensureContainerRunning(
-  config: Record<string, any>,
-): Promise<void> {
-  const {
-    containerName,
-    image,
-    memory,
-    cpus,
-    pidsLimit,
-    networkMode,
-    workspacePath,
-  } = config;
-  if (!containerName) return;
-
-  return new Promise((resolve, reject) => {
-    const check = spawn("docker", [
-      "inspect",
-      "-f",
-      "{{.State.Running}}",
-      containerName,
-    ]);
-    let stdout = "";
-    check.stdout.on("data", (d: Buffer) => (stdout += d.toString()));
-    check.on("error", (error: NodeJS.ErrnoException) => {
-      reject(
-        new Error(
-          error.code === "ENOENT"
-            ? "Docker 不可用：未找到 docker 命令"
-            : `Docker 检查失败：${error.message}`,
-        ),
-      );
-    });
-    check.on("close", (code: number) => {
-      if (code === 0 && stdout.trim() === "true") {
-        resolve();
-        return;
-      }
-
-      if (code === 0 && stdout.trim() === "false") {
-        const start = spawn("docker", ["start", containerName]);
-        start.on("error", (error: NodeJS.ErrnoException) => {
-          reject(new Error(`Docker 启动容器失败：${error.message}`));
-        });
-        start.on("close", (startCode: number) => {
-          if (startCode === 0) {
-            resolve();
-          } else {
-            reject(new Error(`Docker 启动容器失败，退出码: ${startCode}`));
-          }
-        });
-        return;
-      }
-
-      const args = [
-        "run",
-        "-d",
-        "--name",
-        containerName,
-        "--memory",
-        memory || "256m",
-        "--cpus",
-        cpus || "0.5",
-        "--pids-limit",
-        String(pidsLimit || 64),
-        "--network",
-        networkMode || "none",
-      ];
-
-      if (workspacePath && fs.existsSync(workspacePath)) {
-        args.push("-v", `${workspacePath}:/workspace`, "-w", "/workspace");
-      }
-
-      args.push(image || "ubuntu:latest", "sleep", "infinity");
-
-      const create = spawn("docker", args);
-      let createStderr = "";
-      create.stderr.on("data", (d: Buffer) => (createStderr += d.toString()));
-      create.on("error", (error: NodeJS.ErrnoException) => {
-        reject(new Error(`Docker 创建容器失败：${error.message}`));
-      });
-      create.on("close", (code: number) => {
-        if (code !== 0) {
-          reject(
-            new Error(
-              `Docker 创建容器失败: ${containerName}${createStderr ? `\n${createStderr}` : ""}`,
-            ),
-          );
-          return;
-        }
-        resolve();
-      });
-    });
-  });
-}
-
 export const availableTools = {
   getAlemonjsConfig: async ({ key, value }) => {
     if (key == "ailist") {
       // 获取当前配置
       return await redisClient.getAIList();
     }
+  },
+
+  SubscribeNextUserMessage: async ({
+    guid,
+    userID,
+    platform,
+    isGroup,
+  }: {
+    guid: string;
+    userID: string;
+    platform?: string;
+    isGroup: boolean;
+  }) => {
+    if (!isGroup) {
+      return {
+        success: false,
+        error: "该工具仅用于群聊，私聊消息不需要订阅。",
+      };
+    }
+    if (!guid || !userID) {
+      return {
+        success: false,
+        error: "缺少当前群聊或用户信息，无法订阅下一条消息。",
+      };
+    }
+    await redisClient.subscribeNextUserMessage(guid, userID, platform);
+    return {
+      success: true,
+      message: "已订阅当前用户的下一条群消息，触发一次后自动失效。",
+    };
   },
 
   MemoryOperation: async ({ userID, operation, dataType, data }) => {
@@ -3257,118 +3163,6 @@ export const availableTools = {
     const ttsClient = new TTSClient();
     const models = await ttsClient.getModels("v4");
     return models;
-  },
-
-  /**
-   * 运行cmd命令
-   * @param userId 用户ID
-   * @param groupId 群聊ID，私聊时为"private"
-   * @param command 命令字符串
-   * @returns 命令执行结果
-   */
-  exec: async ({
-    userId,
-    groupId,
-    command,
-  }: {
-    userId: string;
-    groupId: string;
-    command: string;
-  }) => {
-    const workspace = getWorkspace(userId);
-
-    if (commandTargetsAgentWorkspace(command || "")) {
-      return [
-        "exec 当前工作目录不是 public/{guid}/，不能可靠查找 AI agent 工作区里的项目。",
-        `exec 当前默认工作目录: ${workspace}`,
-        "如果要查找之前克隆到 public/{guid}/knowledge/ 的仓库，请改用 AgentListWorkspaces 先找 guid，再用 AgentListFiles 或 AgentSearchFiles。",
-      ].join("\n");
-    }
-
-    // 使用新的环境管理获取执行环境
-    const envInfo = await getExecCommandEnv(groupId || "private", userId);
-
-    // 远程节点环境：通过 SSH 执行
-    if (envInfo.type === "remote" && envInfo.nodeName) {
-      try {
-        const result = await remoteNodeManager.execute(
-          envInfo.nodeName,
-          command,
-        );
-        return result || "命令执行完成，无输出";
-      } catch (err: any) {
-        return `远程执行失败: ${err.message}`;
-      }
-    }
-
-    // Singularity 容器环境：通过远程节点的 Singularity 执行
-    if (envInfo.type === "singularity" && envInfo.nodeName) {
-      try {
-        const node = remoteNodeManager.getNode(envInfo.nodeName);
-        if (!node) {
-          return `未找到远程节点: ${envInfo.nodeName}`;
-        }
-        const image = envInfo.singularityImage || node.defaultImage;
-        if (!image) {
-          return "未指定 Singularity 镜像，请在切换环境时指定或配置 defaultImage";
-        }
-        // 构建 singularity exec 命令
-        const singularityCmd = `singularity exec ${image} sh -c '${command.replace(/'/g, "'\''")}'`;
-        const result = await remoteNodeManager.execute(
-          envInfo.nodeName,
-          singularityCmd,
-        );
-        return result || "命令执行完成，无输出";
-      } catch (err: any) {
-        return `Singularity 执行失败: ${err.message}`;
-      }
-    }
-
-    // 系统环境：直接在宿主机执行
-    if (envInfo.type === "system") {
-      return new Promise((resolve) => {
-        let output = "";
-        const child = spawn("sh", ["-c", command], { cwd: workspace });
-        child.stdout.on("data", (d: Buffer) => (output += d.toString()));
-        child.stderr.on("data", (d: Buffer) => (output += d.toString()));
-        child.on("error", (error: NodeJS.ErrnoException) => {
-          resolve(`系统执行失败: ${error.message}`);
-        });
-        child.on("close", () => resolve(output));
-      });
-    }
-
-    // 容器环境（group/user）：确保容器存在并启动，然后 docker exec
-    const envConfig = await redisClient.getExecEnv(
-      groupId || "private",
-      userId,
-    );
-    const containerName = envConfig?.containerName;
-    if (!containerName) {
-      return "错误：未找到执行环境配置，请先切换执行环境";
-    }
-
-    try {
-      await ensureContainerRunning(envConfig);
-    } catch (err: any) {
-      return `容器执行环境不可用: ${err.message}`;
-    }
-
-    return new Promise((resolve) => {
-      let output = "";
-      const args = ["exec"];
-      if (envConfig.workspacePath) {
-        args.push("-w", "/workspace");
-      }
-      args.push(containerName, "sh", "-c", command);
-      const child = spawn("docker", args);
-      child.stdout.on("data", (d: Buffer) => (output += d.toString()));
-      child.stderr.on("data", (d: Buffer) => (output += d.toString()));
-      child.on("error", (error: NodeJS.ErrnoException) => {
-        resolve(`Docker 执行失败: ${error.message}`);
-      });
-      child.on("close", () => resolve(output));
-    });
   },
 
   AgentListWorkspaces: async ({

@@ -1,7 +1,5 @@
 import redisClient from "@src/config";
 import { CApiReply } from "@src/response/zreply/capi";
-import { RApiReply } from "@src/response/zreply/rapi";
-import type { MessageIR } from "@src/response/zreply/tools";
 
 export const PANEL_BOT_ID = "aichatbot";
 export const PANEL_DEFAULT_USER_ID = "webuser";
@@ -367,33 +365,6 @@ const createPanelOutput = (
         });
       }
     },
-    sendRapiItems: async (items: MessageIR[]) => {
-      for (const item of items) {
-        if (item.type === "text") {
-          await pushOutputMessage({
-            from: "bot",
-            name: PANEL_BOT_ID,
-            text: item.content,
-          });
-        } else if (item.type === "image") {
-          const images = filterNewImages([item.url]);
-          if (!images.length) continue;
-
-          await pushOutputMessage({
-            from: "bot",
-            name: PANEL_BOT_ID,
-            text: "",
-            images,
-          });
-        } else if (item.type === "audio") {
-          await pushOutputMessage({
-            from: "bot",
-            name: PANEL_BOT_ID,
-            text: `[语音] ${item.text}`,
-          });
-        }
-      }
-    },
     sendToolResult: async (functionName: string, payload: any) => {
       if (!shouldCollectToolImages(functionName, payload)) return;
       const label =
@@ -516,11 +487,7 @@ export const sendPanelChatMessage = async (
   const output = createPanelOutput(collected);
 
   try {
-    if (aiConfig.rapi) {
-      await RApiReply(event, output);
-    } else {
-      await CApiReply(event, output);
-    }
+    await CApiReply(event, output);
   } catch (error) {
     pushPanelMessage(collected, {
       from: "system",
@@ -633,11 +600,7 @@ export const sendPanelChatMessageStream = async (
   });
 
   try {
-    if (aiConfig.rapi) {
-      await RApiReply(event, output);
-    } else {
-      await CApiReply(event, output);
-    }
+    await CApiReply(event, output);
   } catch (error) {
     await pushSystemMessage(
       `AI回复出错了\n${error instanceof Error ? error.message : String(error)}`,

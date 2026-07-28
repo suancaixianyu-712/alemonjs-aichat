@@ -7,7 +7,7 @@ import {
 } from "@src/panel/groupConfig";
 
 type PanelPage = "config" | "chat";
-type AIConfigDraft = Pick<AIConfig, "host" | "key" | "model" | "rapi"> & {
+type AIConfigDraft = Pick<AIConfig, "host" | "key" | "model"> & {
   name: string;
 };
 
@@ -34,7 +34,6 @@ type PanelPreviewProps = {
   chatUserId?: string;
   chatNickname?: string;
   chatBotId?: string;
-  chatMode?: "capi" | "rapi";
   chatModel?: string;
   groupGuidOptions?: string[];
   workspaceNames?: string[];
@@ -91,8 +90,7 @@ ai:config:{guid} = 当前会话实际使用的 AIConfig
   "model": "${item.model}",
   "temperature": 0.7,
   "max_tokens": 4096,
-  "systemPrompt": "",
-  "rapi": ${item.rapi}
+  "systemPrompt": ""
 }`,
         )
         .join("\n\n")
@@ -131,7 +129,6 @@ const ChatConfigPanel = ({
   chatGuid,
   chatUserId,
   chatNickname,
-  chatMode,
   chatModel,
   groupGuidOptions,
   workspaceNames,
@@ -148,7 +145,6 @@ const ChatConfigPanel = ({
   chatGuid: string;
   chatUserId: string;
   chatNickname: string;
-  chatMode: "capi" | "rapi";
   chatModel: string;
   groupGuidOptions: string[];
   workspaceNames: string[];
@@ -173,9 +169,7 @@ const ChatConfigPanel = ({
         </span>
         <span className="chat-config-summary-main">
           <span className="chat-config-summary-title">聊天配置</span>
-          <span className="chat-config-summary-desc">
-            {currentAILabel} / {chatMode.toUpperCase()}
-          </span>
+          <span className="chat-config-summary-desc">{currentAILabel}</span>
         </span>
         <span className="chat-config-summary-toggle" aria-hidden="true">
           收起
@@ -1387,16 +1381,6 @@ const AppStyle = () => (
       white-space: nowrap;
     }
 
-    .chat-mode-dot {
-      flex: 0 0 auto;
-      border-radius: 999px;
-      padding: 3px 7px;
-      color: #10a37f;
-      background: #e7f8f2;
-      font-size: 12px;
-      font-weight: 850;
-    }
-
     .clear-chat-form {
       margin: 0;
     }
@@ -2213,16 +2197,6 @@ const ConfigPage = ({
                               defaultValue={item.model}
                             />
                           </div>
-                          <div className="field">
-                            <label htmlFor={`ai-rapi-${item.name}`}>RAPI</label>
-                            <select
-                              id={`ai-rapi-${item.name}`}
-                              defaultValue={item.rapi ? "1" : "0"}
-                            >
-                              <option value="0">关闭</option>
-                              <option value="1">开启</option>
-                            </select>
-                          </div>
                         </div>
                       </div>
                     </details>
@@ -2266,7 +2240,6 @@ const ChatPage = ({
   chatGuid = "global",
   chatUserId = "webuser",
   chatNickname = chatUserId,
-  chatMode = "capi",
   chatModel = "",
   groupGuidOptions = [],
   workspaceNames = [],
@@ -2283,7 +2256,6 @@ const ChatPage = ({
   chatGuid?: string;
   chatUserId?: string;
   chatNickname?: string;
-  chatMode?: "capi" | "rapi";
   chatModel?: string;
   groupGuidOptions?: string[];
   workspaceNames?: string[];
@@ -2319,7 +2291,6 @@ const ChatPage = ({
           chatGuid={chatGuid}
           chatUserId={chatUserId}
           chatNickname={chatNickname}
-          chatMode={chatMode}
           chatModel={chatModel}
           groupGuidOptions={groupGuidOptions}
           workspaceNames={workspaceNames}
@@ -2340,7 +2311,6 @@ const ChatPage = ({
               chatGuid={chatGuid}
               chatUserId={chatUserId}
               chatNickname={chatNickname}
-              chatMode={chatMode}
               chatModel={chatModel}
               groupGuidOptions={groupGuidOptions}
               workspaceNames={workspaceNames}
@@ -2354,7 +2324,6 @@ const ChatPage = ({
             />
             <div className="chat-model-pill">
               <span>{modelLabel}</span>
-              <span className="chat-mode-dot">{chatMode.toUpperCase()}</span>
             </div>
             <div className="chat-top-actions">
               <a className="chat-icon-button" href={chatHref} aria-label="刷新">
@@ -2879,7 +2848,6 @@ export default function PanelPreview({
   chatGuid = currentGuid,
   chatUserId = "webuser",
   chatNickname = chatUserId,
-  chatMode = "capi",
   chatModel = "",
   groupGuidOptions = [],
   workspaceNames = [],
@@ -2916,7 +2884,6 @@ export default function PanelPreview({
               chatGuid={chatGuid}
               chatUserId={chatUserId}
               chatNickname={chatNickname}
-              chatMode={chatMode}
               chatModel={chatModel}
               groupGuidOptions={groupGuidOptions}
               workspaceNames={workspaceNames}

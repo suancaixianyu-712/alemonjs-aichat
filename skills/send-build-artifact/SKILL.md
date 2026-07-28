@@ -26,7 +26,7 @@ description: 将 public/{guid}/ 内生成的构建产物、图片、音视频或
 ## Rules
 
 - `filePath` 必须是相对 `public/{guid}/` 的路径，不要传绝对路径或 `../`。
-- 只能调用 `AgentListFiles` 和 `AgentUploadFileToR2` 查找并上传文件；不要调用 `exec`、终端命令、Docker、容器或远程节点。
+- 只能调用 `AgentListFiles` 和 `AgentUploadFileToR2` 查找并上传文件；不要调用终端命令、Docker、容器或远程节点。
 - 发送图片时优先使用返回的 `<img=链接>` 格式。
 - 发送普通文件时直接发送返回的链接文本。
 - 如果上传失败，先检查文件是否存在、路径是否写对、是否在 `public/{guid}/` 内。

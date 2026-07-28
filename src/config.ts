@@ -1,8 +1,6 @@
 import Redis from "ioredis";
 import { getConfigValue } from "alemonjs";
 import { AIConfig } from "./types";
-import fs from "fs";
-import path from "path";
 import { redis } from "./redis";
 
 type ArchivedChatRecord = {
@@ -29,6 +27,7 @@ type ArchivedChatSearchResult = {
 
 const TOOL_LOOP_TTL_SECONDS = 600;
 const TOOL_LOOP_STALE_MS = TOOL_LOOP_TTL_SECONDS * 1000;
+export const NEXT_USER_MESSAGE_SUBSCRIPTION_TTL_SECONDS = 600;
 export const DEFAULT_CAPI_CONTEXT_LIMIT = 512000;
 const ARCHIVED_CHAT_SUMMARY_MAX_LENGTH = 240;
 const ARCHIVED_CHAT_DETAIL_MAX_LENGTH = 4000;
@@ -45,7 +44,7 @@ type AIToolLoopState = {
 };
 
 export type AIContextStatsInput = {
-  mode: "capi" | "rapi";
+  mode: "capi";
   model: string;
   contextMessageCount: number;
   contextCharLength: number;
@@ -536,7 +535,6 @@ class db {
     temperature: 0.7,
     max_tokens: 150,
     systemPrompt: "",
-    rapi: false,
   };
 
   constructor(redisInstance?: Redis) {
@@ -847,18 +845,6 @@ class db {
     return (await this.redis.get(`ai:currentAI:${guid}`)) || "";
   }
 
-  /** 切换AI的RAPI模式 */
-  async switchModelRAPI(aiName: string, enable: boolean): Promise<void> {
-    const aiConfigStr = await this.redis.get(`ai:list:${aiName}`);
-    if (!aiConfigStr) {
-      console.log("切换失败, 无此AI");
-      return;
-    }
-    const aiConfig = JSON.parse(aiConfigStr) as AIConfig;
-    aiConfig.rapi = enable;
-    await this.setAIList(aiName, aiConfig);
-  }
-
   /** 获取提示词列表 */
   async getPromptList(): Promise<string[]> {
     const keys = await this.redis.keys("ai:prompt:*");
@@ -1062,6 +1048,7 @@ class db {
       const transientPrefixes = [
         "ai:tool_loop_processing:",
         "ai:guidance:",
+        "ai:next_user_message:",
         "ai:session:",
       ];
       for (const prefix of transientPrefixes) {
@@ -1078,6 +1065,7 @@ class db {
       `ai:tool_loop_processing:${guid}:*`,
       `ai:guidance:${guid}`,
       `ai:guidance:${guid}:*`,
+      `ai:next_user_message:${guid}:*`,
       `ai:session:${guid}`,
     ];
     const keys = (
@@ -1088,6 +1076,49 @@ class db {
       await this.redis.del(...keys);
     }
     return;
+  }
+
+  private getNextUserMessageSubscriptionKey(
+    guid: string,
+    userID: string,
+    platform?: string,
+  ) {
+    return `ai:next_user_message:${guid}:${platform || "default"}:${userID}`;
+  }
+
+  /** 订阅指定群聊用户的下一条非命令消息 */
+  async subscribeNextUserMessage(
+    guid: string,
+    userID: string,
+    platform?: string,
+  ): Promise<void> {
+    await this.redis.set(
+      this.getNextUserMessageSubscriptionKey(guid, userID, platform),
+      "1",
+      "EX",
+      NEXT_USER_MESSAGE_SUBSCRIPTION_TTL_SECONDS,
+    );
+  }
+
+  /** 原子消费一次订阅，确保同一条订阅最多触发一条消息 */
+  async consumeNextUserMessageSubscription(
+    guid: string,
+    userID: string,
+    platform?: string,
+  ): Promise<boolean> {
+    const result = await this.redis.eval(
+      `
+      local value = redis.call("GET", KEYS[1])
+      if value then
+        redis.call("DEL", KEYS[1])
+        return 1
+      end
+      return 0
+      `,
+      1,
+      this.getNextUserMessageSubscriptionKey(guid, userID, platform),
+    );
+    return Number(result) === 1;
   }
 
   private getToolLoopStateKey(guid: string, platform?: string) {
@@ -1671,168 +1702,6 @@ class db {
     await this.redis.del(`ai:regex_rules:${guid}`);
   }
 
-  /** --------------------------------------------------------- */
-  /** 容器管理 */
-
-  /** 获取群容器配置 */
-  async getGroupContainer(groupId: string): Promise<Record<string, any> | null> {
-    const str = await this.redis.get(`ai:container:group:${groupId}`);
-    return str ? JSON.parse(str) : null;
-  }
-
-  /** 设置群容器配置 */
-  async setGroupContainer(groupId: string, config: Record<string, any>): Promise<void> {
-    await this.redis.set(`ai:container:group:${groupId}`, JSON.stringify(config));
-  }
-
-  /** 获取用户容器配置 */
-  async getUserContainer(userId: string): Promise<Record<string, any> | null> {
-    const str = await this.redis.get(`ai:container:user:${userId}`);
-    return str ? JSON.parse(str) : null;
-  }
-
-  /** 设置用户容器配置 */
-  async setUserContainer(userId: string, config: Record<string, any>): Promise<void> {
-    await this.redis.set(`ai:container:user:${userId}`, JSON.stringify(config));
-  }
-
-  /** 获取用户当前 exec 环境配置（按群隔离） */
-  async getExecEnv(groupId: string, userId: string): Promise<Record<string, any> | null> {
-    const key = groupId === "private"
-      ? `ai:container:env:private:${userId}`
-      : `ai:container:env:${groupId}:${userId}`;
-    const str = await this.redis.get(key);
-    return str ? JSON.parse(str) : null;
-  }
-
-  /** 设置用户当前 exec 环境配置（按群隔离） */
-  async setExecEnv(groupId: string, userId: string, config: Record<string, any>): Promise<void> {
-    const key = groupId === "private"
-      ? `ai:container:env:private:${userId}`
-      : `ai:container:env:${groupId}:${userId}`;
-    await this.redis.set(key, JSON.stringify(config));
-  }
-
-  /** 创建群容器（首次触发时自动创建） */
-  async ensureGroupContainer(groupId: string): Promise<Record<string, any>> {
-    const existing = await this.getGroupContainer(groupId);
-    if (existing) return existing;
-
-    const configValue = getConfigValue();
-    const containerConf = configValue.aiChat?.groupContainer || {};
-    const image = containerConf.image || "ubuntu:latest";
-    const containerName = `aichat_grp_${groupId}`;
-    const workspacePath = path.resolve(process.cwd(), `public/sandbox/workspaces/groups/${groupId}`);
-    if (!fs.existsSync(workspacePath)) {
-      fs.mkdirSync(workspacePath, { recursive: true });
-    }
-
-    const config = {
-      containerName,
-      image,
-      memory: containerConf.memory || "256m",
-      cpus: containerConf.cpus || "0.5",
-      pidsLimit: containerConf.pidsLimit || 64,
-      networkMode: containerConf.networkMode || "none",
-      workspacePath,
-    };
-    await this.setGroupContainer(groupId, config);
-    return config;
-  }
-
-  /** 创建用户容器（手动切换或私聊首次触发时创建） */
-  async ensureUserContainer(userId: string): Promise<Record<string, any>> {
-    const existing = await this.getUserContainer(userId);
-    if (existing) return existing;
-
-    const configValue = getConfigValue();
-    const containerConf = configValue.aiChat?.userContainer || {};
-    const image = containerConf.image || "ubuntu:latest";
-    const containerName = `aichat_usr_${userId}`;
-    const workspacePath = path.resolve(process.cwd(), `public/sandbox/workspaces/${userId}`);
-    if (!fs.existsSync(workspacePath)) {
-      fs.mkdirSync(workspacePath, { recursive: true });
-    }
-
-    const config = {
-      containerName,
-      image,
-      memory: containerConf.memory || "128m",
-      cpus: containerConf.cpus || "0.25",
-      pidsLimit: containerConf.pidsLimit || 32,
-      networkMode: containerConf.networkMode || "none",
-      workspacePath,
-    };
-    await this.setUserContainer(userId, config);
-    return config;
-  }
-
-  /** 初始化用户 exec 环境（群聊默认群容器，私聊默认用户容器） */
-  async initExecEnv(groupId: string, userId: string): Promise<Record<string, any>> {
-    const existing = await this.getExecEnv(groupId, userId);
-    if (existing) return existing;
-
-    if (groupId === "private") {
-      const userConfig = await this.ensureUserContainer(userId);
-      await this.setExecEnv("private", userId, { ...userConfig, type: "user" });
-      return userConfig;
-    } else {
-      const groupConfig = await this.ensureGroupContainer(groupId);
-      await this.setExecEnv(groupId, userId, { ...groupConfig, type: "group" });
-      return groupConfig;
-    }
-  }
-
-  /** 切换到群容器 */
-  async switchToGroupContainer(groupId: string, userId: string): Promise<Record<string, any>> {
-    const groupConfig = await this.ensureGroupContainer(groupId);
-    await this.setExecEnv(groupId, userId, { ...groupConfig, type: "group" });
-    return groupConfig;
-  }
-
-  /** 切换到用户容器 */
-  async switchToUserContainer(groupId: string, userId: string): Promise<Record<string, any>> {
-    const userConfig = await this.ensureUserContainer(userId);
-    await this.setExecEnv(groupId, userId, { ...userConfig, type: "user" });
-    return userConfig;
-  }
-
-  /** 切换到系统环境 */
-  async switchToSystemEnv(groupId: string, userId: string): Promise<void> {
-    await this.setExecEnv(groupId, userId, { type: "system" });
-  }
-
-  /** 切换到远程节点环境 */
-  async switchToRemoteEnv(groupId: string, userId: string, nodeName: string): Promise<void> {
-    await this.setExecEnv(groupId, userId, { type: "remote", nodeName });
-  }
-
-  /** 切换到 Singularity 环境 */
-  async switchToSingularityEnv(groupId: string, userId: string, nodeName: string, image?: string): Promise<void> {
-    await this.setExecEnv(groupId, userId, { type: "singularity", nodeName, singularityImage: image });
-  }
-
-  /** 判断是否为超级管理员 */
-  isSuperAdmin(userId: string): boolean {
-    const configValue = getConfigValue();
-    const superAdmins = configValue.aiChat?.superAdmin || [];
-    return superAdmins.includes(userId);
-  }
-
-  /** 获取所有容器配置 key */
-  async getAllContainerKeys(): Promise<string[]> {
-    const groupKeys = await this.redis.keys("ai:container:group:*");
-    const userKeys = await this.redis.keys("ai:container:user:*");
-    return [...groupKeys, ...userKeys];
-  }
-
-  /** 删除指定容器配置 */
-  async deleteContainer(key: string): Promise<void> {
-    await this.redis.del(key);
-  }
-
-  /** --------------------------------------------------------- */
-
   /** 禁用工具 */
   async disableTool(guid: string, toolName: string): Promise<void> {
     await this.redis.set(`ai:tool:disable:${guid}:${toolName}`, "1");
@@ -1893,7 +1762,7 @@ class db {
       tool.type === "function" ? tool.function.name : "",
     );
     // 默认禁用的危险工具
-    const defaultDisabledTools = ["exec", "EvalCode"];
+    const defaultDisabledTools = ["EvalCode"];
     // 给工具添加默认状态
     const toolsWithStatus = allTools.map((tool) => ({
       name: tool,

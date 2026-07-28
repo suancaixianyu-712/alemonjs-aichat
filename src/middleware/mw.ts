@@ -14,7 +14,7 @@ const prependGuidancePrefix = (message: any) => ({
   guidance: true,
   content: Array.isArray(message?.content)
     ? message.content.map((item: any) => {
-        if (item?.type === "text" || item?.type === "input_text") {
+        if (item?.type === "text") {
           return {
             ...item,
             text:
@@ -30,16 +30,12 @@ const prependGuidancePrefix = (message: any) => ({
 const buildGuidanceMessage = async (event: any) => {
   const cfg = await getChatConfig(event);
   const capiMessage = prependGuidancePrefix(
-    await buildUserMessage(event, cfg, "capi"),
-  );
-  const rapiMessage = prependGuidancePrefix(
-    await buildUserMessage(event, cfg, "rapi"),
+    await buildUserMessage(event, cfg),
   );
 
   return {
     guidance: true,
     capiMessage,
-    rapiMessage,
     createdAt: Date.now(),
     previewText: event.msg || "",
   };
@@ -55,6 +51,11 @@ const canPassReplyTriggerGate = async (event: any) => {
     return false;
   }
 
+  // 同一事件可能先后经过工具引导与普通回复判断，命中后保留事件标记，避免重复消费
+  if (event["nextUserMessageSubscriptionTriggered"]) {
+    return true;
+  }
+
   const aiConfig = await redisClient.getAIConfig(event.guid);
   if (
     !aiConfig ||
@@ -63,6 +64,19 @@ const canPassReplyTriggerGate = async (event: any) => {
     aiConfig.model.trim() === ""
   ) {
     return false;
+  }
+
+  if (event.name !== "private.message.create") {
+    const subscriptionTriggered =
+      await redisClient.consumeNextUserMessageSubscription(
+        event.guid,
+        String(event.UserId || ""),
+        event.Platform,
+      );
+    if (subscriptionTriggered) {
+      event["nextUserMessageSubscriptionTriggered"] = true;
+      return true;
+    }
   }
 
   const atTriggerSwitch = await redisClient.getAtTriggerSwitch(
@@ -98,13 +112,6 @@ export default onMiddleware(selects, async (event, next) => {
   event["uidkey"] = `${event["guid"]}:${event.UserName}(${event.UserId})`; // 唯一标识
   event["nickname"] =
     `${event.name === "private.message.create" ? "[私信]" : ""}${event.UserName}(${event.UserId})`; // 昵称(用户名+QQ号)
-
-  // 初始化 exec 环境（群容器为默认）
-  if (event.name === "private.message.create") {
-    await redisClient.initExecEnv("private", event.UserId);
-  } else {
-    await redisClient.initExecEnv(event.guid, event.UserId);
-  }
 
   // 终端
   if (event.Platform == "testone") {
