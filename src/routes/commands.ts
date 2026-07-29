@@ -111,6 +111,67 @@ export const children = [
   // },
 ];
 
+/**
+ * 使用当前消息事件直接执行一条本插件框架指令。
+ *
+ * 旧式 defineRouter 会在进入中间件前完成子路由匹配，因此中间件结束后再改
+ * MessageText 并调用 next() 不会重新匹配命令。AI 工具需要显式找到同一份路由
+ * 定义并调用对应处理器，才能真正执行指令，同时保留原用户、会话和权限字段。
+ */
+export const executeAlemonCommand = async (event: any, command: string) => {
+  const normalizedCommand = String(command || "").trim();
+  if (!normalizedCommand) {
+    return { matched: false, command: normalizedCommand };
+  }
+
+  for (const route of children) {
+    if (!route.regular || !route.handler) continue;
+    route.regular.lastIndex = 0;
+    if (!route.regular.test(normalizedCommand)) continue;
+
+    const commandEvent = {
+      ...event,
+      MessageText: normalizedCommand,
+      msg: normalizedCommand,
+      raw_message: normalizedCommand,
+      Xianyu: false,
+    };
+    delete commandEvent.__route;
+
+    const loadedHandler: any = await route.handler();
+    const selectedEvents = Array.isArray(loadedHandler?.select)
+      ? loadedHandler.select
+      : [loadedHandler?.select].filter(Boolean);
+    if (
+      selectedEvents.length > 0 &&
+      !selectedEvents.includes(commandEvent.name)
+    ) {
+      continue;
+    }
+
+    const executables =
+      typeof loadedHandler === "function"
+        ? [loadedHandler]
+        : Array.isArray(loadedHandler?.current)
+          ? loadedHandler.current
+          : [loadedHandler?.current].filter(
+              (current): current is (...args: any[]) => any =>
+                typeof current === "function",
+            );
+    if (executables.length === 0) {
+      throw new Error(`指令处理器不可执行: ${normalizedCommand}`);
+    }
+
+    for (const executable of executables) {
+      const result = await executable(commandEvent, () => undefined);
+      if (result !== true) break;
+    }
+    return { matched: true, command: normalizedCommand };
+  }
+
+  return { matched: false, command: normalizedCommand };
+};
+
 // 路由优先级：exact -> prefix -> regular
 export default defineRouter([
   {

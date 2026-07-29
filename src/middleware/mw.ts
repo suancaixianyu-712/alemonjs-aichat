@@ -6,6 +6,7 @@ import {
   buildUserMessage,
   getChatConfig,
 } from "@src/response/zreply/getChatConfig";
+import { executeAlemonCommand } from "@src/routes/commands";
 
 const selects = onSelects(["message.create", "private.message.create"]);
 
@@ -489,8 +490,23 @@ export default onMiddleware(selects, async (event, next) => {
         event["Xianyu"] = ReplyRes.next; // 根据AI回复决定是否继续执行后续的处理函数
 
         if (ReplyRes.commands && ReplyRes.commands.length > 0) {
-          event.MessageText = ReplyRes.commands[0];
-          event["msg"] = ReplyRes.commands[0];
+          const commandResult = await executeAlemonCommand(
+            event,
+            ReplyRes.commands[0],
+          );
+          console.log("AI框架指令执行结果", commandResult);
+          event["Xianyu"] = false;
+
+          if (!commandResult.matched) {
+            const [message] = useMessage(event);
+            await message.send(
+              format(
+                Text(
+                  `未找到可执行的框架指令：${commandResult.command || "空指令"}`,
+                ),
+              ),
+            );
+          }
         }
       }
     }
