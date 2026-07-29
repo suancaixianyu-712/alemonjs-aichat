@@ -6,6 +6,11 @@ export interface EventMessageCreate extends PublicEventMessageCreate {
 
 export interface AIChatConfig {
   searchApiKey: string;
+  localBrowser?: {
+    channel?: "chrome" | "msedge";
+    executablePath?: string;
+    headless?: boolean;
+  };
   xaiImgProxy?: string;
   ttsServer: {
     host: string;

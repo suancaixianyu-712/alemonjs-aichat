@@ -10,7 +10,11 @@ import {
 import { log } from "console";
 import OpenAi from "openai";
 import { TTSClient } from "@src/api/tts";
-import { availableTools } from "@src/api/aitools";
+import {
+  availableTools,
+  removePublicIpFromOutput,
+  removePublicIpFromToolArguments,
+} from "@src/api/aitools";
 import redisClient, { DEFAULT_CAPI_CONTEXT_LIMIT } from "@src/config";
 import {
   bindDescribeImageUrl,
@@ -34,7 +38,8 @@ const sendAIReply = async (
   e: Events["message.create"] | Events["private.message.create"],
   message: any,
 ) => {
-  const aireply = await parseAIReply(reply, cfg, e, message);
+  const safeReply = removePublicIpFromOutput(reply, e.IsMaster === true);
+  const aireply = await parseAIReply(safeReply, cfg, e, message);
   console.log("aireply", aireply);
 
   if (await sendAIReplyToOutput(message, aireply)) {
@@ -69,12 +74,17 @@ const sendAIReply = async (
   return aireply;
 };
 
-const sendOutputText = async (message: any, text: string) => {
+const sendOutputText = async (
+  message: any,
+  text: string,
+  isMaster?: boolean,
+) => {
+  const safeText = removePublicIpFromOutput(text, isMaster === true);
   if (typeof message?.sendText === "function") {
-    return await message.sendText(text);
+    return await message.sendText(safeText);
   }
 
-  return await message.send(format(Text(text)));
+  return await message.send(format(Text(safeText)));
 };
 
 const appendPendingGuidanceMessages = async (
@@ -608,6 +618,7 @@ export const CApiReply = async (
           await sendOutputText(
             message,
             `AI正在连续调用工具，第 ${toolRound} 轮处理中，请稍等`,
+            e.IsMaster === true,
           );
         }
         messages.push(responseMessage);
@@ -618,7 +629,11 @@ export const CApiReply = async (
           const useToolsMessage = responseMessage.tool_calls.map((toolCall) => {
             return `工具调用: ${toolCall.function.name}(${cfg.toolConfig.toolPromptArgsSwitch === "1" ? toolCall.function.arguments : ""})`;
           });
-          const msgId = await sendOutputText(message, useToolsMessage.join("\n"));
+          const msgId = await sendOutputText(
+            message,
+            useToolsMessage.join("\n"),
+            e.IsMaster === true,
+          );
           if (cfg.toolConfig.toolPromptRevokeSwitch === "1") {
             // 10秒后撤回工具调用提示
             setTimeout(() => {
@@ -707,6 +722,11 @@ export const CApiReply = async (
                 if (functionArgs && typeof functionArgs === "object") {
                   functionArgs.isMaster = e.IsMaster === true;
                 }
+                removePublicIpFromToolArguments(
+                  functionName,
+                  functionArgs,
+                  e.IsMaster === true,
+                );
                 functionResult = await functionToCall(functionArgs);
               }
             } catch (err: any) {
@@ -781,6 +801,7 @@ export const CApiReply = async (
     // 如果没有工具调用，处理最终回复
     let reply =
       res.choices?.[0]?.message?.content?.trim() || `${cfg.botName}:[]`;
+    reply = removePublicIpFromOutput(reply, e.IsMaster === true);
     if (reply === `${cfg.botName}:[]`) {
       log("AI选择不回复");
       if (frameworkCommandQueue.length > 0) {
@@ -797,7 +818,10 @@ export const CApiReply = async (
     const aireply = await sendAIReply(reply, cfg, e, message);
     const assistantMessage = res.choices?.[0]?.message;
     if (assistantMessage) {
-      await redisClient.addAIChatHistory(e.guid, assistantMessage);
+      await redisClient.addAIChatHistory(e.guid, {
+        ...assistantMessage,
+        content: reply,
+      });
     }
 
     const commands = [
@@ -811,7 +835,11 @@ export const CApiReply = async (
   } catch (error) {
     await redisClient.setAIToolLoopProcessing(e.guid, false, e.Platform);
     console.error("AI回复出错", error);
-    await sendOutputText(message, "AI回复出错了\n" + error);
+    await sendOutputText(
+      message,
+      "AI回复出错了\n" + error,
+      e.IsMaster === true,
+    );
     return {
       next: true,
     };

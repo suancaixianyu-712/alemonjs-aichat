@@ -1,16 +1,35 @@
 // security.ts
 import dns from "dns/promises";
-
-const BLOCKED_IP_RANGES = [
-  /^127\./,
-  /^10\./,
-  /^192\.168\./,
-  /^172\.(1[6-9]|2\d|3[0-1])\./,
-  /^169\.254\./,
-];
+import { isIP } from "node:net";
 
 export function isPrivateIP(ip: string) {
-  return BLOCKED_IP_RANGES.some((r) => r.test(ip));
+  const normalized = ip.toLowerCase().split("%")[0];
+  if (isIP(normalized) === 6) {
+    if (normalized.startsWith("::ffff:")) {
+      return isPrivateIP(normalized.slice("::ffff:".length));
+    }
+    return (
+      normalized === "::" ||
+      normalized === "::1" ||
+      normalized.startsWith("fc") ||
+      normalized.startsWith("fd") ||
+      /^fe[89ab]/.test(normalized) ||
+      normalized.startsWith("ff")
+    );
+  }
+
+  if (isIP(normalized) !== 4) return true;
+  const [first, second] = normalized.split(".").map(Number);
+  return (
+    first === 0 ||
+    first === 10 ||
+    first === 127 ||
+    first >= 224 ||
+    (first === 100 && second >= 64 && second <= 127) ||
+    (first === 169 && second === 254) ||
+    (first === 172 && second >= 16 && second <= 31) ||
+    (first === 192 && second === 168)
+  );
 }
 
 export async function validateURL(url: string) {
@@ -19,6 +38,13 @@ export async function validateURL(url: string) {
 
     if (!["http:", "https:"].includes(u.protocol)) {
       throw new Error("Only http/https allowed");
+    }
+    if (
+      u.hostname === "localhost" ||
+      u.hostname.endsWith(".localhost") ||
+      u.hostname.endsWith(".local")
+    ) {
+      throw new Error("Access to local network is forbidden");
     }
 
     const ips = await dns.lookup(u.hostname, { all: true });

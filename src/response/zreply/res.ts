@@ -15,7 +15,12 @@ import OpenAi from "openai";
 import { getConfigValue } from "alemonjs";
 import { TTSClient } from "@src/api/tts";
 import { getGroupTimeString, getMessageTimeString } from "@src/api/format";
-import { availableTools, tools } from "@src/api/aitools";
+import {
+  availableTools,
+  removePublicIpFromOutput,
+  removePublicIpFromToolArguments,
+  tools,
+} from "@src/api/aitools";
 import { loadSkills } from "@src/api/loadSkill";
 import redisClient from "@src/config";
 import errorimg from "@src/assets/error.png";
@@ -453,7 +458,14 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
         return `工具调用: ${toolCall.function.name}(${toolCall.function.arguments})`;
       });
       const msgId = await message.send(
-        format(Text(useToolsMessage.join("\n"))),
+        format(
+          Text(
+            removePublicIpFromOutput(
+              useToolsMessage.join("\n"),
+              e.IsMaster === true,
+            ),
+          ),
+        ),
       );
       // 30秒后撤回消息
       setTimeout(() => {
@@ -498,6 +510,11 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
               if (functionArgs && typeof functionArgs === "object") {
                 functionArgs.isMaster = e.IsMaster === true;
               }
+              removePublicIpFromToolArguments(
+                functionName,
+                functionArgs,
+                e.IsMaster === true,
+              );
               functionResult = await functionToCall(functionArgs);
             }
           } catch (err: any) {
@@ -550,6 +567,7 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
 
     // 如果没有工具调用，处理最终回复
     let reply = res.choices?.[0]?.message?.content?.trim() || `${botName}:[]`;
+    reply = removePublicIpFromOutput(reply, e.IsMaster === true);
     if (reply === `${botName}:[]`) {
       log("AI选择不回复");
       return;
@@ -608,7 +626,10 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
       });
     }
     // 记录对话
-    await redisClient.addAIChatHistory(e.guid, res.choices?.[0].message);
+    await redisClient.addAIChatHistory(e.guid, {
+      ...res.choices?.[0].message,
+      content: reply,
+    });
 
     // 发送消息
     if (isOpenTTSReply === "1") {
