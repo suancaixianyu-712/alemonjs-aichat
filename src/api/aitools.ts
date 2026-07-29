@@ -14,6 +14,7 @@ import { spawn } from "child_process";
 import * as dns from "node:dns/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import { getMessageTimeString } from "./format";
 
 const value = getConfigValue().aiChat || {};
 
@@ -851,6 +852,25 @@ export const tools: ChatCompletionTool[] = [
   {
     type: "function",
     function: {
+      name: "ExecuteAlemonCommand",
+      description:
+        "执行一条 AlemonJS 框架指令。用户要求查看配置、切换 AI/模型、开关功能、管理提示词或执行 GetCommand 返回的任意框架指令时，应直接调用本工具，不要在回复中输出 <command=...> 标签。指令会沿用当前消息的真实用户、会话和权限，由框架原有路由执行；本工具不会绕过主人或管理员权限检查。每次调用只执行一条完整指令。",
+      parameters: {
+        type: "object",
+        properties: {
+          command: {
+            type: "string",
+            description:
+              "要执行的完整框架指令，必须以 / 或 # 开头，例如 /ai配置、#切换模型 gpt-5。参数应直接包含在这条字符串中。",
+          },
+        },
+        required: ["command"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "SubscribeNextUserMessage",
       description:
         "【高优先级群聊衔接工具】订阅当前用户的下一条发言。用户表示准备在下一条或稍后发送内容时必须调用，例如“给你看个东西”“你看看这个”“我发给你”“等下发图/文件”“下一条发”“我分几条说”；不要只回复“发吧/发来看看”却不调用工具。以上只是必须调用的典型场景，不是调用限制：除此之外，只要你想获取该用户的下一条发言，也可以直接调用，不需要满足任何前置条件。调用后，该用户接下来的一条非命令群消息即使没有艾特机器人，也会触发 AI 回复；订阅触发一次后自动失效，10 分钟内没有新消息也会过期。订阅对象、群聊和平台由框架根据当前消息注入，不要向用户索要参数。若还想获取后续下一条发言，可再次调用。",
@@ -865,7 +885,7 @@ export const tools: ChatCompletionTool[] = [
     function: {
       name: "MemoryOperation",
       description:
-        "用于主动读写用户的长期记忆，以及检索历史聊天归档。聊天中只要用户透露了以后可能有用的稳定信息，就应当主动调用，而不必等用户说“记住”：例如用户的兴趣偏好、身份与习惯、重要经历、正在做的事情、与他人的关系，或用户对某人的稳定看法。记录第三方评价时要写成“用户认为某人……”这类主观表述，不要把评价当成客观事实。user 类型的 set 会覆盖原内容，因此更新前必须先 get 现有 user 记忆，再保留旧信息、合并本轮新增或修正的信息后 set。不要记录密码、令牌等秘密，也不要记录一次性请求、短暂情绪或未经用户表达的推测。需要延续旧话题时，可获取或搜索 chatHistory。",
+        "用于主动读写用户的长期记忆，以及检索历史聊天归档。聊天中只要用户透露了以后可能有用的信息，就应当主动记录，不必等用户说“记住”。日常记录统一使用 operation=append、dataType=user；服务端会自动附加精确到分钟的记录时间并追加到旧记忆，不会覆盖旧内容。记录必须保留人物昵称或ID、谁说了什么、涉及对象、原话中的关键细节和必要上下文，能够保留原话时不要压缩成几个标签。例如用户小明(10001)说“张三昨天帮我修好了电脑，我觉得他很可靠”，应记录“小明(10001)说过：张三昨天帮他修好了电脑；小明因此认为张三很可靠”，不能只写“张三可靠”。第三方评价要保持为说话者的主观看法，不能写成客观事实。set 仅用于确实需要整体替换用户记忆的特殊情况。不要记录密码、令牌等秘密，也不要记录纯粹的一次性指令或未经用户表达的推测。需要延续旧话题时，可获取或搜索 chatHistory。",
       parameters: {
         type: "object",
         properties: {
@@ -876,8 +896,8 @@ export const tools: ChatCompletionTool[] = [
           operation: {
             type: "string",
             description:
-              "要执行的操作类型，例如'get'表示获取数据，'set'表示修改数据",
-            enum: ["get", "set"],
+              "操作类型：append 追加一条带服务端时间的用户记忆，是日常记录的默认操作；get 获取数据；set 整体替换数据，仅用于确实需要完整重写的特殊情况",
+            enum: ["get", "append", "set"],
           },
           dataType: {
             type: "string",
@@ -888,7 +908,7 @@ export const tools: ChatCompletionTool[] = [
           data: {
             type: "string",
             description:
-              "要获取或修改的数据内容。当 operation=set、dataType=user 时，data 必须是合并旧记忆后的完整长期记忆，而不是只传本轮新增内容；例如“用户喜欢蓝色；用户认为张三为人可靠”。当 operation=get、dataType=user 时可留空；当 operation=get、dataType=chatHistory 时，留空返回摘要列表，传入 guid:id 获取归档详情，传入 search:关键词 搜索相关历史归档。",
+              "记忆内容。append user 时只传本轮新增的详细记录，必须写清说话者昵称或ID、说过的内容、涉及对象和必要上下文，尽量保留原话信息，不要自行添加时间，时间由服务端附加。set user 时传完整替换内容。get user 时可留空；get chatHistory 时，留空返回摘要列表，传入 guid:id 获取归档详情，传入 search:关键词 搜索相关历史归档。",
           },
         },
         required: ["userID", "operation", "dataType"],
@@ -2572,6 +2592,18 @@ export const availableTools = {
   },
 
   MemoryOperation: async ({ userID, operation, dataType, data }) => {
+    if (operation === "append") {
+      if (dataType !== "user") {
+        return "只有用户长期记忆支持追加写入";
+      }
+      const memory = String(data || "").trim();
+      if (!memory) {
+        return { success: false, error: "追加的记忆内容不能为空" };
+      }
+      const recordedAt = getMessageTimeString();
+      await redisClient.appendUserData(userID, `[${recordedAt}] ${memory}`);
+      return { success: true, recordedAt };
+    }
     if (operation === "set") {
       if (dataType === "user") {
         // 存储用户数据到redis, key为user:${userID}:data, value为data
@@ -4010,6 +4042,47 @@ export const availableTools = {
    */
   GetCommand: async () => {
     return help;
+  },
+
+  ExecuteAlemonCommand: async ({
+    command,
+    commandQueue,
+  }: {
+    command: string;
+    commandQueue?: string[];
+  }) => {
+    const normalizedCommand = String(command || "").trim();
+    if (!normalizedCommand) {
+      return { success: false, error: "框架指令不能为空" };
+    }
+    if (!normalizedCommand.startsWith("/") && !normalizedCommand.startsWith("#")) {
+      return {
+        success: false,
+        error: "框架指令必须以 / 或 # 开头；可先调用 GetCommand 查询完整格式",
+      };
+    }
+    if (/\r|\n/.test(normalizedCommand)) {
+      return { success: false, error: "每次只能执行一条框架指令" };
+    }
+    if (!Array.isArray(commandQueue)) {
+      return {
+        success: false,
+        error: "当前调用环境不支持执行框架指令",
+      };
+    }
+    if (commandQueue.length > 0) {
+      return {
+        success: false,
+        error: "本轮已经提交过一条框架指令，请等待执行结果后再执行下一条",
+      };
+    }
+
+    commandQueue.push(normalizedCommand);
+    return {
+      success: true,
+      command: normalizedCommand,
+      status: "已提交给 AlemonJS 框架执行",
+    };
   },
 
   http_request: async ({

@@ -279,6 +279,14 @@ class db {
     return `${normalized.slice(0, maxLength)}...`;
   }
 
+  private trimLatestText(text: string, maxLength: number): string {
+    const normalized = text.trim();
+    if (normalized.length <= maxLength) {
+      return normalized;
+    }
+    return `...（较早记忆已省略，必要时调用 MemoryOperation 获取完整内容）\n${normalized.slice(-maxLength)}`;
+  }
+
   private getUtf8ByteLength(text: string): number {
     return Buffer.byteLength(text, "utf8");
   }
@@ -1428,7 +1436,7 @@ class db {
     const blocks: string[] = [];
     const userMemory = userKey ? await this.getUserData(userKey) : null;
     if (userMemory) {
-      blocks.push(`用户长期记忆:\n${this.trimText(userMemory, 500)}`);
+      blocks.push(`用户长期记忆（优先展示最近记录）:\n${this.trimLatestText(userMemory, 2000)}`);
     }
 
     const normalizedQuery = query.trim();
@@ -1486,6 +1494,23 @@ class db {
   /** 存储用户数据 */
   async setUserData(userKey: string, value: string): Promise<void> {
     await this.redis.set(`ai:user:${userKey}`, value);
+  }
+  /** 原子追加用户长期记忆，避免模型重写时删减已有内容 */
+  async appendUserData(userKey: string, value: string): Promise<void> {
+    await this.redis.eval(
+      `
+      local current = redis.call("GET", KEYS[1])
+      if current and string.len(current) > 0 then
+        redis.call("SET", KEYS[1], current .. "\\n" .. ARGV[1])
+      else
+        redis.call("SET", KEYS[1], ARGV[1])
+      end
+      return 1
+      `,
+      1,
+      `ai:user:${userKey}`,
+      value,
+    );
   }
   /** 获取用户数据 */
   async getUserData(userKey: string): Promise<string | null> {

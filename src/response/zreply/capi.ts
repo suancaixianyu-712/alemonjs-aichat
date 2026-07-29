@@ -363,6 +363,7 @@ export const CApiReply = async (
     ? (usermessage as any).validImageUrls
     : [];
   const describedCurrentImageUrls = new Set<string>();
+  const frameworkCommandQueue: string[] = [];
   console.log(
     "发送给AI的当前消息:\n",
     JSON.stringify(usermessage, null, 2),
@@ -672,6 +673,16 @@ export const CApiReply = async (
             functionArgs.isGroup = e.name !== "private.message.create";
           }
 
+          // 框架指令必须绑定当前事件，并通过当前响应结束后的路由续传执行。
+          // 队列由框架注入，模型无法伪造用户、会话或权限。
+          if (
+            functionName === "ExecuteAlemonCommand" &&
+            functionArgs &&
+            typeof functionArgs === "object"
+          ) {
+            functionArgs.commandQueue = frameworkCommandQueue;
+          }
+
           const functionToCall = availableTools[functionName];
           let functionResult: any;
 
@@ -772,6 +783,12 @@ export const CApiReply = async (
       res.choices?.[0]?.message?.content?.trim() || `${cfg.botName}:[]`;
     if (reply === `${cfg.botName}:[]`) {
       log("AI选择不回复");
+      if (frameworkCommandQueue.length > 0) {
+        return {
+          next: true,
+          commands: frameworkCommandQueue,
+        };
+      }
       return;
     }
 
@@ -783,9 +800,13 @@ export const CApiReply = async (
       await redisClient.addAIChatHistory(e.guid, assistantMessage);
     }
 
+    const commands = [
+      ...frameworkCommandQueue,
+      ...aireply.nextCommands,
+    ];
     return {
-      next: aireply.nextCommands.length > 0,
-      commands: aireply.nextCommands[0] ? aireply.nextCommands : undefined,
+      next: commands.length > 0,
+      commands: commands.length > 0 ? commands : undefined,
     };
   } catch (error) {
     await redisClient.setAIToolLoopProcessing(e.guid, false, e.Platform);
