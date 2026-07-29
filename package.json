@@ -1,6 +1,6 @@
 {
   "name": "alemonjs-aichat",
-  "version": "1.0.54",
+  "version": "1.0.55",
   "description": "alemonjs-aichat",
   "author": "suancaixianyu",
   "license": "MIT",
@@ -55,6 +55,7 @@
     "mime-types": "^3.0.2",
     "node-fetch": "^3.3.2",
     "openai": "^6.34.0",
+    "playwright-core": "^1.59.1",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
     "sharp": "^0.34.5",

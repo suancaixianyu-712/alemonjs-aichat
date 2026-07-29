@@ -99,6 +99,17 @@ node daili
 searchApiKey: ''
 ```
 
+也可以启用 `LocalBrowser` 工具，直接调用运行 AlemonJS 的本机 Chrome 或 Edge
+完成网页搜索和访问，无需搜索 API Key。默认自动寻找浏览器并以无界面模式运行；
+如需指定浏览器，可在 `aiChat` 下配置：
+
+``` yaml
+localBrowser:
+  channel: 'msedge' # 可选：msedge 或 chrome
+  headless: true
+  # executablePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
+```
+
 #### 配置管理员
 `alemon.config.yaml`
 ``` yaml
