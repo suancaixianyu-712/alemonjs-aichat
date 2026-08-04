@@ -129,15 +129,7 @@ const extractTextValue = (value: any): string => {
 };
 
 const getToolCallDisplayContent = (message: any): string => {
-  const content = extractTextValue(message?.content);
-  if (content.trim() !== "") {
-    return content;
-  }
-  return extractTextValue(
-    message?.reasoning_content ??
-      message?.reasoningContent ??
-      message?.reasoning,
-  );
+  return extractTextValue(message?.content);
 };
 
 const getTextLength = (value: any): number => {
@@ -373,6 +365,7 @@ export const CApiReply = async (
     ? (usermessage as any).validImageUrls
     : [];
   const describedCurrentImageUrls = new Set<string>();
+  const generatedCurrentImageUrls = new Set<string>();
   const frameworkCommandQueue: string[] = [];
   console.log(
     "发送给AI的当前消息:\n",
@@ -660,7 +653,7 @@ export const CApiReply = async (
             functionArgs = {};
           }
 
-          // DescribeImage 未带 guid 时自动注入当前群号，便于读取识图 AI 配置
+          // DescribeImage 优先使用当前消息中的真实图片地址
           if (
             functionName === "DescribeImage" &&
             functionArgs &&
@@ -674,6 +667,20 @@ export const CApiReply = async (
             if (!String(functionArgs.guid || "").trim()) {
               functionArgs.guid = e.guid;
             }
+          }
+
+          // GPT 画图只在模型选择传图时进入编辑模式，并校正为本轮真实 URL
+          if (
+            functionName === "GPTGenerateImage" &&
+            functionArgs &&
+            typeof functionArgs === "object" &&
+            String(functionArgs.image_url || "").trim()
+          ) {
+            bindDescribeImageUrl(
+              functionArgs,
+              currentImageUrls,
+              generatedCurrentImageUrls,
+            );
           }
 
           // 下一条消息订阅只能绑定当前会话和当前发言用户，禁止模型伪造目标

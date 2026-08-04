@@ -4,7 +4,7 @@ import fs from "fs";
 import { uploadImageToR2, uploadMediaToR2 } from "../s3";
 import { TTSClient } from "./tts";
 import { ChatCompletionTool } from "openai/resources";
-import OpenAi from "openai";
+import OpenAi, { toFile } from "openai";
 import { loadSkillDetail } from "./loadSkill";
 import help from "@src/data/help.json";
 import redisClient from "../config";
@@ -216,14 +216,19 @@ export const tools: ChatCompletionTool[] = [
     function: {
       name: "GPTGenerateImage",
       description:
-        "使用 GPT 图像模型生成图片，适合各种风格的图像生成需求。支持中文提示词。",
+        "使用 GPT 图像模型生成或编辑图片，适合各种风格的图像需求。支持中文提示词；传入 image_url 时会基于该图片进行编辑。",
       parameters: {
         type: "object",
         properties: {
+          image_url: {
+            type: "string",
+            description:
+              "可选。需要编辑的图片 URL，必须使用消息中给出的完整图片地址；不传时按 prompt 直接生成图片。",
+          },
           prompt: {
             type: "string",
             description:
-              "图片描述，支持中英文。描述越详细，生成效果越好。例如：'一只穿着宇航服的柯基犬在月球表面奔跑，电影感光影' 或 'a cute cat sitting on a windowsill, watercolor style'",
+              "图片需求描述，支持中英文。不传 image_url 时描述要生成什么图；传入 image_url 时描述要如何修改图片。",
           },
           size: {
             type: "string",
@@ -1168,6 +1173,27 @@ const isPublicIPv4Address = (value: string) => {
     return false;
   }
   return true;
+};
+
+const imageUrlToFile = async (imageUrl: string) => {
+  const response = await fetch(imageUrl);
+  if (!response.ok) {
+    throw new Error(`读取待编辑图片失败: HTTP ${response.status}`);
+  }
+
+  const contentType =
+    response.headers.get("content-type")?.split(";")[0] || "image/png";
+  if (!contentType.startsWith("image/")) {
+    throw new Error(`待编辑链接不是图片: ${contentType}`);
+  }
+
+  const extension =
+    contentType === "image/jpeg"
+      ? "jpg"
+      : contentType.split("/")[1] || "png";
+  return toFile(await response.arrayBuffer(), `input.${extension}`, {
+    type: contentType,
+  });
 };
 
 const redactPublicIpAddresses = (value: string, replacement: string) => {
@@ -3206,10 +3232,12 @@ export const availableTools = {
   },
 
   GPTGenerateImage: async ({
+    image_url,
     prompt,
     size = "1024x1536",
     quality = "low",
   }: {
+    image_url?: string;
     prompt: string;
     size?: string;
     quality?: string;
@@ -3228,14 +3256,24 @@ export const availableTools = {
 
       const model = gptImageConfig.model || "gpt-image-2";
 
-      const response = await openai.images.generate({
-        model,
-        prompt,
-        n: 1,
-        size: size as any,
-        quality: quality as any,
-        moderation: "low",
-      });
+      const sourceImageUrl = String(image_url || "").trim();
+      const response = sourceImageUrl
+        ? await openai.images.edit({
+            model,
+            image: await imageUrlToFile(sourceImageUrl),
+            prompt,
+            n: 1,
+            size: size as any,
+            quality: quality as any,
+          })
+        : await openai.images.generate({
+            model,
+            prompt,
+            n: 1,
+            size: size as any,
+            quality: quality as any,
+            moderation: "low",
+          });
 
       console.log("GPT 画图完成", response.data?.[0]);
 

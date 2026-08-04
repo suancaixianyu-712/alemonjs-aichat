@@ -17,6 +17,13 @@ import errorimg from "@src/assets/error.png";
 
 let currentModel = "派蒙-默认"; // 默认音色
 
+const removeThinkContent = (text: string) => {
+  return text
+    .replace(/<think\b[^>]*>[\s\S]*?<\/think\s*>/gi, "")
+    .replace(/<think\b[^>]*>[\s\S]*$/gi, "")
+    .replace(/<\/think\s*>/gi, "");
+};
+
 const extractImages = (text: string) => {
   const regex = /<img=(.*?)>/g;
   const regex2 = /!\[[^\]]+\]\(([^)]+)\)/g;
@@ -184,7 +191,8 @@ export const parseAIReply = async (
   e: any,
   message: any,
 ) => {
-  const replyMessages = newText.split(new RegExp(`${cfg.botName}:`, "g"));
+  const visibleText = removeThinkContent(newText);
+  const replyMessages = visibleText.split(new RegExp(`${cfg.botName}:`, "g"));
 
   const replyMessagesResult: any[] = [];
   const ttsMessages: any[] = [];

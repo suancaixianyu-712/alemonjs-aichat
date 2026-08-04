@@ -237,7 +237,31 @@ export default onResponse(selects, async (e) => {
 
     const R18Switch = await redisClient.getR18Switch(e.guid);
 
+    const imgs: string[] = [];
+    if (e.reply) {
+      imgs.push(
+        ...e.reply.message
+          .filter((item) => item.type === "image")
+          .map((item) => item.data.url),
+      );
+    }
+    if (e.img?.length) {
+      imgs.push(...e.img);
+    }
+
+    let inputImageUrl: string | undefined;
+    if (imgs[0]) {
+      try {
+        inputImageUrl = await uploadImageToR2(imgs[0]);
+      } catch (err) {
+        console.error("GPT画图上传待编辑图片到R2失败:", err);
+        message.send(format(Text("读取你传入的图片失败了喵~")));
+        return;
+      }
+    }
+
     const res = await availableTools.GPTGenerateImage({
+      image_url: inputImageUrl,
       prompt: content.trim(),
     });
 

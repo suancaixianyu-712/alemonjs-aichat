@@ -33,6 +33,7 @@ export type PanelChatStreamEvent =
 const PANEL_CHAT_HISTORY_LIMIT = 80;
 const PANEL_IMAGE_TOOL_NAMES = new Set([
   "StableDiffusionGenerateImage",
+  "GPTGenerateImage",
   "Photoshop",
   "AgentUploadFileToR2",
 ]);
@@ -368,7 +369,10 @@ const createPanelOutput = (
     sendToolResult: async (functionName: string, payload: any) => {
       if (!shouldCollectToolImages(functionName, payload)) return;
       const label =
-        functionName === "StableDiffusionGenerateImage" ? "画图结果" : "图片结果";
+        functionName === "StableDiffusionGenerateImage" ||
+        functionName === "GPTGenerateImage"
+          ? "画图结果"
+          : "图片结果";
       await pushToolImages(label, payload);
     },
     send: async (payload: any) => {
