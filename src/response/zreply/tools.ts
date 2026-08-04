@@ -17,7 +17,7 @@ import errorimg from "@src/assets/error.png";
 
 let currentModel = "派蒙-默认"; // 默认音色
 
-const removeThinkContent = (text: string) => {
+export const removeThinkContent = (text: string) => {
   return text
     .replace(/<think\b[^>]*>[\s\S]*?<\/think\s*>/gi, "")
     .replace(/<think\b[^>]*>[\s\S]*$/gi, "")

@@ -24,7 +24,11 @@ import {
   shouldSkipAIReply,
 } from "./getChatConfig";
 import { createTTSMessage } from "./tts";
-import { parseAIReply, sendAIReplyToOutput } from "./tools";
+import {
+  parseAIReply,
+  removeThinkContent,
+  sendAIReplyToOutput,
+} from "./tools";
 
 export const selects = onSelects(["message.create", "private.message.create"]);
 let currentModel = "派蒙-默认"; // 默认音色
@@ -129,7 +133,29 @@ const extractTextValue = (value: any): string => {
 };
 
 const getToolCallDisplayContent = (message: any): string => {
-  return extractTextValue(message?.content);
+  const content = removeThinkContent(extractTextValue(message?.content));
+  if (content.trim() !== "") {
+    return content;
+  }
+
+  const reasoningContent = extractTextValue(
+    message?.reasoning_content ??
+      message?.reasoningContent ??
+      message?.reasoning,
+  );
+  const closingThinkTags = [
+    ...reasoningContent.matchAll(/<\/think\s*>/gi),
+  ];
+  const lastClosingThinkTag = closingThinkTags.at(-1);
+  if (!lastClosingThinkTag || lastClosingThinkTag.index === undefined) {
+    return "";
+  }
+
+  return removeThinkContent(
+    reasoningContent.slice(
+      lastClosingThinkTag.index + lastClosingThinkTag[0].length,
+    ),
+  );
 };
 
 const getTextLength = (value: any): number => {
@@ -535,14 +561,6 @@ export const CApiReply = async (
 
     await redisClient.addAIChatHistory(e.guid, usermessage);
 
-    if (
-      cfg.toolConfig.toolCallContentSwitch === "1" &&
-      res.choices[0].message?.tool_calls &&
-      fullContent.trim() !== ""
-    ) {
-      await sendAIReply(fullContent, cfg, e, message);
-    }
-
     // 检查是否有工具调用需要处理
     let toolRound = 0;
     if (res.choices[0].message?.tool_calls?.length) {
@@ -605,6 +623,17 @@ export const CApiReply = async (
           tool_calls: normalizedToolCalls,
         };
         log("AI返回工具调用，内容：-----", responseMessage);
+
+        const toolCallDisplayContent =
+          toolRound === 1
+            ? fullContent
+            : getToolCallDisplayContent(responseMessage);
+        if (
+          cfg.toolConfig.toolCallContentSwitch === "1" &&
+          toolCallDisplayContent.trim() !== ""
+        ) {
+          await sendAIReply(toolCallDisplayContent, cfg, e, message);
+        }
 
         // 先处理对话
         if (toolRound >= 10 && toolRound % 10 === 0) {
