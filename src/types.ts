@@ -12,6 +12,11 @@ export interface AIChatConfig {
     headless?: boolean;
   };
   xaiImgProxy?: string;
+  opencodeServer?: {
+    port?: number;
+    hostname?: string;
+    binary?: string;
+  };
   ttsServer: {
     host: string;
     defaultModel: string;
