@@ -151,43 +151,7 @@ export const tools: ChatCompletionTool[] = [
   //     },
   //   },
   // },
-  {
-    type: "function",
-    function: {
-      name: "SearchWeb",
-      description:
-        "使用搜索引擎搜索网页内容, 你可以使用这个工具来获取最新的资讯或数据, 但请注意不要搜索敏感或违法的内容, 否则可能会得到不相关的结果, 此外,不推荐使用该工具搜索与sc这个游戏相关的内容, 因为搜索引擎的结果可能不如专门的游戏论坛或社区来的准确和有用, 在搜索时请尽量提供精确的关键词, 关键词最好只有一个. 如果你想搜索与游戏相关的内容, 建议使用SearchScbbsPost工具来搜索survivalcraft(生存战争)论坛的帖子",
-      parameters: {
-        type: "object",
-        properties: {
-          keyword: {
-            type: "string",
-            description: "搜索关键词",
-          },
-          engine: {
-            type: "string",
-            description: "选择搜索引擎",
-            enum: ["bing", "google", "baidu"],
-            default: "baidu",
-          },
-          cc: {
-            type: "string",
-            description:
-              "搜索国家/地区代码, 例如搜索美国就填us, 搜索中国就填cn, 搜索日本就填jp, 这个参数会影响搜索结果的地域性",
-            default: "CN",
-          },
-          type: {
-            type: "string",
-            description:
-              "选择结果类型, 搜索后获取对应结果, 建议使用自然结果organic_results, 其他选项可能不存在",
-            enum: ["organic_results", "related_questions", "related_searches"],
-            default: "organic_results",
-          },
-        },
-        required: ["keyword"],
-      },
-    },
-  },
+
   {
     type: "function",
     function: {
@@ -892,7 +856,8 @@ export const tools: ChatCompletionTool[] = [
           },
           maxChars: {
             type: "number",
-            description: "访问网页时返回的正文最大字符数，默认 12000，最大 30000",
+            description:
+              "访问网页时返回的正文最大字符数，默认 12000，最大 30000",
             default: 12000,
           },
         },
@@ -1100,8 +1065,7 @@ export const tools: ChatCompletionTool[] = [
           },
           timeoutSeconds: {
             type: "number",
-            description:
-              "可选。单次运行超时时间(秒)，默认 600，最大 1800",
+            description: "可选。单次运行超时时间(秒)，默认 600，最大 1800",
             default: 600,
           },
         },
@@ -1258,9 +1222,7 @@ const imageUrlToFile = async (imageUrl: string) => {
   }
 
   const extension =
-    contentType === "image/jpeg"
-      ? "jpg"
-      : contentType.split("/")[1] || "png";
+    contentType === "image/jpeg" ? "jpg" : contentType.split("/")[1] || "png";
   return toFile(await response.arrayBuffer(), `input.${extension}`, {
     type: contentType,
   });
@@ -1274,28 +1236,25 @@ const redactPublicIpAddresses = (value: string, replacement: string) => {
     return replacement;
   });
   text = text.replace(/[0-9a-f:]*:[0-9a-f:]+/gi, (address) => {
-      if (isIP(address) !== 6) return address;
-      const normalized = address.toLowerCase();
-      if (
-        normalized === "::" ||
-        normalized === "::1" ||
-        normalized.startsWith("fc") ||
-        normalized.startsWith("fd") ||
-        normalized.startsWith("fe80:") ||
-        normalized.startsWith("2001:db8:")
-      ) {
-        return address;
-      }
-      redacted = true;
-      return replacement;
-    });
+    if (isIP(address) !== 6) return address;
+    const normalized = address.toLowerCase();
+    if (
+      normalized === "::" ||
+      normalized === "::1" ||
+      normalized.startsWith("fc") ||
+      normalized.startsWith("fd") ||
+      normalized.startsWith("fe80:") ||
+      normalized.startsWith("2001:db8:")
+    ) {
+      return address;
+    }
+    redacted = true;
+    return replacement;
+  });
   return { text, redacted };
 };
 
-export const removePublicIpFromOutput = (
-  value: string,
-  isMaster?: boolean,
-) => {
+export const removePublicIpFromOutput = (value: string, isMaster?: boolean) => {
   if (isMaster === true || !value) return value;
   return redactPublicIpAddresses(value, "").text;
 };
@@ -1344,7 +1303,8 @@ const redactServerToolText = (value: string) => {
   );
   text = text.replace(
     /\b(?:https?|wss?|ftp):\/\/[^\s/@:]+:[^\s/@]+@/gi,
-    (match) => mark(match.replace(/\/\/[^@]+@/, `//${SERVER_OUTPUT_REDACTED_VALUE}@`)),
+    (match) =>
+      mark(match.replace(/\/\/[^@]+@/, `//${SERVER_OUTPUT_REDACTED_VALUE}@`)),
   );
   text = text.replace(
     /(^|[\s,{[])(["']?(?:password|passwd|pwd|token|access[_-]?token|refresh[_-]?token|api[_-]?key|apikey|secret|client[_-]?secret|private[_-]?key|authorization|cookie)["']?\s*[:=]\s*)([^\s,}\]\r\n]+)/gim,
@@ -3206,33 +3166,6 @@ export const availableTools = {
     }
   },
 
-  /** 使用搜索引擎搜索网页 */
-  SearchWeb: async ({
-    keyword,
-    engine = "baidu",
-    cc = "CN",
-    type = "organic_results",
-  }) => {
-    const apikey =
-      value.searchApiKey ||
-      "63706fc3e6827a90e8219913297b510ff053d5238b24f64251a066e4ecea7408";
-    const api = `https://serpapi.com/search.json?engine=${engine}&q=${encodeURIComponent(keyword)}&cc=${cc}&api_key=${apikey}`;
-    try {
-      const response = await fetch(api);
-      if (!response.ok) {
-        return [];
-      }
-      const data = await response.json();
-      console.log("搜索结果", data);
-
-      const results = data[type] || [];
-      return type === "organic_results" ? results.slice(0, 7) : results;
-    } catch (error) {
-      console.error("Error searching web:", error);
-      return [];
-    }
-  },
-
   Photoshop: async ({ image_url, instruction }) => {
     // 从aiconfig中查询grok配置
     const aiConfigStr = await redis.get(`ai:list:grok`);
@@ -3347,19 +3280,39 @@ export const availableTools = {
 
       console.log("GPT 画图完成", response.data?.[0]);
 
-      // gpt-image-1 默认返回 b64_json
+      // gpt-image-1 默认返回 b64_json，也可能返回 url
+      let imageData: string | undefined;
       if (response.data?.[0]?.b64_json) {
-        const base64 = response.data[0].b64_json;
-        const imgUrl = `data:image/png;base64,${base64}`;
-        return [{ url: imgUrl }];
+        imageData = `data:image/png;base64,${response.data[0].b64_json}`;
+      } else if (response.data?.[0]?.url) {
+        imageData = response.data[0].url;
       }
 
-      // 如果返回的是 url
-      if (response.data?.[0]?.url) {
-        return [{ url: response.data[0].url }];
+      if (!imageData) {
+        return "生成图片失败：未获取到图片数据";
       }
 
-      return "生成图片失败：未获取到图片数据";
+      // 将图片保存到本地,然后返回本地路径
+      const dir = "./public/image_out";
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+      const savePath = `${dir}/${Date.now()}.png`;
+      let buffer: Buffer;
+      if (imageData.startsWith("data:image/")) {
+        const base64Data = imageData.replace(/^data:image\/\w+;base64,/, "");
+        buffer = Buffer.from(base64Data, "base64");
+      } else {
+        const res = await fetch(imageData);
+        if (!res.ok) {
+          return "生成图片失败：下载图片失败";
+        }
+        const arrayBuffer = await res.arrayBuffer();
+        buffer = Buffer.from(arrayBuffer);
+      }
+      fs.writeFileSync(savePath, buffer);
+
+      return [{ type: "image", url: savePath }];
     } catch (error: any) {
       console.error("Error calling GPT image API:", error);
       let errormsg: string = error?.message || error;
@@ -4388,7 +4341,10 @@ export const availableTools = {
     if (!normalizedCommand) {
       return { success: false, error: "框架指令不能为空" };
     }
-    if (!normalizedCommand.startsWith("/") && !normalizedCommand.startsWith("#")) {
+    if (
+      !normalizedCommand.startsWith("/") &&
+      !normalizedCommand.startsWith("#")
+    ) {
       return {
         success: false,
         error: "框架指令必须以 / 或 # 开头；可先调用 GetCommand 查询完整格式",
