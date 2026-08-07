@@ -510,6 +510,10 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
               if (functionArgs && typeof functionArgs === "object") {
                 functionArgs.isMaster = e.IsMaster === true;
               }
+              // 注入会话标识，供 RunOpencode 等长任务工具登记/中止任务
+              if (functionArgs && typeof functionArgs === "object") {
+                functionArgs.guid = e.guid;
+              }
               removePublicIpFromToolArguments(
                 functionName,
                 functionArgs,

@@ -1143,6 +1143,40 @@ class db {
     return `ai:guidance:${guid}`;
   }
 
+  /** 获取聊天频率限制（0 表示不限制），默认每分钟 2 条 */
+  async getChatRateLimit(guid: string): Promise<number> {
+    const stored = Number(await this.redis.get(`ai:chat_rate_limit:${guid}`));
+    return Number.isInteger(stored) && stored > 0 ? stored : 2;
+  }
+
+  /** 设置聊天频率限制（limit<=0 表示关闭限制） */
+  async setChatRateLimit(guid: string, limit: number): Promise<void> {
+    const validLimit = Math.max(0, Math.floor(Number(limit) || 0));
+    await this.redis.set(`ai:chat_rate_limit:${guid}`, String(validLimit));
+  }
+
+  /** 检查并记录一次聊天频率（滑动窗口），返回本次是否允许 */
+  async checkChatRateLimit(
+    guid: string,
+    userID: string,
+    limit: number,
+    windowSeconds = 60,
+  ): Promise<boolean> {
+    if (limit <= 0) return true;
+    const now = Date.now();
+    const windowMs = windowSeconds * 1000;
+    const key = `ai:chat_rate_used:${guid}:${userID}`;
+    const member = `${now}:${Math.random().toString(36).slice(2, 8)}`;
+    const results = await this.redis
+      .pipeline()
+      .zremrangebyscore(key, 0, now - windowMs)
+      .zadd(key, now, member)
+      .zcard(key)
+      .expire(key, windowSeconds * 2 + 60)
+      .exec();
+    const count = Number(results?.[2]?.[1] ?? 0);
+    return count <= limit;
+  }
   /** 设置工具调用中的处理状态 */
   async setAIToolLoopProcessing(
     guid: string,

@@ -4449,6 +4449,7 @@ export const availableTools = {
         agent: args?.agent,
         autoApprove: args?.autoApprove,
         timeoutSeconds: args?.timeoutSeconds,
+        guid: args?.guid,
       });
     } catch (error) {
       return toToolError(error);

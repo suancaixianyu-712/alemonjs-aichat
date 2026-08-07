@@ -276,6 +276,7 @@ const sendSessionMessage = async ({
   model,
   agent,
   timeoutMs,
+  signal,
 }: {
   url: string;
   sessionId: string;
@@ -284,6 +285,7 @@ const sendSessionMessage = async ({
   model?: string;
   agent?: string;
   timeoutMs: number;
+  signal?: AbortSignal;
 }) => {
   const body: any = { parts: [{ type: "text", text: prompt }] };
   const parsedModel = parseModel(model || "");
@@ -293,10 +295,11 @@ const sendSessionMessage = async ({
   try {
     return await request(
       withDirectory(`${sessionEndpoint(url, sessionId)}/message`, directory),
-      { method: "POST", body, timeoutMs },
+      { method: "POST", body, timeoutMs, signal },
     );
   } catch (err: any) {
     if (err?.name === "AbortError") {
+      const externallyAborted = signal?.aborted === true;
       try {
         await request(
           withDirectory(`${sessionEndpoint(url, sessionId)}/abort`, directory),
@@ -305,11 +308,13 @@ const sendSessionMessage = async ({
       } catch {
         // 中止失败不阻塞报错
       }
-      const timeoutError: any = new Error(
-        `opencode 运行超时(${Math.round(timeoutMs / 1000)}秒)，已尝试中止会话`,
+      const abortError: any = new Error(
+        externallyAborted
+          ? "opencode 任务已被中止"
+          : `opencode 运行超时(${Math.round(timeoutMs / 1000)}秒)，已尝试中止会话`,
       );
-      timeoutError.aborted = true;
-      throw timeoutError;
+      abortError.aborted = true;
+      throw abortError;
     }
     throw err;
   }
@@ -463,6 +468,57 @@ export type RunOpencodeInput = {
   agent?: string;
   autoApprove?: boolean;
   timeoutSeconds?: number;
+  guid?: string;
+};
+
+export type OpencodeRunRecord = {
+  guid?: string;
+  sessionId: string;
+  directory: string;
+  url: string;
+  controller: AbortController;
+};
+
+const activeRuns: OpencodeRunRecord[] = [];
+
+const registerActiveRun = (record: OpencodeRunRecord): (() => void) => {
+  activeRuns.push(record);
+  return () => {
+    const index = activeRuns.indexOf(record);
+    if (index !== -1) activeRuns.splice(index, 1);
+  };
+};
+
+/**
+ * 中止正在运行的任务。可选按会话(guid)或会话ID过滤；都不传则中止全部任务。
+ */
+export const abortOpencodeRuns = async (options?: {
+  guid?: string;
+  sessionId?: string;
+}): Promise<{ aborted: number }> => {
+  const targets = activeRuns.filter((run) => {
+    if (options?.guid && run.guid !== options.guid) return false;
+    if (options?.sessionId && run.sessionId !== options.sessionId) return false;
+    return true;
+  });
+
+  let aborted = 0;
+  for (const run of targets) {
+    try {
+      run.controller.abort();
+      await request(
+        withDirectory(
+          `${run.url}/session/${encodeURIComponent(run.sessionId)}/abort`,
+          run.directory,
+        ),
+        { method: "POST", timeoutMs: 8000 },
+      );
+      aborted += 1;
+    } catch {
+      // 中止失败不阻塞其他任务
+    }
+  }
+  return { aborted };
 };
 
 export const runOpencode = async (input: RunOpencodeInput = {}) => {
@@ -539,6 +595,15 @@ export const runOpencode = async (input: RunOpencodeInput = {}) => {
   const session = await resolveSession(url, resolvedDir, input.sessionId, autoApprove);
   const sessionId = String(session.id);
 
+  const controller = new AbortController();
+  const unregister = registerActiveRun({
+    guid: input.guid,
+    sessionId,
+    directory: resolvedDir,
+    url,
+    controller,
+  });
+
   const watcher = startPermissionWatcher(url, sessionId, resolvedDir, autoApprove);
   try {
     const data = await sendSessionMessage({
@@ -549,6 +614,7 @@ export const runOpencode = async (input: RunOpencodeInput = {}) => {
       model: input.model,
       agent: input.agent,
       timeoutMs: timeoutSeconds * 1000,
+      signal: controller.signal,
     });
     const parsed = parseMessageResult(data);
     const modelName =
@@ -573,6 +639,7 @@ export const runOpencode = async (input: RunOpencodeInput = {}) => {
       message: `opencode 会话 ${sessionId} 已运行完成${parsed.error ? "，但出现了错误" : ""}。可在 ${url} 查看完整过程`,
     };
   } finally {
+    unregister();
     watcher.stop();
   }
 };
