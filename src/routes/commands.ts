@@ -20,6 +20,12 @@ export const children = [
     handler: lazy(() => import("../response/restart/res")),
   },
 
+  // stop task
+  {
+    regular: /^(\/|#)(终止|停止)任务$/i,
+    handler: lazy(() => import("../response/stop/res")),
+  },
+
   // tools (多条正则合并)
   {
     regular: Regular.or(
@@ -86,6 +92,7 @@ export const children = [
       /(\/|#)工具列表$/i,
       /(\/|#)(开启|关闭)(MCP)?工具$/i,
       /(\/|#)(开启|关闭)工具(.*)$/i,
+      /(\/|#)(开启|关闭)限制([0-9]+)?$/i,
       /(\/|#)(开启|关闭)工具提示$/i,
       /(\/|#)(开启|关闭)工具(调用)?提示撤回$/i,
       /(\/|#)(开启|关闭)工具(调用)?提示详情$/i,

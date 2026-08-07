@@ -335,6 +335,35 @@ export default onResponse(selects, async (e, next) => {
     return;
   }
 
+  // 设置聊天频率限制
+  if (/(\/|#)(开启|关闭)限制([0-9]+)?$/i.test(e.msg)) {
+    const match = e.msg.match(/(\/|#)(开启|关闭)限制([0-9]+)?$/i);
+    if (!match) {
+      message.send(
+        format(
+          Text("格式错误，请按照 格式：#开启限制2 或 #关闭限制 进行设置"),
+        ),
+      );
+      return;
+    }
+    const [, , action, numStr] = match;
+    if (action === "开启") {
+      const limit = Math.max(1, Math.floor(Number(numStr) || 2));
+      await redisClient.setChatRateLimit(e.guid, limit);
+      message.send(
+        format(
+          Text(
+            `已开启聊天频率限制，每分钟最多接收 ${limit} 条消息，主人除外。\n格式：#开启限制<数量> 修改，#关闭限制 关闭`,
+          ),
+        ),
+      );
+    } else {
+      await redisClient.setChatRateLimit(e.guid, 0);
+      message.send(format(Text("已关闭聊天频率限制")));
+    }
+    return;
+  }
+
   // 设置图床
   if (/(\/|#)切换图床(.*)$/i.test(e.msg)) {
     const match = e.msg.match(/(\/|#)切换图床(.*)$/i);
