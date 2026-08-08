@@ -305,9 +305,9 @@ export const getChatConfig = async (
     : "";
   const nonVisionImagePrompt = textOnlyVision
     ? `
-  ## 图片理解（当前主模型 ${config.model} 无法直接看图）
+  ## 图片理解
   - 用户消息里的图片只会以文本链接出现，例如 https://... 或 [图片链接N] https://...
-  - 你不能假装已经看到图片。凡是需要理解图片内容、读图中文字、或回答与图片相关的问题，必须先调用工具 DescribeImage
+  - 你不能假装已经看到图片。凡是需要理解图片内容、读图中文字、或回答与图片相关的问题，可调用工具 DescribeImage
   - 调用时：image_url=消息中的完整图片URL；guid=下方「当前群号(reviewGuid)」；question=可选的关注点
   - 拿到工具返回的 description 后，再基于描述回答用户
   ${
@@ -318,12 +318,7 @@ export const getChatConfig = async (
         : `- 尚未配置识图 AI。若工具返回未配置，请提示用户发送：/设置识图ai <AI列表名称>（需支持多模态/vision 的模型）`
   }
   `
-    : ocrAIConfig
-      ? `
-  ## 图片理解
-  需要更仔细地描述图片、OCR 读字时，可调用 DescribeImage（guid 传当前群号）。当前识图 AI：${ocrAIConfig.name}（${ocrAIConfig.model}）
-  `
-      : "";
+    : "";
   /** 系统提示词 */
   const systemPrompt = `
   # AI助手回复规范
@@ -403,9 +398,7 @@ export const getChatConfig = async (
   例如减少:
   ${botName}:滚一边去吧,傻b<好感-2>
   
-  其他情况, 例如指定修改对某个用户的好感:
-  ${botName}:原来ta是这样的人, 人家以后再也不理ta了<用户昵称好感-1>
-  假设对方昵称为'哈基米':
+  指定修改对某个用户的好感, 假设对方昵称为'哈基米':
   ${botName}:原来ta是这样的人, 人家以后再也不理ta了<哈基米好感-1>`
       : ""
   }

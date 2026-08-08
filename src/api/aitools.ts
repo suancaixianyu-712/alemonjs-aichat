@@ -103,8 +103,6 @@ export const tools: ChatCompletionTool[] = [
 
 【何时必须调用】
 - 当前主模型是无法直接看图的纯文本模型时（如 deepseek、gpt-3.5、qwen-plus、moonshot、glm-4 文本版等）
-- 用户消息中出现了图片链接（如 http(s)://... 或 [图片链接N] ...）
-- 你需要理解图片内容、读图中文字、或回答与图片相关的问题
 
 【使用要求】
 - image_url 必须使用消息里给出的完整图片 URL
