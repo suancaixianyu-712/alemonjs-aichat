@@ -246,14 +246,18 @@ export const tools: ChatCompletionTool[] = [
     function: {
       name: "AgentListWorkspaces",
       description:
-        "列出 public/ 下已有的 AI agent 工作目录 guid，适合在不知道之前项目 guid 时先做发现。找到 guid 后再配合 AgentListFiles 或 AgentSearchFiles 查看 knowledge/ 和项目内容。",
+        "列出当前会话 guid 对应的 AI agent 工作目录。agent 权限需先由主人使用 #开启agent 开启。",
       parameters: {
         type: "object",
         properties: {
+          guid: {
+            type: "string",
+            description: "当前会话 guid，由系统自动注入",
+          },
           includeKnowledge: {
             type: "boolean",
             description:
-              "是否附带每个工作目录下 knowledge/ 的一级仓库目录名摘要",
+              "是否附带当前工作目录下 knowledge/ 的一级仓库目录名摘要",
             default: true,
           },
           maxResults: {
@@ -262,6 +266,7 @@ export const tools: ChatCompletionTool[] = [
             default: 50,
           },
         },
+        required: ["guid"],
       },
     },
   },
@@ -270,15 +275,16 @@ export const tools: ChatCompletionTool[] = [
     function: {
       name: "AgentCreateWorkspace",
       description:
-        "在项目 public/ 下创建一个新的 AI agent 工作目录，并返回可用于后续文件工具的 guid。",
+        "在当前会话 guid 对应的 public/ 下创建 AI agent 工作目录。agent 权限需先由主人使用 #开启agent 开启。",
       parameters: {
         type: "object",
         properties: {
           guid: {
             type: "string",
-            description: "可选。指定工作目录ID；不传则自动生成一个安全的随机ID",
+            description: "当前会话 guid，由系统自动注入",
           },
         },
+        required: ["guid"],
       },
     },
   },
@@ -897,6 +903,45 @@ export const tools: ChatCompletionTool[] = [
   {
     type: "function",
     function: {
+      name: "ScheduleAITask",
+      description:
+        "设置、查看或取消当前会话的定时 AI 任务。创建任务后，到点会由 AI 主动向当前用户或群聊发消息。时间必须使用带时区的 ISO 8601 格式，例如 2026-08-12T08:00:00+08:00；repeat= daily 表示每天同一时间触发，once 表示只触发一次。任务只允许作用于当前会话，用户ID、平台和群号由系统自动记录，不要伪造。",
+      parameters: {
+        type: "object",
+        properties: {
+          action: {
+            type: "string",
+            description: "操作类型：create 创建；list 查看；cancel 取消",
+            enum: ["create", "list", "cancel"],
+          },
+          runAt: {
+            type: "string",
+            description:
+              "action=create 时必填，带时区的 ISO 8601 时间，例如 2026-08-12T08:00:00+08:00",
+          },
+          prompt: {
+            type: "string",
+            description:
+              "action=create 时必填，到点触发 AI 时使用的事件和消息目标，例如“提醒用户起床，并用轻松的语气问候”",
+          },
+          repeat: {
+            type: "string",
+            description: "重复方式，默认 once",
+            enum: ["once", "daily"],
+            default: "once",
+          },
+          taskID: {
+            type: "string",
+            description: "action=cancel 时必填，要取消的任务ID",
+          },
+        },
+        required: ["action"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "MemoryOperation",
       description:
         "用于主动读写用户的长期记忆，以及检索历史聊天归档。聊天中只要用户透露了以后可能有用的信息，就应当主动记录，不必等用户说“记住”。日常记录统一使用 operation=append、dataType=user；服务端会自动附加精确到分钟的记录时间并追加到旧记忆，不会覆盖旧内容。记录必须保留人物昵称或ID、谁说了什么、涉及对象、原话中的关键细节和必要上下文，能够保留原话时不要压缩成几个标签。例如用户小明(10001)说“张三昨天帮我修好了电脑，我觉得他很可靠”，应记录“小明(10001)说过：张三昨天帮他修好了电脑；小明因此认为张三很可靠”，不能只写“张三可靠”。第三方评价要保持为说话者的主观看法，不能写成客观事实。set 仅用于确实需要整体替换用户记忆的特殊情况。不要记录密码、令牌等秘密，也不要记录纯粹的一次性指令或未经用户表达的推测。需要延续旧话题时，可获取或搜索 chatHistory。",
@@ -1286,6 +1331,34 @@ export const removePublicIpFromToolArguments = (
     }
   }
   return target;
+};
+
+const AGENT_TOOL_NAMES = new Set([
+  "AgentListWorkspaces",
+  "AgentCreateWorkspace",
+  "AgentCloneRepository",
+  "AgentReviewProjectCommand",
+  "RunServerCommand",
+  "AgentGitOperation",
+  "AgentProjectCommand",
+  "AgentReadFileLines",
+  "AgentWriteFile",
+  "AgentInsertFile",
+  "AgentReplaceFileRange",
+  "AgentCreateFile",
+  "AgentDeleteFile",
+  "AgentListFiles",
+  "AgentSearchFiles",
+  "AgentUploadFileToR2",
+]);
+
+export const isAgentTool = (functionName: string) =>
+  AGENT_TOOL_NAMES.has(functionName);
+
+export const assertAgentEnabled = async (guid?: string) => {
+  if (!guid?.trim() || (await redisClient.getAgentSwitch(guid)) !== "1") {
+    throw new Error("agent 功能默认关闭，请先使用 #开启agent");
+  }
 };
 
 const redactServerToolText = (value: string) => {
@@ -2180,6 +2253,19 @@ const buildServerCommandLocalReview = (command: string) => {
     };
   }
 
+  if (
+    /(?:^|[\s"'=])(?:[a-zA-Z]:[\\/]|\\\\|\/(?:[^/]|$)|~[\\/]|\.\.(?:[\\/]|$))/i.test(
+      trimmed,
+    ) ||
+    /(^|[\s;&|])(cd|pushd|popd|set-location|sl)([\s]|$)/i.test(trimmed)
+  ) {
+    return {
+      allowed: false,
+      risk: "blocked" as const,
+      reasons: ["服务器指令不得访问或切换到项目目录以外的路径"],
+    };
+  }
+
   for (const item of BLOCKED_SERVER_COMMAND_PATTERNS) {
     if (item.pattern.test(trimmed)) {
       return {
@@ -2426,7 +2512,36 @@ const resolveServerWorkingDirectory = (workingDirectory?: string) => {
   if (!fs.statSync(cwd).isDirectory()) {
     throw new Error("workingDirectory 不是目录");
   }
+  assertRealPathInside(path.resolve(process.cwd()), cwd);
   return cwd;
+};
+
+const assertServerCommandPathsInsideProject = (command: string) => {
+  let tokens: string[];
+  try {
+    tokens = tokenizeCommand(command);
+  } catch (error) {
+    throw new Error(error instanceof Error ? error.message : String(error));
+  }
+
+  const projectRoot = path.resolve(process.cwd());
+  for (const token of tokens) {
+    if (!token || token === "-") continue;
+    if (token.includes("\0")) throw new Error("命令路径包含非法空字符");
+    const segments = token.split(/[\\/]/);
+    if (
+      segments.includes("..") ||
+      /[a-zA-Z]:[\\/]/.test(token) ||
+      /(?:^|=|:)\/(?:[^/]|$)/.test(token) ||
+      /(?:^|=|:)~[\\/]/.test(token)
+    ) {
+      throw new Error("服务器指令不得访问项目目录以外的路径");
+    }
+    if (token.includes("/") || token.includes("\\")) {
+      const target = path.resolve(projectRoot, token);
+      assertRealPathInside(projectRoot, target);
+    }
+  }
 };
 
 const normalizeServerCommandTimeoutMs = (timeoutSeconds?: number) => {
@@ -2828,6 +2943,86 @@ export const availableTools = {
     return {
       success: true,
       message: "已订阅当前用户的下一条群消息，触发一次后自动失效。",
+    };
+  },
+
+  ScheduleAITask: async ({
+    action,
+    runAt,
+    prompt,
+    repeat = "once",
+    taskID,
+    guid,
+    userID,
+    platform,
+    spaceId,
+    isPrivate,
+  }: {
+    action: "create" | "list" | "cancel";
+    runAt?: string;
+    prompt?: string;
+    repeat?: "once" | "daily";
+    taskID?: string;
+    guid: string;
+    userID: string;
+    platform: string;
+    spaceId?: string;
+    isPrivate: boolean;
+  }) => {
+    if (!guid || !userID || !platform) {
+      return {
+        success: false,
+        error: "缺少当前用户ID或平台信息，无法创建主动消息任务",
+      };
+    }
+
+    if (action === "list") {
+      return {
+        success: true,
+        tasks: await redisClient.getScheduledAITasks(guid),
+      };
+    }
+
+    if (action === "cancel") {
+      if (!taskID) {
+        return { success: false, error: "取消任务时必须提供 taskID" };
+      }
+      const deleted = await redisClient.deleteScheduledAITask(guid, taskID);
+      return {
+        success: deleted,
+        taskID,
+        message: deleted ? "定时任务已取消" : "未找到当前会话中的定时任务",
+      };
+    }
+
+    if (!runAt || !prompt?.trim()) {
+      return { success: false, error: "创建任务时必须提供 runAt 和 prompt" };
+    }
+    const runAtTimestamp = Date.parse(runAt);
+    if (!Number.isFinite(runAtTimestamp) || runAtTimestamp <= Date.now()) {
+      return { success: false, error: "runAt 必须是未来的有效 ISO 8601 时间" };
+    }
+    if (repeat !== "once" && repeat !== "daily") {
+      return { success: false, error: "repeat 只能是 once 或 daily" };
+    }
+    if (!isPrivate && !spaceId) {
+      return { success: false, error: "群聊定时任务缺少 SpaceId，无法主动发送" };
+    }
+
+    const task = await redisClient.createScheduledAITask({
+      guid,
+      userID,
+      platform,
+      spaceId: spaceId || "",
+      isPrivate,
+      prompt: prompt.trim(),
+      runAt: runAtTimestamp,
+      repeat,
+    });
+    return {
+      success: true,
+      task,
+      message: `定时任务已创建，将在 ${new Date(runAtTimestamp).toLocaleString("zh-CN")} 触发`,
     };
   },
 
@@ -3443,14 +3638,18 @@ export const availableTools = {
   },
 
   AgentListWorkspaces: async ({
+    guid,
     includeKnowledge = true,
     maxResults = 50,
   }: {
+    guid: string;
     includeKnowledge?: boolean;
     maxResults?: number;
   }) => {
     try {
-      const workspaces = listAgentWorkspaces(includeKnowledge, maxResults);
+      const workspaces = listAgentWorkspaces(includeKnowledge, maxResults).filter(
+        (workspace) => workspace.guid === guid,
+      );
       return {
         success: true,
         count: workspaces.length,
@@ -3461,7 +3660,7 @@ export const availableTools = {
     }
   },
 
-  AgentCreateWorkspace: async ({ guid }: { guid?: string }) => {
+  AgentCreateWorkspace: async ({ guid }: { guid: string }) => {
     try {
       const workspaceGuid = createAgentGuid(guid);
       return {
@@ -3572,10 +3771,12 @@ export const availableTools = {
     timeoutSeconds?: number;
   }) => {
     try {
+      await assertAgentEnabled(reviewGuid);
       if (!reviewGuid?.trim()) {
         throw new Error("reviewGuid 必填，请传入当前群号");
       }
       const cwd = resolveServerWorkingDirectory(workingDirectory);
+      assertServerCommandPathsInsideProject(command);
       const timeoutMs = normalizeServerCommandTimeoutMs(timeoutSeconds);
       const review = await performServerCommandReview({
         command,

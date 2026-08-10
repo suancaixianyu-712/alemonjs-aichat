@@ -2,6 +2,7 @@ import { redis } from "./redis";
 import commands from "./routes/commands";
 import middleware from "./routes/middleware";
 import { createPanelServer } from "./panel/server";
+import { startScheduledAITaskScheduler } from "./scheduler";
 
 const startPanelServer = () => {
   if (process.env.AICHAT_PANEL_DISABLED === "1") return;
@@ -31,6 +32,7 @@ export default defineChildren({
         error: error.message,
       });
     });
+    startScheduledAITaskScheduler();
     startPanelServer();
   },
 });

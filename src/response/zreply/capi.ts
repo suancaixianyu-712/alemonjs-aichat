@@ -14,6 +14,7 @@ import {
   availableTools,
   removePublicIpFromOutput,
   removePublicIpFromToolArguments,
+  isAgentTool,
 } from "@src/api/aitools";
 import redisClient, { DEFAULT_CAPI_CONTEXT_LIMIT } from "@src/config";
 import {
@@ -724,6 +725,17 @@ export const CApiReply = async (
             functionArgs.isGroup = e.name !== "private.message.create";
           }
 
+          if (
+            functionName === "ScheduleAITask" &&
+            functionArgs &&
+            typeof functionArgs === "object"
+          ) {
+            functionArgs.userID = String(e.UserId || "");
+            functionArgs.platform = e.Platform;
+            functionArgs.spaceId = e.SpaceId;
+            functionArgs.isPrivate = e.name === "private.message.create";
+          }
+
           // 框架指令必须绑定当前事件，并通过当前响应结束后的路由续传执行。
           // 队列由框架注入，模型无法伪造用户、会话或权限。
           if (
@@ -745,6 +757,13 @@ export const CApiReply = async (
             };
           } else {
             try {
+              if (isAgentTool(functionName)) {
+                await redisClient.getAgentSwitch(e.guid).then((enabled) => {
+                  if (enabled !== "1") {
+                    throw new Error("agent 功能默认关闭，请先使用 #开启agent");
+                  }
+                });
+              }
               if (
                 (await redisClient.getToolStatus(e.guid, functionName)) === "1"
               ) {

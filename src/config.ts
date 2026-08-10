@@ -1,7 +1,33 @@
 import Redis from "ioredis";
+import { randomUUID } from "node:crypto";
 import { getConfigValue } from "alemonjs";
 import { AIConfig } from "./types";
 import { redis } from "./redis";
+
+export type ScheduledAITask = {
+  id: string;
+  guid: string;
+  userID: string;
+  platform: string;
+  spaceId: string;
+  isPrivate: boolean;
+  prompt: string;
+  runAt: number;
+  repeat: "once" | "daily";
+  createdAt: number;
+};
+
+export type HeartbeatTask = {
+  guid: string;
+  userID: string;
+  platform: string;
+  spaceId: string;
+  isPrivate: boolean;
+  mode: "daily" | "interval";
+  value: string;
+  nextRunAt: number;
+  createdAt: number;
+};
 
 type ArchivedChatRecord = {
   id: string;
@@ -1776,6 +1802,102 @@ class db {
     const status =
       (await this.redis.get(`ai:tool:disable:${guid}:${toolName}`)) || "0";
     return status;
+  }
+
+  /** 获取当前会话的 agent/服务器管理权限，默认关闭 */
+  async getAgentSwitch(guid: string): Promise<string> {
+    return (await this.redis.get(`ai:agent:switch:${guid}`)) || "0";
+  }
+
+  /** 设置当前会话的 agent/服务器管理权限 */
+  async setAgentSwitch(guid: string, enable: boolean): Promise<void> {
+    await this.redis.set(`ai:agent:switch:${guid}`, enable ? "1" : "0");
+  }
+
+  /** 创建定时 AI 任务 */
+  async createScheduledAITask(
+    input: Omit<ScheduledAITask, "id" | "createdAt">,
+  ): Promise<ScheduledAITask> {
+    const task: ScheduledAITask = {
+      ...input,
+      id: randomUUID(),
+      createdAt: Date.now(),
+    };
+    await this.redis.hset("ai:scheduled_tasks", task.id, JSON.stringify(task));
+    return task;
+  }
+
+  /** 获取定时 AI 任务 */
+  async getScheduledAITasks(guid?: string): Promise<ScheduledAITask[]> {
+    const values = await this.redis.hvals("ai:scheduled_tasks");
+    return values
+      .map((value) => {
+        try {
+          return JSON.parse(value) as ScheduledAITask;
+        } catch {
+          return null;
+        }
+      })
+      .filter(
+        (task): task is ScheduledAITask =>
+          task !== null && (!guid || task.guid === guid),
+      )
+      .sort((a, b) => a.runAt - b.runAt);
+  }
+
+  /** 更新定时 AI 任务的下一次触发时间 */
+  async updateScheduledAITask(
+    task: ScheduledAITask,
+  ): Promise<void> {
+    await this.redis.hset("ai:scheduled_tasks", task.id, JSON.stringify(task));
+  }
+
+  /** 删除定时 AI 任务 */
+  async deleteScheduledAITask(guid: string, taskID: string): Promise<boolean> {
+    const task = (await this.getScheduledAITasks(guid)).find(
+      (item) => item.id === taskID,
+    );
+    if (!task) return false;
+    await this.redis.hdel("ai:scheduled_tasks", taskID);
+    return true;
+  }
+
+  /** 获取当前会话的心跳任务 */
+  async getHeartbeatTask(guid: string): Promise<HeartbeatTask | null> {
+    const raw = await this.redis.get(`ai:heartbeat:${guid}`);
+    if (!raw) return null;
+    try {
+      return JSON.parse(raw) as HeartbeatTask;
+    } catch {
+      return null;
+    }
+  }
+
+  /** 获取所有心跳任务，供轮询器使用 */
+  async getAllHeartbeatTasks(): Promise<HeartbeatTask[]> {
+    const keys = await this.redis.keys("ai:heartbeat:*");
+    if (!keys.length) return [];
+    const values = await this.redis.mget(...keys);
+    return values
+      .map((value) => {
+        if (!value) return null;
+        try {
+          return JSON.parse(value) as HeartbeatTask;
+        } catch {
+          return null;
+        }
+      })
+      .filter((task): task is HeartbeatTask => task !== null);
+  }
+
+  /** 设置或更新当前会话心跳 */
+  async setHeartbeatTask(task: HeartbeatTask): Promise<void> {
+    await this.redis.set(`ai:heartbeat:${task.guid}`, JSON.stringify(task));
+  }
+
+  /** 关闭当前会话心跳 */
+  async clearHeartbeatTask(guid: string): Promise<void> {
+    await this.redis.del(`ai:heartbeat:${guid}`);
   }
 
   /** 获取所有工具状态 */

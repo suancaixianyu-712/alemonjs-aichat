@@ -20,6 +20,12 @@ export const children = [
     handler: lazy(() => import("../response/restart/res")),
   },
 
+  // aichat update
+  {
+    regular: /^(\/|#)aichat更新$/i,
+    handler: lazy(() => import("../response/update/res")),
+  },
+
   // stop task
   {
     regular: /^(\/|#)(终止|停止)任务$/i,
@@ -99,6 +105,9 @@ export const children = [
       /(\/|#)(开启|关闭)工具调用内容$/i,
       /(\/|#)测试$/i,
       /(\/|#)设置渲染精度\s*(中|高|超高)$/i,
+      /(\/|#)(开启|关闭)agent$/i,
+      /(\/|#)设置心跳\s+(.+)$/i,
+      /(\/|#)关闭心跳$/i,
     ),
     handler: lazy(() => import("../response/setting/res")),
   },

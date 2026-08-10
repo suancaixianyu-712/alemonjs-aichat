@@ -263,14 +263,18 @@ export const getChatConfig = async (
   );
   /** CAPI 自动压缩上下文长度 */
   const capiContextLimit = await redisClient.getCAPIContextLimit(e.guid);
+  const textOnlyVision = isNonVisionModel(config.model);
   /** 好感度信息 */
   const affections = await redisClient.getAffectionLevelAll(e.guid);
   /** 工具相关配置 */
+  const availableTools = await redisClient.getAvailableTools(e.guid);
   const toolConfig = {
     /** 工具开关 */
     toolSwitch: await redisClient.getToolSwitch(e.guid),
     /** 工具列表 */
-    cApiToolList: await redisClient.getAvailableTools(e.guid),
+    cApiToolList: availableTools.filter(
+      (tool) => textOnlyVision || tool.function?.name !== "DescribeImage",
+    ),
     /** 工具提示开关 */
     toolPromptSwitch: await redisClient.getToolPromptSwitch(e.guid),
     /** 工具提示撤回开关 */
@@ -295,12 +299,17 @@ export const getChatConfig = async (
   /** 识图 AI（主模型无法看图时用） */
   const ocrAIName = await redisClient.getOCRAIName(e.guid);
   const ocrAIConfig = await redisClient.getOCRAIConfig(e.guid);
-  const textOnlyVision = isNonVisionModel(config.model);
   const memoryPrompt = relevantMemoryContext
     ? `
   ## 系统预检索记忆
   以下内容是系统根据当前话题自动检索到的相关长期记忆和历史归档, 回答时优先参考与当前话题直接相关的部分; 如果与用户本轮最新表述冲突, 以用户本轮消息为准
   ${relevantMemoryContext}
+  `
+    : "";
+  const heartbeatPrompt = (e as any).heartbeat
+    ? `
+  ## AI 心跳
+  这是一次定时心跳，不是用户刚刚发来的普通消息。你可以自主检查当前会话和用户的长期状态，选择发送一条主动消息、调用合适的工具完成有价值的事情，或在确实没有必要行动时只输出 NO_ACTION。不要为了完成心跳而强行打扰用户。需要主动发送时，直接按正常回复格式输出内容，系统会主动投递给当前用户或群聊。
   `
     : "";
   const nonVisionImagePrompt = textOnlyVision
@@ -328,6 +337,7 @@ export const getChatConfig = async (
   在遇到用户需要执行特定操作时,先获取对应的技能,如果有可用技能,获取该技能,并严格按照技能文档要求的格式调用, 不要添加任何多余的内容, 也不要删除或修改规范中的任何内容, 以确保技能能够被正确解析和处理
   当没有技能可以应对需求时, 就自行挑选合适的工具函数来完成用户的需求
   当用户要求搜索网页、获取最新网页信息或访问并读取某个网页时，优先使用 LocalBrowser；搜索时 action=search，访问网址时 action=visit。它只能读取公网 HTTP/HTTPS 页面，不能访问本机或局域网
+  ${heartbeatPrompt}
   如果用户提到本地仓库、知识库、参考项目、之前克隆过的项目，或者你准备说"本地没有"、"仓库里没有"、"没找到"之类的话，必须先检查 public/{guid} 内现有内容，优先搜索 knowledge/ 目录；至少先调用一次 AgentSearchFiles、AgentListFiles 或读取相关技能后再下结论
   如果你不知道之前项目所在的 guid，先调用 AgentListWorkspaces 找到 public/ 下已有工作目录，再继续用 AgentListFiles、AgentSearchFiles 或 AgentReadFileLines
   如果用户需要直接执行服务器运维指令、查看服务状态、管理 Docker/PM2/systemctl、查看日志或部署服务，使用 RunServerCommand；它会自动审核指令安全。调用 RunServerCommand 时 reviewGuid 必填，必须传下方环境信息里的“当前群号(reviewGuid)”，不要传 public/{guid} 项目工作目录ID。服务器公网 IP、密码、令牌、密钥及工具返回的脱敏占位符都属于机密，禁止猜测、还原、转述，禁止写入网页、项目文件或其他公开内容

@@ -19,12 +19,14 @@ import {
   availableTools,
   removePublicIpFromOutput,
   removePublicIpFromToolArguments,
+  isAgentTool,
   tools,
 } from "@src/api/aitools";
 import { loadSkills } from "@src/api/loadSkill";
 import redisClient from "@src/config";
 import errorimg from "@src/assets/error.png";
 import { imageReview } from "@src/api/review";
+import { isNonVisionModel } from "./getChatConfig";
 
 const value = getConfigValue().aiChat || {};
 
@@ -352,7 +354,12 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
     };
 
     if (isTool === "1") {
-      createParams["tools"] = await redisClient.getAvailableTools(e.guid);
+      const availableTools = await redisClient.getAvailableTools(e.guid);
+      createParams["tools"] = availableTools.filter(
+        (tool) =>
+          isNonVisionModel(config.model) ||
+          tool.function?.name !== "DescribeImage",
+      );
       createParams["tool_choice"] = "auto";
     }
     if (deepThoughtSwitch === "0") {
@@ -486,6 +493,17 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
           functionArgs = {};
         }
 
+        if (
+          functionName === "ScheduleAITask" &&
+          functionArgs &&
+          typeof functionArgs === "object"
+        ) {
+          functionArgs.userID = String(e.UserId || "");
+          functionArgs.platform = e.Platform;
+          functionArgs.spaceId = e.SpaceId;
+          functionArgs.isPrivate = e.name === "private.message.create";
+        }
+
         const functionToCall = availableTools[functionName];
         let functionResult: any;
 
@@ -496,10 +514,17 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
             error: `未找到函数：${functionName}`,
           };
         } else {
-          try {
-            if (
-              (await redisClient.getToolStatus(e.guid, functionName)) === "1"
-            ) {
+            try {
+              if (isAgentTool(functionName)) {
+                await redisClient.getAgentSwitch(e.guid).then((enabled) => {
+                  if (enabled !== "1") {
+                    throw new Error("agent 功能默认关闭，请先使用 #开启agent");
+                  }
+                });
+              }
+              if (
+                (await redisClient.getToolStatus(e.guid, functionName)) === "1"
+              ) {
               console.error(`工具被禁用：${functionName}`);
               functionResult = {
                 ok: false,
