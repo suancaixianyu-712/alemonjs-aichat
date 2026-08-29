@@ -1,6 +1,0 @@
-# Ignore the source workspace and generated local files.
-/*
-!/lib
-!/skills
-!/README.md
-!/package.json
