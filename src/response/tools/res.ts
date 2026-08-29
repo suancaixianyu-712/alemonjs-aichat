@@ -499,6 +499,51 @@ export default onResponse(selects, async (e) => {
     }
   }
 
+  // 转图片
+  if (/^(\/|#)转图片$/i.test(e.msg)) {
+    const stickerUrls: string[] = [];
+
+    if (e.reply) {
+      const replyStickers = e.reply.message
+        .filter((item) =>
+          ["mface", "marketface", "MarketFace", "image", "Image"].includes(
+            item.type,
+          ),
+        )
+        .map((item) => item.data?.url || item.data?.file_url)
+        .filter(Boolean);
+      stickerUrls.push(...replyStickers);
+    }
+
+    if (e.img && e.img.length > 0) {
+      stickerUrls.push(...e.img);
+    }
+
+    if (stickerUrls.length === 0) {
+      message.send(
+        format(Text("请回复一条包含表情或图片的消息，再发送 /转图片 喵~")),
+      );
+      return;
+    }
+
+    const stickerUrl = stickerUrls[0];
+    try {
+      // 下载表情图片并上传到图床，避免表情链接过期或无法直接发送
+      const r2Url = await uploadImageToR2(stickerUrl);
+      message.send(format(Image(r2Url)));
+      await redisClient.addImgUrl(e.guid, r2Url);
+    } catch (error) {
+      console.error("转图片失败:", error);
+      // 上传图床失败时，直接把原始表情图片链接发出来
+      try {
+        message.send(format(Image(stickerUrl)));
+      } catch (sendError) {
+        console.error("发送原始表情图片失败:", sendError);
+        message.send(format(Text("转图片失败了喵~")));
+      }
+    }
+  }
+
   // 看魔法
   if (/^(\/|#)看魔法$/i.test(e.msg)) {
     const imgs: string[] = [];
