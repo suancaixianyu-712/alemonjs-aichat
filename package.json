@@ -42,6 +42,37 @@
     "registry": "https://registry.npmjs.org",
     "access": "public"
   },
+  "alemonjs": {
+    "config-source": {
+      "official": "https://alemonjs.com"
+    },
+    "config": [
+      {
+        "name": "runtime_mode",
+        "type": "string",
+        "required": false,
+        "description": "运行时模式：local（插件托管，默认）、external（外部进程托管）",
+        "default": "local"
+      },
+      {
+        "name": "transport",
+        "type": "string",
+        "required": false,
+        "description": "消息桥接传输方式：websocket（默认）或 http（兼容网关服务）",
+        "default": "websocket"
+      },
+      {
+        "name": "gscore_url",
+        "type": "string",
+        "required": false,
+        "description": "GsCore HTTP 地址，用于 external 运行时连接外部托管网关",
+        "default": ""
+      }
+    ],
+    "desktop": {
+      "logo": "./lib/logo.png"
+    }
+  },
   "dependencies": {
     "@ai-sdk/xai": "^3.0.60",
     "@aws-sdk/client-s3": "^3.975.0",
