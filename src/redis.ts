@@ -1,8 +1,8 @@
-import { getConfigValue } from "alemonjs";
 import Redis from "ioredis";
 import fs from "fs";
+import { getAiChatConfigValue } from "./config/app";
 
-const value = getConfigValue().aiChat || getConfigValue() || {};
+const value = getAiChatConfigValue();
 
 /** 常见的 Redis Unix Socket 路径 */
 const REDIS_SOCKET_PATHS = [

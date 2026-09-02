@@ -1,4 +1,4 @@
-import { getConfigValue, Text, useClient, useMessage } from "alemonjs";
+import { Text, useClient, useMessage } from "alemonjs";
 import { API } from "@alemonjs/onebot";
 import redisClient from "@src/config";
 import { CApiReply } from "@src/response/zreply/capi";

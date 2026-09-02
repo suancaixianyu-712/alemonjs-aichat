@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { getConfigValue } from "alemonjs";
 import { AIConfig } from "./types";
 import { redis } from "./redis";
+import { getDeclaredAIConfig } from "./config/app";
 
 export type ScheduledAITask = {
   id: string;
@@ -649,19 +650,14 @@ class db {
     if (!name) {
       return null;
     }
-    const aiConfigStr = await this.redis.get(`ai:list:${name}`);
-    if (!aiConfigStr) {
+    const config = await this.getAIListConfig(name);
+    if (!config) {
       return null;
     }
-    try {
-      const config = JSON.parse(aiConfigStr) as AIConfig;
-      if (!config.host?.trim() || !config.key?.trim() || !config.model?.trim()) {
-        return null;
-      }
-      return { ...config, name };
-    } catch {
+    if (!config.host?.trim() || !config.key?.trim() || !config.model?.trim()) {
       return null;
     }
+    return { ...config, name };
   }
 
   /** 获取工具开关状态 */
@@ -828,7 +824,32 @@ class db {
   /** 获取AI列表 */
   async getAIList(): Promise<string[]> {
     const keys = await this.redis.keys("ai:list:*");
-    return keys.map((key) => key.replace("ai:list:", ""));
+    const names = keys.map((key) => key.replace("ai:list:", ""));
+    const declared = getDeclaredAIConfig();
+    if (declared && !names.includes(declared.name)) {
+      names.push(declared.name);
+    }
+    return names;
+  }
+
+  /** 获取AI列表项；Redis 同名项优先，其次使用 AlemonX 中声明的单个 AI。 */
+  async getAIListConfig(name: string): Promise<AIConfig | null> {
+    const aiConfigStr = await this.redis.get(`ai:list:${name}`);
+    if (aiConfigStr) {
+      return JSON.parse(aiConfigStr) as AIConfig;
+    }
+
+    const declared = getDeclaredAIConfig();
+    if (!declared || declared.name !== name) {
+      return null;
+    }
+
+    return {
+      ...db.defaultAIConfig,
+      host: declared.host,
+      key: declared.key,
+      model: declared.model,
+    };
   }
 
   /** 设置AI列表项 */
@@ -868,13 +889,12 @@ class db {
 
   /** 切换AI */
   async switchAI(guid: string, name: string): Promise<AIConfig | null> {
-    const aiConfigStr = await this.redis.get(`ai:list:${name}`);
-    if (!aiConfigStr) {
+    const aiConfig = await this.getAIListConfig(name);
+    if (!aiConfig) {
       console.log("切换失败, 无此AI");
       await this.setAIConfig(guid, db.defaultAIConfig);
       return null;
     }
-    const aiConfig = JSON.parse(aiConfigStr) as AIConfig;
     const currentConfig = await this.getAIConfig(guid);
     aiConfig.systemPrompt = currentConfig.systemPrompt;
     await this.setAIConfig(guid, aiConfig);

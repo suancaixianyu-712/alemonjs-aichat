@@ -1,5 +1,4 @@
 ﻿import {
-  getConfigValue,
   Image,
   Text,
   ImageURL,
@@ -16,11 +15,12 @@ import redisClient from "@src/config";
 import { imageReview } from "@src/api/review";
 import { uploadImageToR2 } from "@src/s3";
 import { createTTSMessage } from "../zreply/tts";
+import { getAiChatConfigValue } from "@src/config/app";
 
 export const selects = onSelects(["message.create", "private.message.create"]);
 // inline regex will be used directly in condition checks
 export default onResponse(selects, async (e) => {
-  const configValue = getConfigValue().aiChat || {};
+  const configValue = getAiChatConfigValue();
   // 创建
   const [message] = useMessage(e);
 

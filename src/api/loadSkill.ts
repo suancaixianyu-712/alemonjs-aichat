@@ -2,8 +2,8 @@
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-import { getConfigValue } from "alemonjs";
-const value = getConfigValue().aiChat || {};
+import { getAiChatConfigValue } from "../config/app";
+const value = getAiChatConfigValue();
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
 
 // 通用函数: 根据路径获取技能列表

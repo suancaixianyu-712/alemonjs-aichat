@@ -1,6 +1,3 @@
-import { getConfigValue } from "alemonjs";
-const value = getConfigValue().aiChat || {};
-
 export const getTimeString = (): string => {
   return getMessageTimeString();
 };

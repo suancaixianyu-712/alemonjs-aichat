@@ -109,9 +109,8 @@ const loadPanelAIConfigs = async () => {
   const aiConfigs = await withTimeout(
     Promise.all(
       names.map(async (name): Promise<PanelAIConfig | null> => {
-        const raw = await redisClient.redis.get(`ai:list:${name}`);
-        if (!raw) return null;
-        const config = JSON.parse(raw) as Partial<AIConfig>;
+        const config = await redisClient.getAIListConfig(name);
+        if (!config) return null;
         return {
           name,
           host: config.host || "",

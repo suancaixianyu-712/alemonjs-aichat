@@ -3,8 +3,8 @@ import fs from "fs/promises";
 import path from "path";
 import mime from "mime-types";
 import sharp from "sharp"; // 需要安装: npm install sharp
-import { getConfigValue } from "alemonjs";
-const value = getConfigValue().aiChat || {};
+import { getAiChatConfigValue } from "./config/app";
+const value = getAiChatConfigValue();
 
 const R2_CONFIG = {
   accessKeyId: "f8f0d360d3156a1667c527c5ea4b18d7",

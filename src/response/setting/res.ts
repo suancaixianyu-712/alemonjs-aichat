@@ -1,7 +1,8 @@
 ﻿import redisClient from "@src/config";
-import { Text, useMessage, getConfigValue } from "alemonjs";
+import { Text, useMessage } from "alemonjs";
 import { log } from "console";
-const value = getConfigValue().aiChat || {};
+import { getAiChatConfigValue } from "@src/config/app";
+const value = getAiChatConfigValue();
 
 const selects = onSelects(["message.create", "private.message.create"]);
 // inline regex checks are used in-place; keep `test` as shorthand

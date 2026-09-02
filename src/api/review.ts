@@ -1,7 +1,7 @@
-import { getConfigValue } from "alemonjs";
 import fs from "fs";
+import { getAiChatConfigValue } from "../config/app";
 
-const value = getConfigValue().aiChat || {};
+const value = getAiChatConfigValue();
 
 export const imageReview = async (filePathOrUrl: string) => {
   // console.log('进行审核的图片地址:', filePathOrUrl);

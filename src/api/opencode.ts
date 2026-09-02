@@ -1,9 +1,9 @@
 import { spawn, execFile } from "child_process";
 import fs from "fs";
 import path from "path";
-import { getConfigValue } from "alemonjs";
+import { getAiChatConfigValue } from "../config/app";
 
-const value = getConfigValue().aiChat || {};
+const value = getAiChatConfigValue();
 
 const MAX_OUTPUT_CHARS = 24000;
 const MAX_TOOL_CALLS = 40;

@@ -1,5 +1,4 @@
 import { redis } from "../redis";
-import { getConfigValue } from "alemonjs";
 import fs from "fs";
 import { uploadImageToR2, uploadMediaToR2 } from "../s3";
 import { TTSClient } from "./tts";
@@ -18,8 +17,9 @@ import { randomUUID } from "node:crypto";
 import { getMessageTimeString } from "./format";
 import { runLocalBrowser } from "./localBrowser";
 import { runOpencode } from "./opencode";
+import { getAiChatConfigValue } from "../config/app";
 
-const value = getConfigValue().aiChat || {};
+const value = getAiChatConfigValue();
 
 const getPrompt = async (text: string): Promise<string> => {
   // 检查中文

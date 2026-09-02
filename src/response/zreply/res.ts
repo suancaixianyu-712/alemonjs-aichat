@@ -12,8 +12,8 @@ import {
 } from "alemonjs";
 import { log } from "console";
 import OpenAi from "openai";
-import { getConfigValue } from "alemonjs";
 import { TTSClient } from "@src/api/tts";
+import { getAiChatConfigValue } from "@src/config/app";
 import { getGroupTimeString, getMessageTimeString } from "@src/api/format";
 import {
   availableTools,
@@ -34,7 +34,7 @@ import errorimg from "@src/assets/error.png";
 import { imageReview } from "@src/api/review";
 import { isNonVisionModel } from "./getChatConfig";
 
-const value = getConfigValue().aiChat || {};
+const value = getAiChatConfigValue();
 
 export const selects = onSelects(["message.create", "private.message.create"]);
 let ttsClient: TTSClient;

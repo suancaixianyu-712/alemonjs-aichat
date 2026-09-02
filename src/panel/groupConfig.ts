@@ -186,8 +186,8 @@ export const addPanelGroupConfig = async (input: {
 
   const nextAI = String(input.currentAI || "").trim();
   if (nextAI) {
-    const aiConfigStr = await redisClient.redis.get(`ai:list:${nextAI}`);
-    if (!aiConfigStr) {
+    const aiConfig = await redisClient.getAIListConfig(nextAI);
+    if (!aiConfig) {
       throw new Error(`未找到AI：${nextAI}`);
     }
   }

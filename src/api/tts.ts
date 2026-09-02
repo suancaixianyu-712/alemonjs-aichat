@@ -1,7 +1,7 @@
 import { redis } from "../redis";
-import { getConfigValue } from "alemonjs";
 import ttsmodels from "@src/data/ttsmodels.json";
-const value = getConfigValue().aiChat || {};
+import { getAiChatConfigValue } from "../config/app";
+const value = getAiChatConfigValue();
 
 type modelInfoType =
   | string
