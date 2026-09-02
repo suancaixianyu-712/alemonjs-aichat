@@ -10,6 +10,8 @@ const capiContextLimitCommand =
   /^(#|\/)设置(AI)?上下文(长度)? ?([0-9]+)(k|m)$/i;
 // 例: /设置识图ai gpt4v  /配置ocr xxx  /设置识图 关闭
 const ocrAICommand = /^(#|\/)(配|配置|设置)(ocr|识图)(ai)?\s*(.*)$/i;
+// 例: /设置文件 开启  /设置文件 关闭  /设置文件
+const fileMessageCommand = /^(#|\/)设置文件\s*(.*)$/i;
 
 const parseHeartbeatTime = (value: string) => {
   const dailyMatch = value.trim().match(/^(?:每天\s*)?(\d{1,2}):(\d{2})$/);
@@ -569,6 +571,47 @@ export default onResponse(selects, async (e, next) => {
         ),
       ),
     );
+    return;
+  }
+
+  // 设置文件消息处理开关
+  if (fileMessageCommand.test(e.msg)) {
+    const match = e.msg.match(fileMessageCommand);
+    const rawArg = ((match && match[2]) || "").trim();
+    const current = await redisClient.getFileMessageSwitch(e.guid);
+
+    // 无参数：查看当前状态
+    if (!rawArg) {
+      message.send(
+        format(
+          Text(
+            [
+              `文件消息处理：${current === "1" ? "已开启" : "已关闭"}`,
+              "开启后，用户发送的文件（含群文件上传、私聊文件、引用中的文件）会交给 AI 处理：文本类文件直接注入内容，其他文件提供下载链接供 AI 按需读取。",
+              "开启：/设置文件 开启",
+              "关闭：/设置文件 关闭",
+            ].join("\n"),
+          ),
+        ),
+      );
+      return;
+    }
+
+    // 开启
+    if (/^(开启|打开|启用|on|enable|1)$/i.test(rawArg)) {
+      await redisClient.setFileMessageSwitch(e.guid, true);
+      message.send(format(Text("已开启文件消息处理，用户发送的文件将交给 AI 处理。")));
+      return;
+    }
+
+    // 关闭
+    if (/^(关闭|关掉|停用|off|disable|0)$/i.test(rawArg)) {
+      await redisClient.setFileMessageSwitch(e.guid, false);
+      message.send(format(Text("已关闭文件消息处理，文件消息将不再交给 AI。")));
+      return;
+    }
+
+    message.send(format(Text("格式错误，请使用：/设置文件 开启 或 /设置文件 关闭")));
     return;
   }
 

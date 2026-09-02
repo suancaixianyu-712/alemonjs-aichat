@@ -24,6 +24,12 @@ import {
 } from "@src/api/aitools";
 import { loadSkills } from "@src/api/loadSkill";
 import redisClient from "@src/config";
+import {
+  extractFilesFromReplySegments,
+  formatFileBlock,
+  resolveFileContent,
+  type FileMediaItem,
+} from "@src/api/fileMessage";
 import errorimg from "@src/assets/error.png";
 import { imageReview } from "@src/api/review";
 import { isNonVisionModel } from "./getChatConfig";
@@ -54,6 +60,7 @@ export default onResponse(selects, async (e, next) => {
   const isOpenR18 = await redisClient.getR18Switch(e.guid); // R18开关
   const proactiveSwitch = await redisClient.getProactiveSwitch(e.guid); // 主动搭话开关
   const deepThoughtSwitch = await redisClient.getDeepThoughtSwitch(e.guid); // 深度思考开关
+  const fileMessageSwitch = await redisClient.getFileMessageSwitch(e.guid); // 文件消息开关
   console.log(
     "isOpenR18",
     isOpenR18,
@@ -76,6 +83,19 @@ export default onResponse(selects, async (e, next) => {
   const affections = await redisClient.getAffectionLevelAll(e.guid);
   const imgs: string[] = [];
   let rawMessage = e.value.raw_message || e.raw_message || e.msg;
+
+  // 收集文件消息（普通文件消息 / 群文件上传 / 私聊离线文件 / 引用中的文件）
+  const isFileNoticeEvent =
+    e.tag === "NOTICE_GROUP_UPLOAD" || e.tag === "NOTICE_OFFLINE_FILE";
+  const fileItems: FileMediaItem[] =
+    fileMessageSwitch === "1"
+      ? [
+          ...(e.MessageMedia || []),
+          ...extractFilesFromReplySegments(e.reply?.message),
+        ].filter((item) =>
+          ["file", "audio", "video"].includes(String(item.Type)),
+        )
+      : [];
   const botName = e.bot.nickname || "小咸鱼";
   const systemPrompt = `
 # AI助手回复规范
@@ -116,6 +136,17 @@ ${botName}:画好了<img=https://example.com/landmarks.jpg>
 ${botName}:这是本地图片<img=./localimage.jpg>
 ${botName}:这是网络图片<img=https://example.com/image.jpg>
 注意: 如果有用户问你能不能看动图时, 你要回答只能看到第一帧
+`
+    : ""
+}
+
+${
+  fileMessageSwitch === "1"
+    ? `
+文件消息:
+用户发送文件时, 消息中会包含 [文件] 文件名 (大小) 与下载链接, 文本类文件会附带文件内容
+对于附带内容的文件, 直接阅读内容并回答; 对于只有下载链接的文件, 如需读取内容可调用 ReadRemoteFile 工具按链接获取
+用户上传文件后, 可以自然地评价或讨论这个文件, 不需要复述下载链接
 `
     : ""
 }
@@ -200,6 +231,9 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
   // 正则触发的消息跳过概率过滤，直接响应
   if (e["regexTriggered"]) {
     console.log("正则规则匹配, 直接触发AI回复");
+  } else if (fileItems.length > 0 || isFileNoticeEvent) {
+    // 文件消息直接响应, 不做概率过滤
+    console.log("文件消息, 直接触发AI回复");
   } else {
     // 当e.at不存在时,只给20%概率继续执行, 当e.at存在时,概率为40%,当e.atBot存在时,概率为100%
     const rand = Math.random();
@@ -258,6 +292,24 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
     }
   }
 
+  // 处理文件消息
+  let fileBlocks = "";
+  if (fileItems.length > 0) {
+    console.log("有文件消息", fileItems.length, "个");
+    const resolvedFiles = (
+      await Promise.all(fileItems.map((item) => resolveFileContent(item, e)))
+    ).filter((file) => file !== null);
+
+    // 图片类型的文件复用图片管线
+    for (const file of resolvedFiles) {
+      if (file.kind === "image" && file.url) {
+        imgs.push(file.url);
+      }
+    }
+
+    fileBlocks = resolvedFiles.map(formatFileBlock).join("\n\n");
+  }
+
   console.log("开始回复");
 
   // 下载图片并转换为 Base64
@@ -283,6 +335,7 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
   }
 
   let index = 0; // 用于跟踪当前访问的 validImageUrls 的索引
+  rawMessage = rawMessage.replace(/\[CQ:file,[^\]]+\]/g, "[文件]");
   rawMessage = rawMessage.replace(/\[CQ:image,[^\]]+\]/g, () => {
     const imageUrl = validImageUrls[index];
     index++; // 每次匹配后索引加1
@@ -296,6 +349,14 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
     });
   }
 
+  // 注入文件信息块
+  if (fileBlocks) {
+    rawMessage = `${rawMessage ? rawMessage + "\n" : ""}${fileBlocks}`;
+  } else if (isFileNoticeEvent && !rawMessage.trim()) {
+    // 群文件上传/私聊离线文件事件没有文本, 合成提示
+    rawMessage = "发送了一个文件";
+  }
+
   // 处理表情,转为[emojiMap[id]]
   rawMessage = rawMessage.replace(
     /\[CQ:face,id=(\d+),[^\]]+\]/g,
@@ -306,6 +367,7 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
 
   console.log("处理后的消息内容:\n", rawMessage);
 
+  const senderName = e.nickname || e.UserName || "用户";
   const usermessage = {
     role: "user",
     content: [
@@ -320,9 +382,9 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
         text:
           complexOutputIsOpen === "1"
             ? JSON.stringify({
-                [`${e.nickname}(${getMessageTimeString()})`]: rawMessage,
+                [`${senderName}(${getMessageTimeString()})`]: rawMessage,
               })
-            : `${e.nickname}(${getMessageTimeString()}): ${rawMessage}`,
+            : `${senderName}(${getMessageTimeString()}): ${rawMessage}`,
       },
     ],
   };

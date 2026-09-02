@@ -796,6 +796,45 @@ export const tools: ChatCompletionTool[] = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "ReadRemoteFile",
+      description: `按 URL 读取远程文件内容（用户消息中 [文件] 块提供的下载链接等）。
+
+【返回内容】
+- 文本类文件（txt/md/代码/json/csv/字幕等）直接返回文本内容
+- 其他文件（压缩包/音视频/二进制）下载后保存到项目 public/{guid}/ 目录并返回保存路径，可继续用 Agent 相关工具处理
+
+【使用要求】
+- url 必须使用消息中给出的下载链接
+- 文本内容过长时会被截断，需要更多内容可分段用 maxChars/offset 获取`,
+      parameters: {
+        type: "object",
+        properties: {
+          guid: {
+            type: "string",
+            description: "项目工作目录ID，对应 public/{guid}/",
+          },
+          url: {
+            type: "string",
+            description: "文件的下载链接",
+          },
+          maxChars: {
+            type: "number",
+            description: "文本文件最多返回多少字符，默认 8000，最大 30000",
+            default: 8000,
+          },
+          offset: {
+            type: "number",
+            description: "文本文件从第几个字符开始读取，默认 0",
+            default: 0,
+          },
+        },
+        required: ["guid", "url"],
+      },
+    },
+  },
   // {
   //   type: "function",
   //   function: {
@@ -4460,6 +4499,94 @@ export const availableTools = {
         uploadType,
         url,
         sendText: uploadType === "image" ? `<img=${url}>` : `文件链接: ${url}`,
+      };
+    } catch (error) {
+      return toToolError(error);
+    }
+  },
+
+  ReadRemoteFile: async ({
+    guid,
+    url,
+    maxChars = 8000,
+    offset = 0,
+  }: {
+    guid: string;
+    url: string;
+    maxChars?: number;
+    offset?: number;
+  }) => {
+    try {
+      if (!url?.trim()) {
+        throw new Error("url 不能为空");
+      }
+      await validateURL(url.trim());
+
+      const response = await fetch(url.trim());
+      if (!response.ok) {
+        throw new Error(`下载失败: ${response.status} ${response.statusText}`);
+      }
+
+      const buffer = Buffer.from(await response.arrayBuffer());
+      const disposition = String(
+        response.headers.get("content-disposition") || "",
+      );
+      const urlFileName = (() => {
+        try {
+          return decodeURIComponent(
+            new URL(url.trim()).pathname.split("/").pop() || "",
+          );
+        } catch {
+          return "";
+        }
+      })();
+      const fileName =
+        (disposition.match(/filename\*?=(?:UTF-8'')?"?([^";]+)"?/i)?.[1] ||
+          urlFileName ||
+          `file-${Date.now()}`)
+          .replace(/[\\/:*?"<>|]+/g, "_")
+          .slice(0, 120) || `file-${Date.now()}`;
+
+      const { isTextLikeFile } = await import("./fileMessage");
+      const safeMaxChars = Math.max(
+        1,
+        Math.min(Number(maxChars) || 8000, 30000),
+      );
+      const safeOffset = Math.max(0, Math.floor(Number(offset) || 0));
+
+      if (isTextLikeFile(fileName)) {
+        const text = buffer.toString("utf-8").replace(/^\uFEFF/, "");
+        const isBinaryText = buffer
+          .subarray(0, Math.min(8192, buffer.length))
+          .includes(0);
+        if (!isBinaryText) {
+          const content = text.slice(safeOffset, safeOffset + safeMaxChars);
+          return {
+            success: true,
+            fileName,
+            fileSize: buffer.length,
+            truncated: safeOffset + safeMaxChars < text.length,
+            content,
+            hint:
+              safeOffset + safeMaxChars < text.length
+                ? "内容未完整返回，可增大 maxChars 或调整 offset 继续读取"
+                : null,
+          };
+        }
+      }
+
+      // 非文本文件：保存到项目目录供后续处理
+      const { target, relativePath } = resolveAgentPath(guid, fileName);
+      ensureParentDirectory(target);
+      fs.writeFileSync(target, buffer);
+
+      return {
+        success: true,
+        fileName,
+        fileSize: buffer.length,
+        savedPath: relativePath,
+        contentType: response.headers.get("content-type") || null,
+        message: `非文本文件已保存到项目目录 ${relativePath}，可继续用 Agent 相关工具处理`,
       };
     } catch (error) {
       return toToolError(error);

@@ -731,6 +731,16 @@ class db {
     );
   }
 
+  /** 文件消息处理开关状态（默认开启） */
+  async getFileMessageSwitch(guid: string): Promise<string | null> {
+    return (await this.redis.get(`ai:file_message:switch:${guid}`)) || "1";
+  }
+
+  /** 设置文件消息处理开关状态 */
+  async setFileMessageSwitch(guid: string, enable: boolean): Promise<void> {
+    await this.redis.set(`ai:file_message:switch:${guid}`, enable ? "1" : "0");
+  }
+
   /** --------------------------------------------------------- */
 
   /** 获取复杂输出开关状态 */
