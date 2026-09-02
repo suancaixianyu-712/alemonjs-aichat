@@ -1,6 +1,6 @@
 {
   "name": "alemonjs-aichat",
-  "version": "1.0.66",
+  "version": "1.0.67",
   "description": "alemonjs-aichat",
   "author": "suancaixianyu",
   "license": "MIT",
@@ -43,35 +43,150 @@
     "access": "public"
   },
   "alemonjs": {
-    "config-source": {
-      "official": "https://alemonjs.com"
-    },
     "config": [
       {
-        "name": "runtime_mode",
-        "type": "string",
+        "description": "内置 AI 配置",
+        "name": "ai",
         "required": false,
-        "description": "运行时模式：local（插件托管，默认）、external（外部进程托管）",
-        "default": "local"
+        "type": "object",
+        "config": [
+          {
+            "description": "AI 名称",
+            "name": "name",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "description": "接口地址",
+            "name": "host",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "description": "API Key",
+            "name": "key",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "description": "模型名称",
+            "name": "model",
+            "required": true,
+            "type": "string"
+          }
+        ]
       },
       {
-        "name": "transport",
-        "type": "string",
+        "description": "xAI 图片生成服务的代理地址",
+        "name": "xaiImgProxy",
         "required": false,
-        "description": "消息桥接传输方式：websocket（默认）或 http（兼容网关服务）",
-        "default": "websocket"
+        "type": "string"
       },
       {
-        "name": "gscore_url",
-        "type": "string",
+        "description": "TTS 语音服务",
+        "name": "ttsServer",
         "required": false,
-        "description": "GsCore HTTP 地址，用于 external 运行时连接外部托管网关",
-        "default": ""
+        "type": "object",
+        "config": [
+          {
+            "description": "TTS 服务地址",
+            "name": "host",
+            "required": false,
+            "type": "string"
+          }
+        ]
+      },
+      {
+        "description": "百度内容审核",
+        "name": "baidu",
+        "required": false,
+        "type": "object",
+        "config": [
+          {
+            "description": "百度 API Key",
+            "name": "ak",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "description": "百度 Secret Key",
+            "name": "sk",
+            "required": false,
+            "type": "string"
+          }
+        ]
+      },
+      {
+        "description": "额外技能目录",
+        "name": "skills_dir",
+        "required": false,
+        "type": "array<string>",
+        "default": [
+          "./skills"
+        ]
+      },
+      {
+        "description": "OpenCode 工具服务",
+        "name": "opencodeServer",
+        "required": false,
+        "type": "object",
+        "config": [
+          {
+            "description": "服务端口",
+            "name": "port",
+            "required": false,
+            "type": "number",
+            "default": 4096
+          },
+          {
+            "description": "监听地址",
+            "name": "hostname",
+            "required": false,
+            "type": "string",
+            "default": "127.0.0.1"
+          },
+          {
+            "description": "OpenCode 可执行文件路径",
+            "name": "binary",
+            "required": false,
+            "type": "string"
+          }
+        ]
+      },
+      {
+        "description": "Redis 连接",
+        "name": "redis",
+        "required": false,
+        "type": "object",
+        "config": [
+          {
+            "description": "Redis 主机或 IP",
+            "name": "host",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "description": "Redis 端口",
+            "name": "port",
+            "required": false,
+            "type": "number",
+            "default": 6379
+          },
+          {
+            "description": "Redis 密码",
+            "name": "password",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "description": "Redis 用户名",
+            "name": "user",
+            "required": false,
+            "type": "string"
+          }
+        ]
       }
-    ],
-    "desktop": {
-      "logo": "./lib/logo.png"
-    }
+    ]
   },
   "dependencies": {
     "@ai-sdk/xai": "^3.0.60",
