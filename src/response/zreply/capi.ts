@@ -14,7 +14,7 @@ import {
   availableTools,
   removePublicIpFromOutput,
   removePublicIpFromToolArguments,
-  isAgentTool,
+  assertAgentToolAccess,
 } from "@src/api/aitools";
 import redisClient, { DEFAULT_CAPI_CONTEXT_LIMIT } from "@src/config";
 import {
@@ -757,13 +757,12 @@ export const CApiReply = async (
             };
           } else {
             try {
-              if (isAgentTool(functionName)) {
-                await redisClient.getAgentSwitch(e.guid).then((enabled) => {
-                  if (enabled !== "1") {
-                    throw new Error("agent 功能默认关闭，请先使用 #开启agent");
-                  }
-                });
-              }
+              const toolGuid = await assertAgentToolAccess(
+                functionName,
+                e.guid,
+                functionArgs?.scope,
+                e.IsMaster === true,
+              );
               if (
                 (await redisClient.getToolStatus(e.guid, functionName)) === "1"
               ) {
@@ -777,9 +776,12 @@ export const CApiReply = async (
                 if (functionArgs && typeof functionArgs === "object") {
                   functionArgs.isMaster = e.IsMaster === true;
                 }
-                // 注入会话标识，供 RunOpencode 等长任务工具登记/中止任务
+                // 公共知识库仅映射工作目录；审核配置仍绑定真实会话。
                 if (functionArgs && typeof functionArgs === "object") {
-                  functionArgs.guid = e.guid;
+                  functionArgs.guid = toolGuid;
+                  if (functionArgs.scope === "public") {
+                    functionArgs.reviewGuid = e.guid;
+                  }
                 }
                 removePublicIpFromToolArguments(
                   functionName,

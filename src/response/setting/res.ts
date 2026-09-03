@@ -988,7 +988,13 @@ export default onResponse(selects, async (e, next) => {
     const enable = match[2] === "开启";
     await redisClient.setAgentSwitch(e.guid, enable);
     await message.send(
-      format(Text(`已${enable ? "开启" : "关闭"}当前会话的 agent 和服务器管理工具`)),
+      format(
+        Text(
+          enable
+            ? "已开启当前会话的 agent 和服务器管理工具"
+            : "已关闭当前会话的 agent 和服务器管理工具，仍可列出、搜索和读取项目",
+        ),
+      ),
     );
     return;
   }

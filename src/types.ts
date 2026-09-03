@@ -21,11 +21,6 @@ export interface AIChatConfig {
     host: string;
     defaultModel: string;
   };
-  redis?: {
-    host: string;
-    port: number;
-    password: string;
-  };
 }
 
 export interface AIConfig {

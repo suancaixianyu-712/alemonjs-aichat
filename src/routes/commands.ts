@@ -8,6 +8,12 @@ export const children = [
     handler: lazy(() => import("../response/help/res")),
   },
 
+  // system status
+  {
+    regular: /^(\/|#)系统状态$/i,
+    handler: lazy(() => import("../response/system-status/res")),
+  },
+
   // revoke
   {
     regular: /^(\/|#)撤回$/i,

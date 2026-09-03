@@ -4,6 +4,8 @@ import middleware from "./routes/middleware";
 import { createPanelServer } from "./panel/server";
 import { startScheduledAITaskScheduler } from "./scheduler";
 import { getRuntimeConfig } from "./config/runtime";
+import { mkdirSync } from "node:fs";
+import path from "node:path";
 
 const startPanelServer = () => {
   if (process.env.AICHAT_PANEL_DISABLED === "1") return;
@@ -25,6 +27,9 @@ export default defineChildren({
   },
   onCreated() {
     const runtimeConfig = getRuntimeConfig();
+    mkdirSync(path.resolve(process.cwd(), "public", "knowledge"), {
+      recursive: true,
+    });
 
     logger.info({
       message: "本地测试启动",

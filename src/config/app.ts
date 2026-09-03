@@ -38,7 +38,6 @@ export const getAiChatConfigValue = (): Record<string, any> => {
     "skills_dir",
     "opencodeServer",
     "localBrowser",
-    "redis",
   ];
   const topLevel = Object.fromEntries(
     topLevelKeys

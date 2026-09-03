@@ -30,9 +30,7 @@ const prependGuidancePrefix = (message: any) => ({
 
 const buildGuidanceMessage = async (event: any) => {
   const cfg = await getChatConfig(event);
-  const capiMessage = prependGuidancePrefix(
-    await buildUserMessage(event, cfg),
-  );
+  const capiMessage = prependGuidancePrefix(await buildUserMessage(event, cfg));
 
   return {
     guidance: true,
@@ -169,6 +167,8 @@ export default onMiddleware(selects, async (event, next) => {
 
     try {
       const botInfo = await onebotClient.getLoginInfo();
+      console.log("botInfo: ", botInfo);
+
       if (!botInfo || !botInfo[0] || botInfo[0].code == 4000) {
         event["ClientError"] =
           "onebot平台连接错误, 影响:无法发送语音,无法获取自己的信息,无法获取at用户的信息,这是alemonjs的锅";

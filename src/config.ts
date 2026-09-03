@@ -1,4 +1,3 @@
-import Redis from "ioredis";
 import { randomUUID } from "node:crypto";
 import { getConfigValue } from "alemonjs";
 import { AIConfig } from "./types";
@@ -96,7 +95,7 @@ export type AIContextStats = AIContextStatsInput & {
 };
 
 class db {
-  redis: Redis;
+  redis: typeof redis;
   systemPrompt = "";
 
   /**
@@ -572,7 +571,7 @@ class db {
     systemPrompt: "",
   };
 
-  constructor(redisInstance?: Redis) {
+  constructor(redisInstance?: typeof redis) {
     this.redis = redisInstance || redis;
   }
 
