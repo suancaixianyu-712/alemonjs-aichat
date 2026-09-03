@@ -1,6 +1,6 @@
 {
   "name": "alemonjs-aichat",
-  "version": "1.0.67",
+  "version": "1.0.68",
   "description": "alemonjs-aichat",
   "author": "suancaixianyu",
   "license": "MIT",
@@ -19,7 +19,6 @@
   },
   "devDependencies": {
     "@alemonjs/bubble": "^2.1.10",
-    "@alemonjs/db": "^0.0.16",
     "@alemonjs/onebot": "^2.1.14",
     "@types/node": "^22.19.17",
     "alemonjs": "2.1.92",
@@ -57,7 +56,7 @@
             "type": "string"
           },
           {
-            "description": "接口地址",
+            "description": "接口地址, 仅支持Completions API",
             "name": "host",
             "required": true,
             "type": "string"
@@ -77,13 +76,13 @@
         ]
       },
       {
-        "description": "xAI 图片生成服务的代理地址",
+        "description": "xAI 图片服务的代理地址",
         "name": "xaiImgProxy",
         "required": false,
         "type": "string"
       },
       {
-        "description": "TTS 语音服务",
+        "description": "TTS 语音服务, 部署服务 https://www.bilibili.com/video/BV1rYUFYcEip",
         "name": "ttsServer",
         "required": false,
         "type": "object",
@@ -152,43 +151,11 @@
             "type": "string"
           }
         ]
-      },
-      {
-        "description": "Redis 连接",
-        "name": "redis",
-        "required": false,
-        "type": "object",
-        "config": [
-          {
-            "description": "Redis 主机或 IP",
-            "name": "host",
-            "required": false,
-            "type": "string"
-          },
-          {
-            "description": "Redis 端口",
-            "name": "port",
-            "required": false,
-            "type": "number",
-            "default": 6379
-          },
-          {
-            "description": "Redis 密码",
-            "name": "password",
-            "required": false,
-            "type": "string"
-          },
-          {
-            "description": "Redis 用户名",
-            "name": "user",
-            "required": false,
-            "type": "string"
-          }
-        ]
       }
     ]
   },
   "dependencies": {
+    "@alemonjs/db": "^0.0.16",
     "@ai-sdk/xai": "^3.0.60",
     "@aws-sdk/client-s3": "^3.975.0",
     "@aws-sdk/s3-request-presigner": "^3.975.0",
@@ -205,6 +172,7 @@
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
     "sharp": "^0.34.5",
+    "systeminformation": "^5.30.5",
     "zod": "^4.3.6"
   }
 }
