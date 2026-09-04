@@ -1843,6 +1843,16 @@ class db {
     await this.redis.set(`ai:agent:switch:${guid}`, enable ? "1" : "0");
   }
 
+  /** 获取是否通过接口获取 bot 信息（按平台，默认开启接口获取） */
+  async getBotInfoSwitch(platform: string): Promise<string> {
+    return (await this.redis.get(`ai:bot_info:switch:${platform}`)) || "1";
+  }
+
+  /** 设置是否通过接口获取 bot 信息（按平台） */
+  async setBotInfoSwitch(platform: string, enable: boolean): Promise<void> {
+    await this.redis.set(`ai:bot_info:switch:${platform}`, enable ? "1" : "0");
+  }
+
   /** 创建定时 AI 任务 */
   async createScheduledAITask(
     input: Omit<ScheduledAITask, "id" | "createdAt">,

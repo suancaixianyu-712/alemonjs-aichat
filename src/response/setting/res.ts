@@ -867,6 +867,33 @@ export default onResponse(selects, async (e, next) => {
     return;
   }
 
+  // 设置 bot 信息获取方式
+  if (/(\/|#)(开启|关闭)bot信息$/i.test(e.msg)) {
+    const match = e.msg.match(/(\/|#)(开启|关闭)bot信息$/i);
+    if (!match) {
+      message.send(
+        format(
+          Text(
+            "格式错误，请按照 格式：/开启bot信息 或 /关闭bot信息 进行设置",
+          ),
+        ),
+      );
+      return;
+    }
+    const enable = match[2] === "开启";
+    await redisClient.setBotInfoSwitch(e.Platform, enable);
+    message.send(
+      format(
+        Text(
+          enable
+            ? `已开启当前平台(${e.Platform}) bot 信息接口获取。`
+            : `已关闭当前平台(${e.Platform}) bot 信息接口获取，将使用默认账号信息，并在提示词平台信息后标注（故障）。`,
+        ),
+      ),
+    );
+    return;
+  }
+
   // 获取所有ai工具列表
   if (/(\/|#)工具列表$/i.test(e.msg)) {
     const tools = await redisClient.getAllToolStatus(e.guid);
