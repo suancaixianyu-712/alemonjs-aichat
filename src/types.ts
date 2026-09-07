@@ -24,6 +24,7 @@ export interface AIChatConfig {
 }
 
 export interface AIConfig {
+  provider?: "deepseek" | "openai" | "grok" | "other";
   host: string;
   key: string;
   model: string;

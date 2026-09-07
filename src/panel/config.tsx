@@ -25,7 +25,7 @@ const runtimeRoot = join(panelDir, "..");
 const panelPort = Number(process.env.JSXP_PORT || process.env.PORT || 8080);
 
 type PanelPage = "config" | "chat";
-type PanelAIConfig = Pick<AIConfig, "host" | "key" | "model"> & {
+type PanelAIConfig = Pick<AIConfig, "provider" | "host" | "key" | "model"> & {
   name: string;
 };
 
@@ -104,7 +104,7 @@ const loadPanelAIConfigs = async () => {
   const names = await withTimeout(
     redisClient.getAIList(),
     1200,
-    "读取 ai:list:* 超时",
+    "读取 AI 模型列表超时",
   );
   const aiConfigs = await withTimeout(
     Promise.all(
@@ -113,6 +113,7 @@ const loadPanelAIConfigs = async () => {
         if (!config) return null;
         return {
           name,
+          provider: config.provider,
           host: config.host || "",
           key: config.key || "",
           model: config.model || "",

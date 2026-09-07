@@ -1,5 +1,6 @@
 {
   "compilerOptions": {
+    "baseUrl": ".",
     "moduleResolution": "bundler",
     "paths": {
       "@src/*": ["./src/*"]

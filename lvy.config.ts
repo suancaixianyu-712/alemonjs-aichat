@@ -3,6 +3,8 @@ import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const includes = (value: string) => process.argv.includes(value);
+const isDevRuntime =
+  includes("--lvy-dev") || process.env.AICHAT_LVY_DEV === "1";
 const cbpPort = process.env.ALEMON_PORT || process.env.port;
 const alemonjs = () =>
   import("alemonjs").then((res) => {
@@ -35,11 +37,18 @@ const jsxp = () =>
 const jsxpPreview = () =>
   import("jsxp").then(({ createServer }) => createServer());
 export default defineConfig({
+  env: {
+    AICHAT_LVY_DEV: isDevRuntime ? "1" : "",
+  },
   plugins: [
     () =>
       includes("--jsxp") ? jsxpPreview : includes("--view") ? jsxp : alemonjs,
   ],
-  alias: {
-    entries: [{ find: "@src", replacement: join(__dirname, "src") }],
-  },
+  // lvyjs 0.2.x 的开发加载器会错误处理 alias；dev 交给 tsx 按
+  // tsconfig paths 解析，构建时仍由 Rollup 使用这里的别名。
+  alias: isDevRuntime
+    ? false
+    : {
+        entries: [{ find: "@src", replacement: join(__dirname, "src") }],
+      },
 });

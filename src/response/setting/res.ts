@@ -1,5 +1,6 @@
 ﻿import redisClient from "@src/config";
-import { Text, useMessage } from "alemonjs";
+import { Text } from "alemonjs";
+import { useMessage } from "@src/utils/command-message";
 import { log } from "console";
 import { getAiChatConfigValue } from "@src/config/app";
 const value = getAiChatConfigValue();
@@ -101,58 +102,6 @@ export default onResponse(selects, async (e, next) => {
     // if (a.length > 0) {
     //   message.send(format(ImageFile(a[0].url)));
     // }
-    return;
-  }
-
-  // 添加AI配置
-  if (/(\/|#)添加ai$/i.test(e.msg)) {
-    message.send(
-      format(
-        Text(
-          "请按照 格式：/添加ai <名称> <主机地址> <api_key> <模型> 进行添加",
-        ),
-      ),
-    );
-    return;
-  }
-
-  // 处理添加AI配置
-  if (/(\/|#)添加ai\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)/i.test(e.msg)) {
-    const match = e.msg.match(/(\/|#)添加ai\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)/i);
-    if (!match) {
-      message.send(
-        format(
-          Text(
-            "格式错误，请按照 格式：/添加ai <名称> <主机地址> <api_key> <模型> 进行添加",
-          ),
-        ),
-      );
-      return;
-    }
-
-    const [, , name, host, key, model] = match;
-    await redisClient.addAI(e.guid, name, host, key, model);
-    message.send(format(Text(`AI ${name} 添加成功！`)));
-  }
-
-  // 切换AI配置
-  if (/(\/|#)(切换)(ai|配置) ?(.*)/i.test(e.msg)) {
-    const match = e.msg.match(/(\/|#)(切换)(ai|配置) ?(.*)/i);
-    if (!match) {
-      message.send(
-        format(Text("格式错误，请按照 格式：/切换ai <名称> 进行切换")),
-      );
-      return;
-    }
-    const [, , , , name] = match;
-    const ai = await redisClient.switchAI(e.guid, name.trim());
-    if (!ai) {
-      message.send(format(Text(`切换失败，未找到 AI ${name} !`)));
-      return;
-    }
-    message.send(
-      format(Text(`已切换到 AI ${name} !`), Text(`\n模型: ${ai.model}`)),
-    );
     return;
   }
 
@@ -449,13 +398,25 @@ export default onResponse(selects, async (e, next) => {
       return;
     }
     aiInfo.model = modelName.trim();
-    await redisClient.addAI(
-      e.guid,
-      aiName.trim(),
-      aiInfo.host,
-      aiInfo.key,
-      modelName.trim(),
-    );
+    if (aiInfo.provider) {
+      await redisClient.deleteAI(aiName.trim());
+      await redisClient.addAI(
+        e.guid,
+        modelName.trim(),
+        aiInfo.host,
+        aiInfo.key,
+        modelName.trim(),
+        aiInfo.provider,
+      );
+    } else {
+      await redisClient.addAI(
+        e.guid,
+        aiName.trim(),
+        aiInfo.host,
+        aiInfo.key,
+        modelName.trim(),
+      );
+    }
 
     message.send(
       format(
@@ -475,15 +436,16 @@ export default onResponse(selects, async (e, next) => {
       return;
     }
     const [, , modelName] = match;
-    const aiInfo = await redisClient.getAIConfig(e.guid);
-    if (!aiInfo.model) {
+    const aiInfo = await redisClient.switchCurrentAIModel(
+      e.guid,
+      modelName.trim(),
+    );
+    if (!aiInfo) {
       message.send(format(Text(`当前没有可用的 AI 配置！`)));
       return;
     }
-    aiInfo.model = modelName.trim();
-    await redisClient.setAIConfig(e.guid, aiInfo);
     message.send(
-      format(Text(`已将当前 AI 的模型修改为 ${modelName.trim()} !`)),
+      format(Text(`已将当前 AI 配置的模型 ID 切换为 ${modelName.trim()} !`)),
     );
     return;
   }
@@ -548,7 +510,7 @@ export default onResponse(selects, async (e, next) => {
       message.send(
         format(
           Text(
-            `未找到 AI「${rawName}」。请先用 /添加ai 添加，或用 /ai列表 查看可用名称。`,
+            `未找到 AI「${rawName}」。请先用 #添加ai 添加，或用 /ai列表 查看可用名称。`,
           ),
         ),
       );

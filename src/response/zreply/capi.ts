@@ -11,6 +11,12 @@ import { log } from "console";
 import OpenAi from "openai";
 import { TTSClient } from "@src/api/tts";
 import {
+  awaitWithAITurnAbort,
+  beginAITurn,
+  isAITurnAbortError,
+  throwIfAITurnAborted,
+} from "@src/api/ai-turn";
+import {
   availableTools,
   removePublicIpFromOutput,
   removePublicIpFromToolArguments,
@@ -25,11 +31,8 @@ import {
   shouldSkipAIReply,
 } from "./getChatConfig";
 import { createTTSMessage } from "./tts";
-import {
-  parseAIReply,
-  removeThinkContent,
-  sendAIReplyToOutput,
-} from "./tools";
+import { executeAlemonCommand } from "@src/routes/commands";
+import { parseAIReply, removeThinkContent, sendAIReplyToOutput } from "./tools";
 
 export const selects = onSelects(["message.create", "private.message.create"]);
 let currentModel = "派蒙-默认"; // 默认音色
@@ -144,9 +147,7 @@ const getToolCallDisplayContent = (message: any): string => {
       message?.reasoningContent ??
       message?.reasoning,
   );
-  const closingThinkTags = [
-    ...reasoningContent.matchAll(/<\/think\s*>/gi),
-  ];
+  const closingThinkTags = [...reasoningContent.matchAll(/<\/think\s*>/gi)];
   const lastClosingThinkTag = closingThinkTags.at(-1);
   if (!lastClosingThinkTag || lastClosingThinkTag.index === undefined) {
     return "";
@@ -393,11 +394,9 @@ export const CApiReply = async (
     : [];
   const describedCurrentImageUrls = new Set<string>();
   const generatedCurrentImageUrls = new Set<string>();
-  const frameworkCommandQueue: string[] = [];
-  console.log(
-    "发送给AI的当前消息:\n",
-    JSON.stringify(usermessage, null, 2),
-  );
+  console.log("发送给AI的当前消息:\n", JSON.stringify(usermessage, null, 2));
+
+  const aiTurn = beginAITurn(e.guid, e.Platform);
 
   try {
     const openai = new OpenAi({
@@ -412,8 +411,12 @@ export const CApiReply = async (
       params: any,
       requestMessages: any[],
     ) => {
+      throwIfAITurnAborted(aiTurn.signal);
       if (!shouldStreamToOutput) {
-        const completion = await openai.chat.completions.create(params);
+        const completion = await openai.chat.completions.create(params, {
+          signal: aiTurn.signal,
+        });
+        throwIfAITurnAborted(aiTurn.signal);
         await recordCapiContextStats(
           e.guid,
           cfg.config.model,
@@ -427,7 +430,9 @@ export const CApiReply = async (
         ...params,
         stream: true,
       };
-      const stream = (await openai.chat.completions.create(streamParams)) as any;
+      const stream = (await openai.chat.completions.create(streamParams, {
+        signal: aiTurn.signal,
+      })) as any;
       let content = "";
       let reasoningContent = "";
       const toolCalls: any[] = [];
@@ -447,6 +452,7 @@ export const CApiReply = async (
       };
 
       for await (const chunk of stream) {
+        throwIfAITurnAborted(aiTurn.signal);
         const delta = chunk?.choices?.[0]?.delta || {};
         const text = extractTextValue(delta.content ?? "");
         if (text) {
@@ -570,6 +576,7 @@ export const CApiReply = async (
 
     try {
       while (true) {
+        throwIfAITurnAborted(aiTurn.signal);
         if (!res.choices[0].message?.tool_calls?.length) {
           const pendingGuidanceMessages = await appendPendingGuidanceMessages(
             e.guid,
@@ -671,6 +678,7 @@ export const CApiReply = async (
         const toolMessages: any[] = [];
 
         for (const toolCall of responseMessage.tool_calls) {
+          throwIfAITurnAborted(aiTurn.signal);
           const functionName = toolCall.function.name;
           let functionArgs: any = {};
 
@@ -736,14 +744,17 @@ export const CApiReply = async (
             functionArgs.isPrivate = e.name === "private.message.create";
           }
 
-          // 框架指令必须绑定当前事件，并通过当前响应结束后的路由续传执行。
-          // 队列由框架注入，模型无法伪造用户、会话或权限。
+          // 框架指令绑定当前真实事件，并在工具调用期间直接执行。
+          // 捕获到的文字和图片链接会作为本次工具结果返回给 AI。
           if (
             functionName === "ExecuteAlemonCommand" &&
             functionArgs &&
             typeof functionArgs === "object"
           ) {
-            functionArgs.commandQueue = frameworkCommandQueue;
+            functionArgs.commandExecutor = (
+              command: string,
+              sendToUser: boolean,
+            ) => executeAlemonCommand(e, command, { sendToUser });
           }
 
           const functionToCall = availableTools[functionName];
@@ -788,9 +799,16 @@ export const CApiReply = async (
                   functionArgs,
                   e.IsMaster === true,
                 );
-                functionResult = await functionToCall(functionArgs);
+                functionResult = await awaitWithAITurnAbort(
+                  functionToCall(functionArgs),
+                  aiTurn.signal,
+                );
+                throwIfAITurnAborted(aiTurn.signal);
               }
             } catch (err: any) {
+              if (isAITurnAbortError(err, aiTurn.signal)) {
+                throw err;
+              }
               console.error(`工具执行失败：${functionName}`, err);
               functionResult = {
                 ok: false,
@@ -799,6 +817,7 @@ export const CApiReply = async (
             }
           }
 
+          throwIfAITurnAborted(aiTurn.signal);
           if (typeof message?.sendToolResult === "function") {
             await message.sendToolResult(functionName, functionResult);
           }
@@ -847,6 +866,7 @@ export const CApiReply = async (
         // log("重新请求AI，参数：", params);
 
         // 重新请求
+        throwIfAITurnAborted(aiTurn.signal);
         res = await requestChatCompletion(params, messages);
 
         // 检查是否还有工具调用需要处理
@@ -865,18 +885,12 @@ export const CApiReply = async (
     reply = removePublicIpFromOutput(reply, e.IsMaster === true);
     if (reply === `${cfg.botName}:[]`) {
       log("AI选择不回复");
-      if (frameworkCommandQueue.length > 0) {
-        return {
-          next: true,
-          commands: frameworkCommandQueue,
-        };
-      }
       return;
     }
 
     // 处理消息
     // 提取ai发送的消息有多少条
-    const aireply = await sendAIReply(reply, cfg, e, message);
+    await sendAIReply(reply, cfg, e, message);
     const assistantMessage = res.choices?.[0]?.message;
     if (assistantMessage) {
       await redisClient.addAIChatHistory(e.guid, {
@@ -885,16 +899,18 @@ export const CApiReply = async (
       });
     }
 
-    const commands = [
-      ...frameworkCommandQueue,
-      ...aireply.nextCommands,
-    ];
     return {
-      next: commands.length > 0,
-      commands: commands.length > 0 ? commands : undefined,
+      next: false,
     };
   } catch (error) {
     await redisClient.setAIToolLoopProcessing(e.guid, false, e.Platform);
+    if (isAITurnAbortError(error, aiTurn.signal)) {
+      log(`当前 AI 回复已停止: ${e.guid}`);
+      return {
+        next: false,
+        stopped: true,
+      };
+    }
     console.error("AI回复出错", error);
     await sendOutputText(
       message,
@@ -904,5 +920,7 @@ export const CApiReply = async (
     return {
       next: true,
     };
+  } finally {
+    aiTurn.finish();
   }
 };

@@ -1,4 +1,5 @@
-import { Image, Text, useMessage } from "alemonjs";
+import { Image, Text } from "alemonjs";
+import { useMessage } from "@src/utils/command-message";
 import { renderComponentIsHtmlToBuffer } from "jsxp";
 import Help from "@src/image/conponent/help";
 import redisClient from "@src/config";
@@ -25,7 +26,7 @@ export default onResponse(selects, async (e) => {
     config.model.trim() === ""
   ) {
     message.send(
-      format(Text("当前配置不完整，请使用 /切换ai 指令切换到可用的配置")),
+      format(Text("当前配置不完整，请使用 #切换AI 指令切换到可用的配置")),
     );
   }
 

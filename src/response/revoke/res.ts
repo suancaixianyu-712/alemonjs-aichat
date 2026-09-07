@@ -1,4 +1,5 @@
-import { Text, useMessage } from "alemonjs";
+import { Text } from "alemonjs";
+import { useMessage } from "@src/utils/command-message";
 
 export const selects = onSelects(["message.create", "private.message.create"]);
 

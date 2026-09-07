@@ -7,7 +7,7 @@ import {
 } from "@src/panel/groupConfig";
 
 type PanelPage = "config" | "chat";
-type AIConfigDraft = Pick<AIConfig, "host" | "key" | "model"> & {
+type AIConfigDraft = Pick<AIConfig, "provider" | "host" | "key" | "model"> & {
   name: string;
 };
 
@@ -74,7 +74,7 @@ const createRedisPreview = (
   if (redisError) {
     return `# AI列表来自 Redis, 但当前读取失败
 # ${redisError}
-keys ai:list:*
+keys ai:model:*
 
 ai:currentAI:{guid} = 当前会话选中的 AI 名称
 ai:config:{guid} = 当前会话实际使用的 AIConfig
@@ -83,21 +83,25 @@ ai:config:{guid} = 当前会话实际使用的 AIConfig
 
   const listPreview = items.length
     ? items
-        .map(
-          (item) => `ai:list:${item.name} = {
+        .map((item) => {
+          const storageKey = item.provider
+            ? `ai:model:${item.provider}:${encodeURIComponent(item.name)}`
+            : `ai:list:${item.name}`;
+          return `${storageKey} = {
+  "provider": "${item.provider || "legacy"}",
   "host": "${item.host}",
   "key": "${item.key}",
   "model": "${item.model}",
   "temperature": 0.7,
   "max_tokens": 4096,
   "systemPrompt": ""
-}`,
-        )
+}`;
+        })
         .join("\n\n")
-    : "# 当前 Redis 中没有 ai:list:*";
+    : "# 当前 Redis 中没有 AI 模型配置";
 
   return `# AI列表来自 Redis, 不是配置文件
-keys ai:list:*
+keys ai:model:*
 
 ${listPreview}
 
@@ -2082,7 +2086,7 @@ const ConfigPage = ({
                 <div className="summary-title">
                   <span className="summary-main">AI列表</span>
                   <span className="summary-meta">
-                    Redis ai:list:*，共 {aiConfigs.length} 个配置
+                    Redis ai:model:*，共 {aiConfigs.length} 个配置
                   </span>
                 </div>
                 <span className="summary-caret" aria-hidden="true">
@@ -2090,8 +2094,8 @@ const ConfigPage = ({
                 </span>
               </summary>
               <div className="source-note">
-                数据来源：Redis 的 <strong>ai:list:*</strong>。添加/编辑后应写入
-                <strong> ai:list:&lt;名称&gt;</strong>，切换当前会话时写入
+                数据来源：Redis 的 <strong>ai:model:*</strong>。旧版
+                <strong> ai:list:*</strong> 会自动归类为 other 并迁移；添加后写入带厂商 ID 的模型键，切换当前会话时写入
                 <strong> ai:currentAI:&lt;guid&gt;</strong> 并同步
                 <strong> ai:config:&lt;guid&gt;</strong>。当前操作目标：
                 <strong> {currentGuid}</strong>。
@@ -2203,7 +2207,7 @@ const ConfigPage = ({
                   ))
                 ) : (
                   <div className="empty-state">
-                    Redis 中还没有 ai:list:*，可通过 /添加ai
+                    Redis 中还没有 AI 模型配置，可通过 #添加ai
                     或后续面板表单创建。
                   </div>
                 )}

@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 import { getConfigValue } from "alemonjs";
 import { AIConfig } from "./types";
 import { redis } from "./redis";
-import { getDeclaredAIConfig } from "./config/app";
 
 export type ScheduledAITask = {
   id: string;
@@ -131,8 +130,7 @@ class db {
         isAssistant && Array.isArray(message.tool_calls)
           ? message.tool_calls.filter(
               (toolCall: any) =>
-                toolCall &&
-                (toolCall.function?.name || toolCall.name),
+                toolCall && (toolCall.function?.name || toolCall.name),
             )
           : [];
 
@@ -182,7 +180,11 @@ class db {
       const matchedToolMessages: any[] = [];
       let allMatched = true;
 
-      for (let toolIndex = 0; toolIndex < normalizedToolCalls.length; toolIndex += 1) {
+      for (
+        let toolIndex = 0;
+        toolIndex < normalizedToolCalls.length;
+        toolIndex += 1
+      ) {
         const toolCall = normalizedToolCalls[toolIndex];
         let foundIndex = followingToolMessages.findIndex(
           (toolMessage, candidateIndex) =>
@@ -190,7 +192,11 @@ class db {
             String(toolMessage?.tool_call_id || "").trim() === toolCall.id,
         );
 
-        if (foundIndex < 0 && !usedToolIndexes.has(toolIndex) && followingToolMessages[toolIndex]) {
+        if (
+          foundIndex < 0 &&
+          !usedToolIndexes.has(toolIndex) &&
+          followingToolMessages[toolIndex]
+        ) {
           // 部分上游流式响应会丢 id，按顺序兜底配对
           foundIndex = toolIndex;
         }
@@ -217,7 +223,10 @@ class db {
         });
       }
 
-      if (allMatched && matchedToolMessages.length === normalizedToolCalls.length) {
+      if (
+        allMatched &&
+        matchedToolMessages.length === normalizedToolCalls.length
+      ) {
         sanitized.push(
           {
             ...message,
@@ -369,29 +378,34 @@ class db {
       return [];
     }
 
-    return history.slice(-ARCHIVED_CHAT_HISTORY_PREVIEW_LIMIT).map((message) => {
-      const compactMessage: Record<string, any> = {
-        role: String(message?.role || "unknown"),
-        content: this.trimText(
-          this.extractMessageText(message?.content),
-          ARCHIVED_CHAT_MESSAGE_MAX_LENGTH,
-        ),
-      };
+    return history
+      .slice(-ARCHIVED_CHAT_HISTORY_PREVIEW_LIMIT)
+      .map((message) => {
+        const compactMessage: Record<string, any> = {
+          role: String(message?.role || "unknown"),
+          content: this.trimText(
+            this.extractMessageText(message?.content),
+            ARCHIVED_CHAT_MESSAGE_MAX_LENGTH,
+          ),
+        };
 
-      if (message?.name) {
-        compactMessage.name = String(message.name);
-      }
+        if (message?.name) {
+          compactMessage.name = String(message.name);
+        }
 
-      if (message?.tool_call_id) {
-        compactMessage.tool_call_id = String(message.tool_call_id);
-      }
+        if (message?.tool_call_id) {
+          compactMessage.tool_call_id = String(message.tool_call_id);
+        }
 
-      if (Array.isArray(message?.tool_calls) && message.tool_calls.length > 0) {
-        compactMessage.tool_calls = this.compactToolCalls(message.tool_calls);
-      }
+        if (
+          Array.isArray(message?.tool_calls) &&
+          message.tool_calls.length > 0
+        ) {
+          compactMessage.tool_calls = this.compactToolCalls(message.tool_calls);
+        }
 
-      return compactMessage;
-    });
+        return compactMessage;
+      });
   }
 
   private buildArchivedChatFallbackRecord(
@@ -497,7 +511,10 @@ class db {
       .join(" ");
 
     if (recent) {
-      return this.trimText(`共 ${history.length} 条消息，最近内容：${recent}`, 180);
+      return this.trimText(
+        `共 ${history.length} 条消息，最近内容：${recent}`,
+        180,
+      );
     }
 
     return this.trimText(
@@ -625,7 +642,11 @@ class db {
   }
 
   /** 获取 GPT 画图工具专用配置 */
-  async getGPTImageConfig(): Promise<{ host: string; key: string; model: string } | null> {
+  async getGPTImageConfig(): Promise<{
+    host: string;
+    key: string;
+    model: string;
+  } | null> {
     const configStr = await this.redis.get("ai:tool:gptimage");
     if (!configStr) return null;
     try {
@@ -636,15 +657,24 @@ class db {
   }
 
   /** 设置 GPT 画图工具专用配置 */
-  async setGPTImageConfig(host: string, key: string, model: string): Promise<void> {
-    await this.redis.set("ai:tool:gptimage", JSON.stringify({ host, key, model }));
+  async setGPTImageConfig(
+    host: string,
+    key: string,
+    model: string,
+  ): Promise<void> {
+    await this.redis.set(
+      "ai:tool:gptimage",
+      JSON.stringify({ host, key, model }),
+    );
   }
 
   /**
    * 获取识图/OCR 专用 AI 完整配置
-   * 从 ai:list 中解析，用于 DeepSeek 等纯文本模型的看图描述
+   * 从厂商模型列表中解析，用于纯文本模型的看图描述
    */
-  async getOCRAIConfig(guid: string): Promise<(AIConfig & { name: string }) | null> {
+  async getOCRAIConfig(
+    guid: string,
+  ): Promise<(AIConfig & { name: string }) | null> {
     const name = await this.getOCRAIName(guid);
     if (!name) {
       return null;
@@ -716,10 +746,7 @@ class db {
   }
 
   /** 设置工具调用前 content 发送开关状态 */
-  async setToolCallContentSwitch(
-    guid: string,
-    enable: boolean,
-  ): Promise<void> {
+  async setToolCallContentSwitch(guid: string, enable: boolean): Promise<void> {
     await this.redis.set(
       `ai:tool_call_content:switch:${guid}`,
       enable ? "1" : "0",
@@ -820,40 +847,120 @@ class db {
     }
   }
 
+  /** 将旧版 AI 列表一次性迁移到带厂商 ID 的新结构。 */
+  private async migrateLegacyAIModels(): Promise<void> {
+    const migrationKey = "ai:migration:provider-models:v1";
+    if (await this.redis.exists(migrationKey)) return;
+
+    const legacyKeys = await this.redis.keys("ai:list:*");
+    const migratedNames = new Set<string>();
+    for (const legacyKey of legacyKeys) {
+      const name = legacyKey.replace("ai:list:", "");
+      const configStr = await this.redis.get(legacyKey);
+      if (!name || !configStr) continue;
+      try {
+        const config = JSON.parse(configStr) as AIConfig;
+        await this.setProviderAIModel("other", name, {
+          ...config,
+          provider: "other",
+        });
+        migratedNames.add(name);
+      } catch {
+        continue;
+      }
+    }
+
+    const currentAIKeys = await this.redis.keys("ai:currentAI:*");
+    for (const currentAIKey of currentAIKeys) {
+      const name = await this.redis.get(currentAIKey);
+      if (name && migratedNames.has(name)) {
+        await this.redis.set(currentAIKey, `other/${name}`);
+      }
+    }
+
+    const currentConfigKeys = await this.redis.keys("ai:config:*");
+    for (const currentConfigKey of currentConfigKeys) {
+      const configStr = await this.redis.get(currentConfigKey);
+      if (!configStr) continue;
+      try {
+        const config = JSON.parse(configStr) as AIConfig;
+        if (!config.provider && config.host && config.key && config.model) {
+          await this.redis.set(
+            currentConfigKey,
+            JSON.stringify({ ...config, provider: "other" }),
+          );
+        }
+      } catch {
+        continue;
+      }
+    }
+
+    if (legacyKeys.length > 0) {
+      await this.redis.del(...legacyKeys);
+    }
+    await this.redis.set(migrationKey, "1");
+  }
+
   /** 获取AI列表 */
   async getAIList(): Promise<string[]> {
-    const keys = await this.redis.keys("ai:list:*");
-    const names = keys.map((key) => key.replace("ai:list:", ""));
-    const declared = getDeclaredAIConfig();
-    if (declared && !names.includes(declared.name)) {
-      names.push(declared.name);
-    }
-    return names;
+    await this.migrateLegacyAIModels();
+    const providerKeys = await this.redis.keys("ai:model:*");
+    const providerNames = providerKeys.flatMap((key) => {
+      const provider = key.split(":")[2];
+      const encodedName = key.split(":").slice(3).join(":");
+      if (!provider || !encodedName) return [];
+      try {
+        return [`${provider}/${decodeURIComponent(encodedName)}`];
+      } catch {
+        return [];
+      }
+    });
+    return [...new Set(providerNames)];
   }
 
-  /** 获取AI列表项；Redis 同名项优先，其次使用 AlemonX 中声明的单个 AI。 */
+  /** 获取带厂商 ID 的 AI 模型配置。 */
   async getAIListConfig(name: string): Promise<AIConfig | null> {
-    const aiConfigStr = await this.redis.get(`ai:list:${name}`);
-    if (aiConfigStr) {
-      return JSON.parse(aiConfigStr) as AIConfig;
+    await this.migrateLegacyAIModels();
+    const providerKeys = await this.redis.keys("ai:model:*");
+    const providerKey = providerKeys.find((key) => {
+      const provider = key.split(":")[2];
+      const encodedName = key.split(":").slice(3).join(":");
+      try {
+        const modelName = decodeURIComponent(encodedName);
+        return `${provider}/${modelName}` === name || modelName === name;
+      } catch {
+        return false;
+      }
+    });
+    if (providerKey) {
+      const providerConfigStr = await this.redis.get(providerKey);
+      if (providerConfigStr) {
+        return JSON.parse(providerConfigStr) as AIConfig;
+      }
     }
 
-    const declared = getDeclaredAIConfig();
-    if (!declared || declared.name !== name) {
-      return null;
-    }
-
-    return {
-      ...db.defaultAIConfig,
-      host: declared.host,
-      key: declared.key,
-      model: declared.model,
-    };
+    return null;
   }
 
-  /** 设置AI列表项 */
-  async setAIList(name: string, config: AIConfig): Promise<void> {
-    await this.redis.set(`ai:list:${name}`, JSON.stringify(config));
+  /** 按厂商保存模型；键和值中都保留厂商 ID。 */
+  async setProviderAIModel(
+    provider: NonNullable<AIConfig["provider"]>,
+    name: string,
+    config: AIConfig,
+  ): Promise<void> {
+    const storageKey = `ai:model:${provider}:${encodeURIComponent(name)}`;
+    await this.redis.set(storageKey, JSON.stringify({ ...config, provider }));
+  }
+
+  /** 获取某个厂商保存的首个模型配置，供厂商专属能力复用凭据。 */
+  async getProviderAIConfig(
+    provider: NonNullable<AIConfig["provider"]>,
+  ): Promise<AIConfig | null> {
+    await this.migrateLegacyAIModels();
+    const keys = await this.redis.keys(`ai:model:${provider}:*`);
+    if (keys.length === 0) return null;
+    const configStr = await this.redis.get(keys[0]);
+    return configStr ? (JSON.parse(configStr) as AIConfig) : null;
   }
 
   /** 新增AI配置并切换 */
@@ -863,6 +970,7 @@ class db {
     host: string,
     key: string,
     model: string,
+    provider: NonNullable<AIConfig["provider"]> = "other",
   ): Promise<void> {
     const defaultConfig = await this.getAIConfig();
     const aiConfig = {
@@ -870,19 +978,31 @@ class db {
       host,
       key,
       model,
+      provider,
     };
-    await this.setAIList(name, aiConfig);
-    await this.switchAI(guid, name);
+    await this.setProviderAIModel(provider, name, aiConfig);
+    await this.switchAI(guid, `${provider}/${name}`);
   }
 
   /** 删除AI配置 */
   async deleteAI(name: string): Promise<boolean> {
-    const aiConfigStr = await this.redis.get(`ai:list:${name}`);
-    if (!aiConfigStr) {
+    await this.migrateLegacyAIModels();
+    const providerKeys = await this.redis.keys("ai:model:*");
+    const matchedProviderKeys = providerKeys.filter((key) => {
+      const provider = key.split(":")[2];
+      const encodedName = key.split(":").slice(3).join(":");
+      try {
+        const modelName = decodeURIComponent(encodedName);
+        return `${provider}/${modelName}` === name || modelName === name;
+      } catch {
+        return false;
+      }
+    });
+    if (matchedProviderKeys.length === 0) {
       console.log("删除失败, 无此模型");
       return false;
     }
-    await this.redis.del(`ai:list:${name}`);
+    await this.redis.del(...matchedProviderKeys);
     return true;
   }
 
@@ -901,6 +1021,51 @@ class db {
     // 记录当前切换的ai名字
     await this.redis.set(`ai:currentAI:${guid}`, name);
     return aiConfig;
+  }
+
+  /**
+   * 切换当前 AI 配置使用的模型 ID，并同步回当前选中的模型配置。
+   * 这样切换到其他 AI 后再切回来，仍会使用刚刚选择的模型 ID。
+   */
+  async switchCurrentAIModel(
+    guid: string,
+    model: string,
+  ): Promise<AIConfig | null> {
+    const modelID = model.trim();
+    if (!modelID) return null;
+
+    const currentConfig = await this.getAIConfig(guid);
+    if (!currentConfig.host || !currentConfig.key || !currentConfig.model) {
+      return null;
+    }
+
+    const currentAI = await this.getCurrentAI(guid);
+    const separatorIndex = currentAI.indexOf("/");
+    if (separatorIndex > 0) {
+      const provider = currentAI.slice(0, separatorIndex) as NonNullable<
+        AIConfig["provider"]
+      >;
+      const name = currentAI.slice(separatorIndex + 1);
+      const providers: NonNullable<AIConfig["provider"]>[] = [
+        "deepseek",
+        "openai",
+        "grok",
+        "other",
+      ];
+      if (providers.includes(provider) && name) {
+        const savedConfig = await this.getAIListConfig(currentAI);
+        if (savedConfig) {
+          await this.setProviderAIModel(provider, name, {
+            ...savedConfig,
+            model: modelID,
+          });
+        }
+      }
+    }
+
+    const nextConfig = { ...currentConfig, model: modelID };
+    await this.setAIConfig(guid, nextConfig);
+    return nextConfig;
   }
 
   /** 获取当前使用的AI名称 */
@@ -970,7 +1135,10 @@ class db {
   /** 设置聊天历史 */
   async setAIChatHistory(guid: string, history: any[]): Promise<void> {
     const sanitizedHistory = this.sanitizeAIChatHistory(history);
-    await this.redis.set(`ai:history:${guid}`, JSON.stringify(sanitizedHistory));
+    await this.redis.set(
+      `ai:history:${guid}`,
+      JSON.stringify(sanitizedHistory),
+    );
   }
 
   /** 添加聊天历史 */
@@ -1075,7 +1243,8 @@ class db {
     const transcript = this.buildChatHistoryTranscript(history);
     const id = Date.now().toString();
     const summary = this.trimText(
-      options?.summary?.trim() || this.buildFallbackSummary(history, transcript),
+      options?.summary?.trim() ||
+        this.buildFallbackSummary(history, transcript),
       ARCHIVED_CHAT_SUMMARY_MAX_LENGTH,
     );
     const detail = this.trimText(
@@ -1261,7 +1430,10 @@ class db {
   }
 
   /** 获取工具调用中的处理状态 */
-  async getAIToolLoopProcessing(guid: string, platform?: string): Promise<string> {
+  async getAIToolLoopProcessing(
+    guid: string,
+    platform?: string,
+  ): Promise<string> {
     const key = this.getToolLoopStateKey(guid, platform);
     let processing = await this.redis.get(key);
     if (!processing && platform) {
@@ -1349,7 +1521,10 @@ class db {
   }
 
   /** 清空工具调用期间的引导消息 */
-  async clearAIGuidanceMessages(guid: string, platform?: string): Promise<void> {
+  async clearAIGuidanceMessages(
+    guid: string,
+    platform?: string,
+  ): Promise<void> {
     const keys = [
       this.getGuidanceMessageKey(guid, platform),
       `ai:guidance:${guid}`,
@@ -1441,14 +1616,8 @@ class db {
           parsed?.transcript || detail || "",
           ARCHIVED_CHAT_TRANSCRIPT_MAX_LENGTH,
         ),
-        detail: this.trimText(
-          parsed?.detail || detail || "",
-          2000,
-        ),
-        summary: this.trimText(
-          parsed?.summary || summary || "无摘要",
-          180,
-        ),
+        detail: this.trimText(parsed?.detail || detail || "", 2000),
+        summary: this.trimText(parsed?.summary || summary || "无摘要", 180),
         history: this.compactArchivedHistory(parsed?.history || []),
       };
     } catch {
@@ -1525,23 +1694,35 @@ class db {
     const blocks: string[] = [];
     const userMemory = userKey ? await this.getUserData(userKey) : null;
     if (userMemory) {
-      blocks.push(`用户长期记忆（优先展示最近记录）:\n${this.trimLatestText(userMemory, 2000)}`);
+      blocks.push(
+        `用户长期记忆（优先展示最近记录）:\n${this.trimLatestText(userMemory, 2000)}`,
+      );
     }
 
     const normalizedQuery = query.trim();
     if (normalizedQuery) {
-      const scopedRecords = await this.searchArchivedChatRecords(normalizedQuery, {
-        guid,
-        limit,
-      });
+      const scopedRecords = await this.searchArchivedChatRecords(
+        normalizedQuery,
+        {
+          guid,
+          limit,
+        },
+      );
       const records = [...scopedRecords];
 
       if (records.length < limit) {
-        const globalRecords = await this.searchArchivedChatRecords(normalizedQuery, {
-          limit: limit * 2,
-        });
+        const globalRecords = await this.searchArchivedChatRecords(
+          normalizedQuery,
+          {
+            limit: limit * 2,
+          },
+        );
         for (const record of globalRecords) {
-          if (records.some((item) => item.guid === record.guid && item.id === record.id)) {
+          if (
+            records.some(
+              (item) => item.guid === record.guid && item.id === record.id,
+            )
+          ) {
             continue;
           }
           records.push(record);
@@ -1559,17 +1740,17 @@ class db {
           ? await this.listArchivedChatRecords(guid, Math.min(limit, 2))
           : [];
 
-      const finalRecords = (records.length > 0 ? records : fallbackRecords).slice(
-        0,
-        limit,
-      );
+      const finalRecords = (
+        records.length > 0 ? records : fallbackRecords
+      ).slice(0, limit);
 
       if (finalRecords.length > 0) {
         blocks.push(
           [
             "相关历史归档:",
             ...finalRecords.map((record) => {
-              const scope = record.guid === guid ? "当前会话" : `其他会话(${record.guid})`;
+              const scope =
+                record.guid === guid ? "当前会话" : `其他会话(${record.guid})`;
               return `- ${scope} / 归档ID:${record.id} / 摘要:${this.trimText(record.summary || "无摘要", 120)} / 详情:${this.trimText(record.detail || record.transcript || "无详情", 220)}`;
             }),
           ].join("\n"),
@@ -1875,9 +2056,7 @@ class db {
   }
 
   /** 更新定时 AI 任务的下一次触发时间 */
-  async updateScheduledAITask(
-    task: ScheduledAITask,
-  ): Promise<void> {
+  async updateScheduledAITask(task: ScheduledAITask): Promise<void> {
     await this.redis.hset("ai:scheduled_tasks", task.id, JSON.stringify(task));
   }
 

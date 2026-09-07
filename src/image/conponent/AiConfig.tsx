@@ -5,7 +5,7 @@ import { LinkStyleSheet } from "jsxp";
 import img from "@src/assets/113574575_p0_master1200.jpg";
 
 const cmds = [
-  { cmd: "/切换AI <AI名称>", desc: "切换当前使用的AI模型" },
+  { cmd: "#切换AI [厂商/模型]", desc: "按厂商选择或直接切换AI模型" },
   { cmd: "/切换模型 <模型名称>", desc: "切换当前使用的AI模型" },
   { cmd: "/<开启|关闭>仅艾特触发", desc: "开启或关闭仅艾特触发功能" },
   { cmd: "/<开启|关闭>工具", desc: "开启或关闭AI工具" },

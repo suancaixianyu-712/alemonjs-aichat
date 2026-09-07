@@ -1,4 +1,5 @@
-import { Image, useMessage } from "alemonjs";
+import { Image } from "alemonjs";
+import { useMessage } from "@src/utils/command-message";
 import { renderComponentIsHtmlToBuffer } from "jsxp";
 import SystemStatus from "@src/image/conponent/SystemStatus";
 import { collectSystemStatus } from "@src/utils/system-status";

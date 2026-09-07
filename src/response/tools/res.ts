@@ -2,11 +2,11 @@
   Image,
   Text,
   ImageURL,
-  useMessage,
   Video,
   Mention,
   Audio,
 } from "alemonjs";
+import { useMessage } from "@src/utils/command-message";
 import OpenAi from "openai";
 import { sendTTSMessage } from "../zreply/res";
 import { availableTools } from "@src/api/aitools";

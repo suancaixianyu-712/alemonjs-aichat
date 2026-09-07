@@ -1,7 +1,8 @@
 import redisClient from "@src/config";
 import { loadSkills } from "@src/api/loadSkill";
 import AiConfig from "@src/image/conponent/AiConfig";
-import { Text, useMessage, Image } from "alemonjs";
+import { Text, Image } from "alemonjs";
+import { useMessage } from "@src/utils/command-message";
 import { renderComponentIsHtmlToBuffer } from "jsxp";
 import OpenAi from "openai";
 export const selects = onSelects(["message.create", "private.message.create"]);

@@ -1,7 +1,12 @@
 import { defineRouter, lazy } from "alemonjs";
 import { Regular } from "alemonjs/utils";
+import {
+  COMMAND_OUTPUT_CAPTURE,
+  resolveCommandOutput,
+  type CommandOutputCapture,
+} from "@src/utils/command-message";
 
-export const children = [
+export const commandChildren = [
   // help
   {
     regular: /(\/|#)(ai)?(指令|帮助|菜单|功能)$/i,
@@ -72,12 +77,15 @@ export const children = [
     handler: lazy(() => import("../response/config/res")),
   },
 
+  // switch AI
+  {
+    regular: /^(#|\/)切换(?:ai|配置)(?:\s+.+)?$/i,
+    handler: lazy(() => import("../response/switch-ai/res")),
+  },
+
   // setting (包含大量子命令)
   {
     regular: Regular.or(
-      /(\/|#)添加ai$/i,
-      /(\/|#)添加ai\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)/i,
-      /(\/|#)(切换)(ai|配置) ?(.*)/i,
       /(\/|#)添加提示词$/i,
       /(\/|#)添加提示词 (\S+) ([\s\S]+)/i,
       /(\/|#)(删除)(提示词|提示词列表) ?(.*)/i,
@@ -127,11 +135,15 @@ export const children = [
     ),
     handler: lazy(() => import("../response/affection/res")),
   },
-  // fallback: zreply - 最低优先级，处理普通对话
-  // {
-  //   regular: /.*/,
-  //   handler: lazy(() => import("../response/zreply/res")),
-  // },
+];
+
+export const children = [
+  ...commandChildren,
+  // 普通 AI 对话放在响应路由末尾，不参与全局中间件处理。
+  {
+    regular: /.*/,
+    handler: lazy(() => import("../response/ai-chat/res")),
+  },
 ];
 
 /**
@@ -141,23 +153,32 @@ export const children = [
  * MessageText 并调用 next() 不会重新匹配命令。AI 工具需要显式找到同一份路由
  * 定义并调用对应处理器，才能真正执行指令，同时保留原用户、会话和权限字段。
  */
-export const executeAlemonCommand = async (event: any, command: string) => {
+export const executeAlemonCommand = async (
+  event: any,
+  command: string,
+  options: { sendToUser?: boolean } = {},
+) => {
   const normalizedCommand = String(command || "").trim();
   if (!normalizedCommand) {
     return { matched: false, command: normalizedCommand };
   }
 
-  for (const route of children) {
+  for (const route of commandChildren) {
     if (!route.regular || !route.handler) continue;
     route.regular.lastIndex = 0;
     if (!route.regular.test(normalizedCommand)) continue;
 
+    const capture: CommandOutputCapture = {
+      sendToUser: options.sendToUser === true,
+      payloads: [],
+    };
     const commandEvent = {
       ...event,
       MessageText: normalizedCommand,
       msg: normalizedCommand,
       raw_message: normalizedCommand,
       Xianyu: false,
+      [COMMAND_OUTPUT_CAPTURE]: capture,
     };
     delete commandEvent.__route;
 
@@ -189,7 +210,12 @@ export const executeAlemonCommand = async (event: any, command: string) => {
       const result = await executable(commandEvent, () => undefined);
       if (result !== true) break;
     }
-    return { matched: true, command: normalizedCommand };
+    return {
+      matched: true,
+      command: normalizedCommand,
+      sentToUser: capture.sendToUser,
+      output: await resolveCommandOutput(capture),
+    };
   }
 
   return { matched: false, command: normalizedCommand };

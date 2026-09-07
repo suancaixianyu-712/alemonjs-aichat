@@ -914,7 +914,7 @@ export const tools: ChatCompletionTool[] = [
     function: {
       name: "ExecuteAlemonCommand",
       description:
-        "执行一条 AlemonJS 框架指令。用户要求查看配置、切换 AI/模型、开关功能、管理提示词或执行 GetCommand 返回的任意框架指令时，应直接调用本工具，不要在回复中输出 <command=...> 标签。指令会沿用当前消息的真实用户、会话和权限，由框架原有路由执行；本工具不会绕过主人或管理员权限检查。每次调用只执行一条完整指令。",
+        "执行一条 AlemonJS 框架指令并返回指令产生的文字、图片链接及其他输出。用户要求查看配置、切换 AI/模型、开关功能、管理提示词或执行 GetCommand 返回的任意框架指令时，应直接调用本工具，不要在回复中输出 <command=...> 标签。指令会沿用当前消息的真实用户、会话和权限，由框架原有路由执行；本工具不会绕过主人或管理员权限检查。默认拦截指令消息、不直接发给用户，由你根据工具结果统一回复；确需让用户同时收到原始指令输出时才设置 send_to_user=true。每次调用只执行一条完整指令。",
       parameters: {
         type: "object",
         properties: {
@@ -922,6 +922,12 @@ export const tools: ChatCompletionTool[] = [
             type: "string",
             description:
               "要执行的完整框架指令，必须以 / 或 # 开头，例如 /ai配置、#切换模型 gpt-5。参数应直接包含在这条字符串中。",
+          },
+          send_to_user: {
+            type: "boolean",
+            description:
+              "是否把指令原始输出同时发送给用户。默认 false，仅将捕获结果返回给 AI；设置为 true 时会同步发送给用户。",
+            default: false,
           },
         },
         required: ["command"],
@@ -3527,12 +3533,11 @@ export const availableTools = {
   },
 
   Photoshop: async ({ image_url, instruction }) => {
-    // 从aiconfig中查询grok配置
-    const aiConfigStr = await redis.get(`ai:list:grok`);
-    if (!aiConfigStr) {
+    // 从厂商模型配置中查询 Grok 凭据
+    const aiConfig = await redisClient.getProviderAIConfig("grok");
+    if (!aiConfig) {
       return "未找到AI配置";
     }
-    const aiConfig = JSON.parse(aiConfigStr);
 
     try {
       // 处理单个或多个图片
@@ -3683,12 +3688,11 @@ export const availableTools = {
   },
 
   AIVideos: async ({ image_url, instruction }) => {
-    // 从aiconfig中查询grok配置
-    const aiConfigStr = await redis.get(`ai:list:grok`);
-    if (!aiConfigStr) {
+    // 从厂商模型配置中查询 Grok 凭据
+    const aiConfig = await redisClient.getProviderAIConfig("grok");
+    if (!aiConfig) {
       return "未找到AI配置";
     }
-    const aiConfig = JSON.parse(aiConfigStr);
 
     // 处理单个或多个图片
     const imageUrls = Array.isArray(image_url) ? image_url : [image_url];
@@ -3764,12 +3768,11 @@ export const availableTools = {
   },
 
   AIVideoResult: async ({ request_id }) => {
-    // 从aiconfig中查询grok配置
-    const aiConfigStr = await redis.get(`ai:list:grok`);
-    if (!aiConfigStr) {
+    // 从厂商模型配置中查询 Grok 凭据
+    const aiConfig = await redisClient.getProviderAIConfig("grok");
+    if (!aiConfig) {
       return "未找到AI配置";
     }
-    const aiConfig = JSON.parse(aiConfigStr);
 
     try {
       const res = await fetch(aiConfig.host + `/videos/${request_id}`, {
@@ -4792,10 +4795,15 @@ export const availableTools = {
 
   ExecuteAlemonCommand: async ({
     command,
-    commandQueue,
+    send_to_user = false,
+    commandExecutor,
   }: {
     command: string;
-    commandQueue?: string[];
+    send_to_user?: boolean;
+    commandExecutor?: (
+      command: string,
+      sendToUser: boolean,
+    ) => Promise<unknown>;
   }) => {
     const normalizedCommand = String(command || "").trim();
     if (!normalizedCommand) {
@@ -4813,25 +4821,25 @@ export const availableTools = {
     if (/\r|\n/.test(normalizedCommand)) {
       return { success: false, error: "每次只能执行一条框架指令" };
     }
-    if (!Array.isArray(commandQueue)) {
+    if (typeof commandExecutor !== "function") {
       return {
         success: false,
         error: "当前调用环境不支持执行框架指令",
       };
     }
-    if (commandQueue.length > 0) {
+
+    const result = await commandExecutor(
+      normalizedCommand,
+      send_to_user === true,
+    );
+    if ((result as any)?.matched === false) {
       return {
         success: false,
-        error: "本轮已经提交过一条框架指令，请等待执行结果后再执行下一条",
+        error: `未找到可执行的框架指令：${normalizedCommand}`,
+        ...((result as object) || {}),
       };
     }
-
-    commandQueue.push(normalizedCommand);
-    return {
-      success: true,
-      command: normalizedCommand,
-      status: "已提交给 AlemonJS 框架执行",
-    };
+    return { success: true, ...((result as object) || {}) };
   },
 
   http_request: async ({
