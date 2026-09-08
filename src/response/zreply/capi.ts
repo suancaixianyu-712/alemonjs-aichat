@@ -33,12 +33,25 @@ import {
 import { createTTSMessage } from "./tts";
 import { executeAlemonCommand } from "@src/routes/commands";
 import { parseAIReply, removeThinkContent, sendAIReplyToOutput } from "./tools";
+import { requestRapiCompletion } from "./rapi";
+import { getProviderBuiltinToolParams } from "./provider-tools";
 
 export const selects = onSelects(["message.create", "private.message.create"]);
 let currentModel = "派蒙-默认"; // 默认音色
 const CAPI_CONTEXT_COMPRESSION_RATIO = 0.9;
 const CAPI_CONTEXT_RETAIN_RATIO = 0.35;
 const AUTO_SUMMARY_DETAIL_MAX_LENGTH = 2000;
+
+const applyProviderBuiltinTools = (params: any, cfg: any) => {
+  const native = getProviderBuiltinToolParams(cfg.config);
+  if (cfg.config.apiMode === "rapi") {
+    params.builtinTools = native.rapiTools;
+    params.builtinIncludes = native.include;
+  } else {
+    Object.assign(params, native.capiParams ?? {});
+  }
+  return params;
+};
 
 const sendAIReply = async (
   reply: string,
@@ -226,6 +239,19 @@ const normalizeAssistantToolCalls = (toolCalls: any[] | undefined | null) => {
     }));
 };
 
+const stripRapiMetadata = (messages: any[]) =>
+  messages.map((message) => {
+    if (
+      !message ||
+      typeof message !== "object" ||
+      !("_rapiOutput" in message)
+    ) {
+      return message;
+    }
+    const { _rapiOutput: _ignored, ...cleanMessage } = message;
+    return cleanMessage;
+  });
+
 const buildToolResultMessage = (
   toolCall: any,
   functionName: string,
@@ -350,6 +376,7 @@ const recordCapiContextStats = async (
   model: string,
   messages: any[],
   completion: any,
+  mode: "capi" | "rapi" = "capi",
 ) => {
   const usage = completion?.usage;
   const promptTokens = getNumber(usage?.prompt_tokens ?? usage?.input_tokens);
@@ -359,7 +386,7 @@ const recordCapiContextStats = async (
   const contextCharLength = getTextLength(messages);
 
   await redisClient.recordAIContextStats(guid, {
-    mode: "capi",
+    mode,
     model,
     contextMessageCount: messages.length,
     contextCharLength,
@@ -412,10 +439,32 @@ export const CApiReply = async (
       requestMessages: any[],
     ) => {
       throwIfAITurnAborted(aiTurn.signal);
-      if (!shouldStreamToOutput) {
-        const completion = await openai.chat.completions.create(params, {
+      if (cfg.config.apiMode === "rapi") {
+        const completion = await requestRapiCompletion({
+          client: openai,
+          params,
           signal: aiTurn.signal,
+          onTextDelta: shouldStreamToOutput
+            ? (text) => outputMessage.streamTextDelta(text)
+            : undefined,
         });
+        throwIfAITurnAborted(aiTurn.signal);
+        await recordCapiContextStats(
+          e.guid,
+          cfg.config.model,
+          requestMessages,
+          completion,
+          "rapi",
+        );
+        return completion as any;
+      }
+      if (!shouldStreamToOutput) {
+        const completion = await openai.chat.completions.create(
+          { ...params, messages: stripRapiMetadata(params.messages || []) },
+          {
+            signal: aiTurn.signal,
+          },
+        );
         throwIfAITurnAborted(aiTurn.signal);
         await recordCapiContextStats(
           e.guid,
@@ -428,6 +477,7 @@ export const CApiReply = async (
 
       const streamParams = {
         ...params,
+        messages: stripRapiMetadata(params.messages || []),
         stream: true,
       };
       const stream = (await openai.chat.completions.create(streamParams, {
@@ -532,6 +582,7 @@ export const CApiReply = async (
     }
     const deepThoughtReasoning = getDeepThoughtReasoning(cfg);
     Object.assign(createParams, deepThoughtReasoning);
+    applyProviderBuiltinTools(createParams, cfg);
     if (!shouldStreamToOutput) {
       createParams["stream"] = false;
     }
@@ -606,6 +657,7 @@ export const CApiReply = async (
             params.tool_choice = "auto";
           }
           Object.assign(params, getDeepThoughtReasoning(cfg));
+          applyProviderBuiltinTools(params, cfg);
           res = await requestChatCompletion(params, messages);
           if (!res.choices || res.choices.length === 0) {
             log("AI未返回内容");
@@ -856,12 +908,15 @@ export const CApiReply = async (
         const params: any = {
           model: cfg.config.model,
           messages: messages,
-          tools: cfg.toolConfig.cApiToolList,
-          tool_choice: "auto",
         };
+        if (cfg.toolConfig.toolSwitch === "1") {
+          params.tools = cfg.toolConfig.cApiToolList;
+          params.tool_choice = "auto";
+        }
 
         const deepThoughtReasoning = getDeepThoughtReasoning(cfg);
         Object.assign(params, deepThoughtReasoning);
+        applyProviderBuiltinTools(params, cfg);
 
         // log("重新请求AI，参数：", params);
 

@@ -107,7 +107,11 @@ const switchToModel = async (e: any, identifier: string) => {
     return false;
   }
   await message.send(
-    format(Text(`已切换到 AI ${identifier}。`), Text(`\n模型：${ai.model}`)),
+    format(
+      Text(`已切换到 AI ${identifier}。`),
+      Text(`\n模型：${ai.model}`),
+      Text(`\n接口：${ai.apiMode === "rapi" ? "RAPI" : "CAPI"}`),
+    ),
   );
   return true;
 };

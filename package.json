@@ -9,6 +9,7 @@
   "scripts": {
     "dev": "npx lvy dev",
     "build": "npx lvy build",
+    "test:panel-web": "npm run build && node --experimental-test-module-mocks --test tests/panel-web.test.mjs",
     "review": "npx alemonc start",
     "view": "npx lvy dev --view",
     "img": "tsx watch --import lvyjs/register app.ts --jsxp",
@@ -42,6 +43,12 @@
     "access": "public"
   },
   "alemonjs": {
+    "web": {
+      "config": {
+        "serverPort": true
+      },
+      "root": "web"
+    },
     "config": [
       {
         "description": "内置 AI 配置",

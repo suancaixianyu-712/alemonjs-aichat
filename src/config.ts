@@ -69,7 +69,7 @@ type AIToolLoopState = {
 };
 
 export type AIContextStatsInput = {
-  mode: "capi";
+  mode: "capi" | "rapi";
   model: string;
   contextMessageCount: number;
   contextCharLength: number;
@@ -580,6 +580,11 @@ class db {
   }
 
   static defaultAIConfig: AIConfig = {
+    apiMode: "capi",
+    builtinTools: {
+      enabled: true,
+      overrides: {},
+    },
     host: "",
     key: "",
     model: "",
@@ -971,6 +976,7 @@ class db {
     key: string,
     model: string,
     provider: NonNullable<AIConfig["provider"]> = "other",
+    apiMode: NonNullable<AIConfig["apiMode"]> = "capi",
   ): Promise<void> {
     const defaultConfig = await this.getAIConfig();
     const aiConfig = {
@@ -979,6 +985,7 @@ class db {
       key,
       model,
       provider,
+      apiMode,
     };
     await this.setProviderAIModel(provider, name, aiConfig);
     await this.switchAI(guid, `${provider}/${name}`);
@@ -1064,6 +1071,101 @@ class db {
     }
 
     const nextConfig = { ...currentConfig, model: modelID };
+    await this.setAIConfig(guid, nextConfig);
+    return nextConfig;
+  }
+
+  /** 切换当前 AI 使用的 API 协议，并同步回当前选中的模型配置。 */
+  async switchCurrentAIAPI(
+    guid: string,
+    apiMode: NonNullable<AIConfig["apiMode"]>,
+  ): Promise<AIConfig | null> {
+    if (apiMode !== "capi" && apiMode !== "rapi") return null;
+
+    const currentConfig = await this.getAIConfig(guid);
+    if (!currentConfig.host || !currentConfig.key || !currentConfig.model) {
+      return null;
+    }
+
+    const currentAI = await this.getCurrentAI(guid);
+    const separatorIndex = currentAI.indexOf("/");
+    if (separatorIndex > 0) {
+      const provider = currentAI.slice(0, separatorIndex) as NonNullable<
+        AIConfig["provider"]
+      >;
+      const name = currentAI.slice(separatorIndex + 1);
+      const providers: NonNullable<AIConfig["provider"]>[] = [
+        "deepseek",
+        "openai",
+        "grok",
+        "other",
+      ];
+      if (providers.includes(provider) && name) {
+        const savedConfig = await this.getAIListConfig(currentAI);
+        if (savedConfig) {
+          await this.setProviderAIModel(provider, name, {
+            ...savedConfig,
+            apiMode,
+          });
+        }
+      }
+    }
+
+    const nextConfig = { ...currentConfig, apiMode };
+    await this.setAIConfig(guid, nextConfig);
+    return nextConfig;
+  }
+
+  /** 修改当前 AI 的厂商内置工具开关，并同步回该 AI 的持久化配置。 */
+  async switchCurrentAIBuiltinTools(
+    guid: string,
+    enable: boolean,
+    tool?: string,
+  ): Promise<AIConfig | null> {
+    const currentConfig = await this.getAIConfig(guid);
+    if (!currentConfig.host || !currentConfig.key || !currentConfig.model) {
+      return null;
+    }
+
+    const currentTools = currentConfig.builtinTools ?? {};
+    const builtinTools = tool
+      ? {
+          enabled: currentTools.enabled !== false,
+          overrides: {
+            ...(currentTools.overrides ?? {}),
+            [tool]: enable,
+          },
+        }
+      : {
+          enabled: enable,
+          overrides: {},
+        };
+    const nextConfig: AIConfig = { ...currentConfig, builtinTools };
+
+    const currentAI = await this.getCurrentAI(guid);
+    const separatorIndex = currentAI.indexOf("/");
+    if (separatorIndex > 0) {
+      const provider = currentAI.slice(0, separatorIndex) as NonNullable<
+        AIConfig["provider"]
+      >;
+      const name = currentAI.slice(separatorIndex + 1);
+      const providers: NonNullable<AIConfig["provider"]>[] = [
+        "deepseek",
+        "openai",
+        "grok",
+        "other",
+      ];
+      if (providers.includes(provider) && name) {
+        const savedConfig = await this.getAIListConfig(currentAI);
+        if (savedConfig) {
+          await this.setProviderAIModel(provider, name, {
+            ...savedConfig,
+            builtinTools,
+          });
+        }
+      }
+    }
+
     await this.setAIConfig(guid, nextConfig);
     return nextConfig;
   }

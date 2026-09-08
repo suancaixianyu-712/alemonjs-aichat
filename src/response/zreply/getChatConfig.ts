@@ -616,44 +616,67 @@ export const buildUserMessage = async (
 };
 
 export const getDeepThoughtReasoning = (cfg: any) => {
-  if (cfg.deepThoughtSwitch === "1") {
-    // 开启深度思考, 深度 中等medium
-    if (cfg.config.model.includes("deepseek")) {
+  const model = String(cfg?.config?.model || "").toLowerCase();
+  const enabled = cfg.deepThoughtSwitch === "1";
+  const apiMode = cfg?.config?.apiMode === "rapi" ? "rapi" : "capi";
+  const effort = enabled ? "medium" : "none";
+  const isOpenAIReasoningModel =
+    model.startsWith("gpt-5") ||
+    model.startsWith("gpt-6") ||
+    /^o\d/.test(model);
+
+  if (apiMode === "rapi") {
+    // 火山方舟 Responses API 使用自己的 thinking 开关。
+    if (model.includes("doubao")) {
       return {
-        thinking: { type: "enabled" },
-        reasoning_effort: "medium",
+        thinking: { type: enabled ? "enabled" : "disabled" },
       };
     }
-    if (cfg.config.model.includes("doubao")) {
+
+    // OpenAI、DeepSeek 和 Qwen 的 Responses API 均使用 reasoning.effort。
+    // Qwen 仍兼容 enable_thinking，但官方已建议改用 reasoning.effort。
+    if (
+      model.includes("deepseek") ||
+      model.includes("qwen") ||
+      isOpenAIReasoningModel
+    ) {
       return {
-        reasoning: {
-          effort: "medium",
-        },
+        reasoning: { effort },
       };
     }
-    if (cfg.config.model.includes("qwen")) {
-      return {
-        enable_thinking: true,
-      };
-    }
-  } else {
-    // 关闭深度思考
-    if (cfg.config.model.includes("deepseek")) {
-      return {
-        thinking: { type: "disabled" },
-      };
-    }
-    if (cfg.config.model.includes("doubao")) {
-      return {
-        reasoning: {
-          effort: "minimal",
-        },
-      };
-    }
-    if (cfg.config.model.includes("qwen")) {
-      return {
-        enable_thinking: false,
-      };
-    }
+    return {};
   }
+
+  // Chat Completions API 保留各厂商的原生参数格式。
+  if (model.includes("deepseek")) {
+    return enabled
+      ? {
+          thinking: { type: "enabled" },
+          reasoning_effort: "medium",
+        }
+      : {
+          thinking: { type: "disabled" },
+        };
+  }
+  if (model.includes("doubao")) {
+    return enabled
+      ? {
+          thinking: { type: "enabled" },
+          reasoning_effort: "medium",
+        }
+      : {
+          thinking: { type: "disabled" },
+        };
+  }
+  if (model.includes("qwen")) {
+    return {
+      enable_thinking: enabled,
+    };
+  }
+  if (isOpenAIReasoningModel) {
+    return {
+      reasoning_effort: effort,
+    };
+  }
+  return {};
 };

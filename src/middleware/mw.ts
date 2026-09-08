@@ -1,5 +1,6 @@
 import { useClient } from "alemonjs";
 import { API } from "@alemonjs/onebot";
+import redisClient from "@src/config";
 
 const selects = onSelects(["message.create", "private.message.create"]);
 

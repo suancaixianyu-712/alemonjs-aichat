@@ -7,6 +7,10 @@ import {
 } from "@src/utils/command-message";
 
 export const commandChildren = [
+  {
+    regular: /^(\/|#)(开启网页(?:\s+.*)?|关闭网页|网页状态)$/,
+    handler: lazy(() => import("../response/panel/res")),
+  },
   // help
   {
     regular: /(\/|#)(ai)?(指令|帮助|菜单|功能)$/i,
@@ -81,6 +85,18 @@ export const commandChildren = [
   {
     regular: /^(#|\/)切换(?:ai|配置)(?:\s+.+)?$/i,
     handler: lazy(() => import("../response/switch-ai/res")),
+  },
+
+  // switch API protocol
+  {
+    regular: /^(#|\/)切换接口(?:\s+(?:capi|rapi))?$/i,
+    handler: lazy(() => import("../response/switch-api/res")),
+  },
+
+  // provider built-in tools
+  {
+    regular: /^(#|\/)(关闭|开启)(ai)?内置工具 ?(.*)$/i,
+    handler: lazy(() => import("../response/builtin-tools/res")),
   },
 
   // setting (包含大量子命令)

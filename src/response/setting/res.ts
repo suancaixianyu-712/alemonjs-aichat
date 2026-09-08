@@ -407,6 +407,7 @@ export default onResponse(selects, async (e, next) => {
         aiInfo.key,
         modelName.trim(),
         aiInfo.provider,
+        aiInfo.apiMode ?? "capi",
       );
     } else {
       await redisClient.addAI(
@@ -415,6 +416,8 @@ export default onResponse(selects, async (e, next) => {
         aiInfo.host,
         aiInfo.key,
         modelName.trim(),
+        "other",
+        aiInfo.apiMode ?? "capi",
       );
     }
 

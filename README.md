@@ -6,6 +6,22 @@
 
 在robot页面右侧选择`插件`-`AI`就能找到, 确认为`release`点击`安装`
 
+#### 在 AlemonX 中使用网页控制台
+
+安装或更新插件后重启机器人，在 AlemonX 的插件 Web 入口打开 Aichat。沿用当前配置页、聊天页和样式，支持原网页的群配置、各项开关、AI 切换/删除、模型与提示词切换、上下文长度、会话选择、流式聊天、清空聊天和图片显示。
+
+- 原有独立网页继续保留，但机器人启动时不再自动监听。主人发送 `#开启网页 8080`（或 `/开启网页 8080`）即可按指定端口启动；`#关闭网页` 关闭，`#网页状态` 查看状态。端口范围为 1–65535，不填时沿用本次运行中上次使用的端口，首次默认读取 `JSXP_PORT`、`PORT`，否则使用 8080。运行中需先关闭再换端口，端口占用会提示失败。
+- 也可在 AlemonX 配置页的“独立网页”区域填写端口并点击“开启独立网页”，同一区域提供状态和关闭按钮。开启后，独立页面地址为 `http://机器人地址:端口/panel/config` 和 `/panel/chat`，样式与功能保持原样。
+- AlemonX 使用框架的 Web 服务端口（`serverPort`）。作为插件加载时，入口为该服务下的 `/apps/alemonjs-aichat/`；作为主工程运行时为 `/app/`。入口会进入同一套管理页面。
+- 在 AlemonX 中，页面、表单、流式请求和图片都走当前插件的同源路径，不需要浏览器另连机器人的 `8080` 端口。两种入口使用相同业务逻辑和 Redis 数据。
+- 关闭独立网页不影响 AlemonX 入口。启停状态不持久化，重启机器人后保持关闭；不再需要通过 `AICHAT_PANEL_DISABLED` 禁止自动启动。开发命令 `npm run view` 仍会显式启动独立网页预览。
+
+接入参考 [alemonjs-load-yunzai](https://github.com/yunzaijs/alemonjs-load-yunzai)：`package.json` 声明 `alemonjs.web.config.serverPort` 和 `alemonjs.web.root`，`src/index.ts` 的 `register()` 返回 `koaRouter`。本插件通过 `web/index.html` 进入服务端渲染页面，保留现有前端，不另建一套配置或聊天页面。
+
+开发时运行 `npm run build` 更新 `lib`，分发时同时保留 `web/` 目录（已加入 npm 发布白名单）。改动不会自动更新 AlemonX 中另一份已安装的插件，需将该安装目录更新到新版本并重启机器人。
+
+运行 `npm run test:panel-web` 可构建并检查独立入口及 AlemonJS 的主工程/插件挂载、全部表单操作、流式响应、图片和资源路径。测试使用 Node.js 24 的模块 mock 替换 Redis 与 AI 外部依赖，不会修改真实数据或调用付费模型；实际 AlemonX 界面和真实 AI 服务仍需在对应运行环境中联调。
+
 ### 作为私有包安装
 
 ```sh

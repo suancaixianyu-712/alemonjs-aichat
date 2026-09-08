@@ -7,7 +7,6 @@ import send from "koa-send";
 import { existsSync } from "fs";
 import { readFile } from "fs/promises";
 import { dirname, extname, join, normalize } from "path";
-import type { Server } from "http";
 import { processHtmlPaths } from "jsxp";
 import redisClient from "@src/config";
 import panelConfig from "@src/panel/config";
@@ -21,6 +20,8 @@ import {
   addPanelGroupConfig,
   updatePanelGroupConfig,
 } from "@src/panel/groupConfig";
+import { PanelBasePath, panelUrl } from "@src/panel/urls";
+import { createPanelServerController } from "@src/panel/lifecycle";
 
 const textTypes = new Set(["css", "js", "mjs", "html", "svg", "json"]);
 const mimeTypes: Record<string, string> = {
@@ -33,6 +34,11 @@ const mimeTypes: Record<string, string> = {
 };
 
 const loadConfig = async () => panelConfig;
+const getPanelBasePath = (ctx: Koa.Context): string =>
+  ctx.state.panelBasePath || "";
+
+const redirectToPanel = (ctx: Koa.Context, url: string) =>
+  ctx.redirect(panelUrl(getPanelBasePath(ctx), url));
 
 const rewriteServerUrls = (content: string, dir: string, prefix: string) =>
   content.replace(/url\(["']?([^"')]+)["']?\)/g, (full, rawPath) => {
@@ -47,15 +53,29 @@ const renderRoute = async (options: any, ctx: Koa.Context) => {
   if ("html" in options && options.html) {
     html = options.html;
   } else if ("element" in options && options.element) {
-    const props = options.propsCall ? await options.propsCall(ctx) : {};
+    const props = {
+      ...(options.propsCall ? await options.propsCall(ctx) : {}),
+      standaloneServer: ctx.state.panelHosted
+        ? getPanelServerStatus()
+        : undefined,
+    };
     html = `<!DOCTYPE html>${renderToString(
-      React.createElement(options.element, props),
+      React.createElement(
+        PanelBasePath.Provider,
+        { value: getPanelBasePath(ctx) },
+        React.createElement(options.element, props),
+      ),
     )}`;
   } else {
     html = `<!DOCTYPE html>${renderToString(options.component)}`;
   }
 
-  return processHtmlPaths(html, "server");
+  const processed = await processHtmlPaths(html, "server");
+  // jsxp 生成的文件地址也要经过插件命名空间；只处理其生成的资源 URL。
+  return processed.replace(
+    /((?:src|href)=["']|url\(["']?)\/_jsxp_file\?/g,
+    (_, lead: string) => `${lead}${getPanelBasePath(ctx)}/_jsxp_file?`,
+  );
 };
 
 const getQueryText = (value: unknown) => {
@@ -101,6 +121,17 @@ const resolvePanelImageFilePath = (
 const readFormBody = async (ctx: Koa.Context) => {
   const state = ctx.state as { panelFormBody?: URLSearchParams };
   if (state.panelFormBody) return state.panelFormBody;
+
+  // 宿主可能已解析表单；此时不能再次等待已经结束的请求流。
+  const parsed = (ctx.request as Koa.Request & { body?: unknown }).body;
+  if (parsed && typeof parsed === "object" && !Buffer.isBuffer(parsed)) {
+    state.panelFormBody = new URLSearchParams();
+    for (const [key, value] of Object.entries(parsed)) {
+      state.panelFormBody.set(key, String(value ?? ""));
+    }
+    return state.panelFormBody;
+  }
+  if (ctx.req.readableEnded) return new URLSearchParams();
 
   const chunks: Buffer[] = [];
   await new Promise<void>((resolve, reject) => {
@@ -151,13 +182,14 @@ const redirectPanel = async (
     panelMessage: message,
   });
 
-  if (state.groupListOpen) params.set("panelGroupListOpen", state.groupListOpen);
+  if (state.groupListOpen)
+    params.set("panelGroupListOpen", state.groupListOpen);
   if (state.openGroups) params.set("panelOpenGroups", state.openGroups);
   if (state.aiListOpen) params.set("panelAiListOpen", state.aiListOpen);
   if (state.openRows) params.set("panelOpenRows", state.openRows);
   if (state.scrollY) params.set("panelScrollY", state.scrollY);
 
-  ctx.redirect(`/panel/config?${params.toString()}`);
+  redirectToPanel(ctx, `/panel/config?${params.toString()}`);
 };
 
 const redirectPanelChat = async (
@@ -179,7 +211,7 @@ const redirectPanelChat = async (
   if (chatConfigOpen) params.set("chatConfigOpen", chatConfigOpen);
   if (nickname) params.set("nickname", nickname);
 
-  ctx.redirect(`/panel/chat?${params.toString()}`);
+  redirectToPanel(ctx, `/panel/chat?${params.toString()}`);
 };
 
 const handleUseAI = async (ctx: Koa.Context) => {
@@ -265,7 +297,10 @@ const handleUpdateGroupConfig = async (ctx: Koa.Context) => {
         chatSwitch: await getActionFlag(ctx, "chatSwitch"),
         imageBedSwitch: await getActionFlag(ctx, "imageBedSwitch"),
         toolSwitch: await getActionFlag(ctx, "toolSwitch"),
-        toolCallContentSwitch: await getActionFlag(ctx, "toolCallContentSwitch"),
+        toolCallContentSwitch: await getActionFlag(
+          ctx,
+          "toolCallContentSwitch",
+        ),
         complexOutput: await getActionFlag(ctx, "complexOutput"),
         affectionSwitch: await getActionFlag(ctx, "affectionSwitch"),
         ttsResponseSwitch: await getActionFlag(ctx, "ttsResponseSwitch"),
@@ -273,7 +308,10 @@ const handleUpdateGroupConfig = async (ctx: Koa.Context) => {
         r18Switch: await getActionFlag(ctx, "r18Switch"),
         atTriggerSwitch: await getActionFlag(ctx, "atTriggerSwitch"),
         toolPromptSwitch: await getActionFlag(ctx, "toolPromptSwitch"),
-        toolPromptRevokeSwitch: await getActionFlag(ctx, "toolPromptRevokeSwitch"),
+        toolPromptRevokeSwitch: await getActionFlag(
+          ctx,
+          "toolPromptRevokeSwitch",
+        ),
         toolPromptArgsSwitch: await getActionFlag(ctx, "toolPromptArgsSwitch"),
         proactiveSwitch: await getActionFlag(ctx, "proactiveSwitch"),
       },
@@ -321,16 +359,16 @@ const handleAddGroupConfig = async (ctx: Koa.Context) => {
       panelStatus: "success",
       panelMessage: `已添加群 ${guid}`,
       panelGroupListOpen: "1",
-      panelOpenGroups: JSON.stringify(
-        [...new Set([...parseJsonArray(state.openGroups), guid])],
-      ),
+      panelOpenGroups: JSON.stringify([
+        ...new Set([...parseJsonArray(state.openGroups), guid]),
+      ]),
     });
 
     if (state.aiListOpen) params.set("panelAiListOpen", state.aiListOpen);
     if (state.openRows) params.set("panelOpenRows", state.openRows);
     if (state.scrollY) params.set("panelScrollY", state.scrollY);
 
-    ctx.redirect(`/panel/config?${params.toString()}`);
+    redirectToPanel(ctx, `/panel/config?${params.toString()}`);
   } catch (error) {
     await redirectPanel(
       ctx,
@@ -365,7 +403,13 @@ const handlePanelChat = async (ctx: Koa.Context) => {
     identity.nickname,
     text,
   );
-  await redirectPanelChat(ctx, "success", "消息已发送", identity.guid, identity.userId);
+  await redirectPanelChat(
+    ctx,
+    "success",
+    "消息已发送",
+    identity.guid,
+    identity.userId,
+  );
 };
 
 const handlePanelChatStream = async (ctx: Koa.Context) => {
@@ -432,7 +476,13 @@ const handleChatUseAI = async (ctx: Koa.Context) => {
   const name = await getActionText(ctx, "name");
 
   if (!name) {
-    await redirectPanelChat(ctx, "error", "缺少AI配置名称", identity.guid, identity.userId);
+    await redirectPanelChat(
+      ctx,
+      "error",
+      "缺少AI配置名称",
+      identity.guid,
+      identity.userId,
+    );
     return;
   }
 
@@ -466,7 +516,13 @@ const handleChatSwitchModel = async (ctx: Koa.Context) => {
   const model = await getActionText(ctx, "model");
 
   if (!model) {
-    await redirectPanelChat(ctx, "error", "缺少模型名称", identity.guid, identity.userId);
+    await redirectPanelChat(
+      ctx,
+      "error",
+      "缺少模型名称",
+      identity.guid,
+      identity.userId,
+    );
     return;
   }
 
@@ -553,23 +609,63 @@ const handleChatSwitchPrompt = async (ctx: Koa.Context) => {
   );
 };
 
-let panelServer: Server | null = null;
-let panelServerPromise: Promise<void> | null = null;
-
-const startPanelServer = async () => {
-  const config = await loadConfig();
-  const app = new Koa();
-  const prefix = config?.prefix ?? "";
+export const createPanelRouter = ({ hosted = false } = {}) => {
+  const config = panelConfig;
+  const prefix = hosted ? "/api" : (config?.prefix ?? "");
   const router = new Router({ prefix });
   const cwd = process.cwd();
-  const port = config?.port ?? 8080;
   const configStatics = config?.statics ?? "public";
-  const staticRoots = Array.isArray(configStatics) ? configStatics : [configStatics];
+  const staticRoots = Array.isArray(configStatics)
+    ? configStatics
+    : [configStatics];
   const allowedFileRoots = [cwd, ...staticRoots].map((item) =>
     normalize(item).toLowerCase(),
   );
 
-  console.log("_______jsxp-panel_______");
+  router.use(async (ctx, next) => {
+    ctx.state.panelHosted = hosted;
+    if (hosted && ctx.path === prefix) {
+      ctx.redirect(`./api/${ctx.search}`);
+      return;
+    }
+    // 从当前页面相对回到插件 API 根目录。宿主代理可能剥掉外部前缀，
+    // 因而不能根据 originalUrl 拼绝对地址，也不能硬编码 /apps/<包名>。
+    const depth = Math.max(
+      0,
+      ctx.path.slice(prefix.length).split("/").length - 2,
+    );
+    ctx.state.panelBasePath = hosted
+      ? Array(depth).fill("..").join("/") || "."
+      : prefix;
+    await next();
+  });
+
+  if (hosted) {
+    router.post("/panel/action/server/start", async (ctx) => {
+      try {
+        const state = await createPanelServer(await getActionText(ctx, "port"));
+        await redirectPanel(
+          ctx,
+          "success",
+          `独立网页已开启，端口 ${state.port}`,
+        );
+      } catch (error) {
+        await redirectPanel(
+          ctx,
+          "error",
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+    });
+    router.post("/panel/action/server/stop", async (ctx) => {
+      await stopPanelServer();
+      await redirectPanel(
+        ctx,
+        "success",
+        "独立网页已关闭，AlemonX 页面可继续使用",
+      );
+    });
+  }
 
   router.get("/panel/action/use-ai", handleUseAI);
   router.get("/panel/action/delete-ai", handleDeleteAI);
@@ -580,7 +676,10 @@ const startPanelServer = async () => {
   router.post("/panel/action/delete-ai", handleDeleteAI);
   router.post("/panel/action/chat/use-ai", handleChatUseAI);
   router.post("/panel/action/chat/switch-model", handleChatSwitchModel);
-  router.post("/panel/action/chat/switch-context-limit", handleChatSwitchContextLimit);
+  router.post(
+    "/panel/action/chat/switch-context-limit",
+    handleChatSwitchContextLimit,
+  );
   router.post("/panel/action/chat/switch-prompt", handleChatSwitchPrompt);
   router.post("/panel/action/chat/stream", handlePanelChatStream);
   router.post("/panel/action/chat", handlePanelChat);
@@ -613,7 +712,11 @@ const startPanelServer = async () => {
     if (textTypes.has(ext)) {
       const content = await readFile(filePath, "utf-8");
       ctx.type = mimeTypes[ext] || "text/plain";
-      ctx.body = rewriteServerUrls(content, dirname(filePath), prefix);
+      ctx.body = rewriteServerUrls(
+        content,
+        dirname(filePath),
+        getPanelBasePath(ctx),
+      );
       return;
     }
 
@@ -680,7 +783,6 @@ const startPanelServer = async () => {
 
   const routes = config?.routes ?? {};
   for (const url in routes) {
-    console.log(`http://${config?.host ?? "127.0.0.1"}:${port}${prefix + url}`);
     router.get(url, async (ctx) => {
       const latestConfig = await loadConfig();
       const latestRoute = latestConfig?.routes?.[url];
@@ -689,49 +791,54 @@ const startPanelServer = async () => {
         return;
       }
 
+      ctx.type = "html";
       ctx.body = await renderRoute(latestRoute, ctx);
     });
   }
 
-  for (const item of staticRoots) {
-    app.use(KoaStatic(item));
-  }
-
-  app.use(router.routes());
-
-  await new Promise<void>((resolve, reject) => {
-    const server = app.listen(port);
-    panelServer = server;
-
-    server.once("listening", () => {
-      console.log(`Server is running on port ${port}`);
-      console.log("自行调整默认浏览器尺寸 800 X 1280 100%");
-      console.log("_______jsxp-panel_______");
-      resolve();
-    });
-
-    server.once("error", (error: NodeJS.ErrnoException) => {
-      panelServer = null;
-      if (error.code === "EADDRINUSE") {
-        console.warn(`网页控制台端口 ${port} 已被占用，跳过本次启动。`);
-        resolve();
-        return;
+  const staticMiddleware = staticRoots.map((item) => KoaStatic(item));
+  router.get("/{*path}", async (ctx) => {
+    const originalPath = ctx.path;
+    ctx.path = ctx.path.slice(prefix.length) || "/";
+    try {
+      for (const serve of staticMiddleware) {
+        await serve(ctx, async () => {});
+        if (ctx.body != null) break;
       }
-      reject(error);
-    });
+    } finally {
+      ctx.path = originalPath;
+    }
   });
+
+  return router;
 };
 
-export const createPanelServer = async () => {
-  if (panelServer || panelServerPromise) {
-    return panelServerPromise ?? Promise.resolve();
+const listenPanelServer = (port: number) => {
+  const config = panelConfig;
+  const app = new Koa();
+  const router = createPanelRouter();
+
+  // 保留独立网页原有的静态目录优先级和启动方式。
+  const statics = config?.statics ?? "public";
+  for (const root of Array.isArray(statics) ? statics : [statics]) {
+    app.use(KoaStatic(root));
   }
+  app.use(router.routes());
+  app.use(router.allowedMethods());
 
-  panelServerPromise = startPanelServer().catch((error) => {
-    panelServerPromise = null;
-    throw error;
+  const server = app.listen(port);
+  server.once("listening", () => {
+    console.log(
+      `独立网页已开启：http://${config?.host ?? "127.0.0.1"}:${port}${config?.prefix ?? ""}/panel/config`,
+    );
   });
-
-  return panelServerPromise;
+  return server;
 };
 
+const panelController = createPanelServerController(
+  listenPanelServer,
+  panelConfig.port ?? 8080,
+);
+export const getPanelServerStatus = panelController.status;
+export const createPanelServer = panelController.start;
+export const stopPanelServer = panelController.stop;

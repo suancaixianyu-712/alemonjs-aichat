@@ -1,28 +1,18 @@
 import { redis } from "./redis";
 import commands from "./routes/commands";
 import middleware from "./routes/middleware";
-import { createPanelServer } from "./panel/server";
+import { createPanelRouter } from "./panel/server";
 import { startScheduledAITaskScheduler } from "./scheduler";
 import { getRuntimeConfig } from "./config/runtime";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
-
-const startPanelServer = () => {
-  if (process.env.AICHAT_PANEL_DISABLED === "1") return;
-
-  createPanelServer().catch((error) => {
-    logger.error({
-      message: "网页控制台启动失败",
-      error: error instanceof Error ? error.message : String(error),
-    });
-  });
-};
 
 export default defineChildren({
   register() {
     return {
       middlewareRouter: middleware,
       responseRouter: commands,
+      koaRouter: createPanelRouter({ hosted: true }),
     };
   },
   onCreated() {
@@ -57,6 +47,5 @@ export default defineChildren({
       });
     });
     startScheduledAITaskScheduler();
-    startPanelServer();
   },
 });

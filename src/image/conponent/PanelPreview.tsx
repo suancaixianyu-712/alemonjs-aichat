@@ -1,6 +1,13 @@
-import React from "react";
+import React, { useContext } from "react";
+import {
+  PanelBasePath,
+  PanelLink,
+  PanelForm,
+  PanelImage,
+} from "@src/panel/urls";
 import type { AIConfig } from "@src/types";
 import type { PanelChatMessage } from "@src/panel/chat";
+import type { PanelServerStatus } from "@src/panel/lifecycle";
 import {
   panelGroupSwitchDefinitions,
   type PanelGroupConfigDraft,
@@ -17,6 +24,7 @@ type PromptOption = {
 };
 
 type PanelPreviewProps = {
+  standaloneServer?: PanelServerStatus;
   page?: PanelPage;
   aiConfigs?: AIConfigDraft[];
   groupConfigs?: PanelGroupConfigDraft[];
@@ -112,18 +120,18 @@ ai:config:{guid} = 当前会话实际使用的 AIConfig
 
 const renderNav = (page: PanelPage) => (
   <nav className="nav" aria-label="面板导航">
-    <a
+    <PanelLink
       className={`nav-link ${page === "config" ? "active" : ""}`}
       href="/panel/config"
     >
       配置
-    </a>
-    <a
+    </PanelLink>
+    <PanelLink
       className={`nav-link ${page === "chat" ? "active" : ""}`}
       href="/panel/chat"
     >
       聊天
-    </a>
+    </PanelLink>
   </nav>
 );
 
@@ -182,21 +190,25 @@ const ChatConfigPanel = ({
 
       <div className="chat-config-body">
         <nav className="chat-side-nav" aria-label="聊天面板导航">
-          <a className="active" href={chatHref}>
+          <PanelLink className="active" href={chatHref}>
             聊天
-          </a>
-          <a href="/panel/config">配置</a>
+          </PanelLink>
+          <PanelLink href="/panel/config">配置</PanelLink>
         </nav>
 
         <section className="chat-config-block">
           <div className="chat-config-block-title">当前会话</div>
-          <a className="conversation active" href={chatHref}>
+          <PanelLink className="conversation active" href={chatHref}>
             <div className="conversation-name">群号 {chatGuid}</div>
             <div className="conversation-last">
               账号 {chatUserId} / 昵称 {currentNicknameLabel}
             </div>
-          </a>
-          <form action="/panel/chat" className="chat-sidebar-form" method="get">
+          </PanelLink>
+          <PanelForm
+            action="/panel/chat"
+            className="chat-sidebar-form"
+            method="get"
+          >
             <input type="hidden" name="guid" value={chatGuid} />
             <div className="chat-info-grid">
               <label className="chat-info-item">
@@ -219,7 +231,7 @@ const ChatConfigPanel = ({
             <button className="subtle chat-inline-action" type="submit">
               应用
             </button>
-          </form>
+          </PanelForm>
         </section>
 
         <section className="chat-config-block">
@@ -227,26 +239,33 @@ const ChatConfigPanel = ({
           {currentGroupConfig ? (
             <>
               <div className="chat-info-grid">
-                <form
+                <PanelForm
                   action="/panel/chat"
                   className="chat-info-form"
                   data-auto-submit="change"
                   method="get"
                 >
                   <input type="hidden" name="userId" value={chatUserId} />
-                  <input type="hidden" name="nickname" value={currentNicknameLabel} />
+                  <input
+                    type="hidden"
+                    name="nickname"
+                    value={currentNicknameLabel}
+                  />
                   <label className="chat-info-item">
                     <span>群号</span>
                     <select name="guid" defaultValue={currentGroupConfig.guid}>
                       {groupOptions.map((item) => (
-                        <option key={`${idPrefix}-group-guid-${item}`} value={item}>
+                        <option
+                          key={`${idPrefix}-group-guid-${item}`}
+                          value={item}
+                        >
                           {item}
                         </option>
                       ))}
                     </select>
                   </label>
-                </form>
-                <form
+                </PanelForm>
+                <PanelForm
                   action="/panel/action/chat/use-ai"
                   className="chat-info-form"
                   data-auto-submit="change"
@@ -254,13 +273,23 @@ const ChatConfigPanel = ({
                 >
                   <input type="hidden" name="guid" value={chatGuid} />
                   <input type="hidden" name="userId" value={chatUserId} />
-                  <input type="hidden" name="nickname" value={currentNicknameLabel} />
+                  <input
+                    type="hidden"
+                    name="nickname"
+                    value={currentNicknameLabel}
+                  />
                   <label className="chat-info-item">
                     <span>当前AI</span>
-                    <select name="name" defaultValue={currentGroupConfig.currentAI}>
+                    <select
+                      name="name"
+                      defaultValue={currentGroupConfig.currentAI}
+                    >
                       {aiConfigs.length ? (
                         aiConfigs.map((item) => (
-                          <option key={`${idPrefix}-group-ai-${item.name}`} value={item.name}>
+                          <option
+                            key={`${idPrefix}-group-ai-${item.name}`}
+                            value={item.name}
+                          >
                             {item.name}
                           </option>
                         ))
@@ -269,8 +298,8 @@ const ChatConfigPanel = ({
                       )}
                     </select>
                   </label>
-                </form>
-                <form
+                </PanelForm>
+                <PanelForm
                   action="/panel/action/chat/switch-model"
                   className="chat-info-form"
                   data-auto-submit="blur"
@@ -278,7 +307,11 @@ const ChatConfigPanel = ({
                 >
                   <input type="hidden" name="guid" value={chatGuid} />
                   <input type="hidden" name="userId" value={chatUserId} />
-                  <input type="hidden" name="nickname" value={currentNicknameLabel} />
+                  <input
+                    type="hidden"
+                    name="nickname"
+                    value={currentNicknameLabel}
+                  />
                   <label className="chat-info-item full">
                     <span>当前模型</span>
                     <input
@@ -287,8 +320,8 @@ const ChatConfigPanel = ({
                       autoComplete="off"
                     />
                   </label>
-                </form>
-                <form
+                </PanelForm>
+                <PanelForm
                   action="/panel/action/chat/switch-context-limit"
                   className="chat-info-form"
                   data-auto-submit="blur"
@@ -296,7 +329,11 @@ const ChatConfigPanel = ({
                 >
                   <input type="hidden" name="guid" value={chatGuid} />
                   <input type="hidden" name="userId" value={chatUserId} />
-                  <input type="hidden" name="nickname" value={currentNicknameLabel} />
+                  <input
+                    type="hidden"
+                    name="nickname"
+                    value={currentNicknameLabel}
+                  />
                   <label className="chat-info-item full">
                     <span>CAPI上下文长度</span>
                     <input
@@ -306,8 +343,8 @@ const ChatConfigPanel = ({
                       defaultValue={String(currentGroupConfig.capiContextLimit)}
                     />
                   </label>
-                </form>
-                <form
+                </PanelForm>
+                <PanelForm
                   action="/panel/action/chat/switch-prompt"
                   className="chat-info-form"
                   data-auto-submit="change"
@@ -315,7 +352,11 @@ const ChatConfigPanel = ({
                 >
                   <input type="hidden" name="guid" value={chatGuid} />
                   <input type="hidden" name="userId" value={chatUserId} />
-                  <input type="hidden" name="nickname" value={currentNicknameLabel} />
+                  <input
+                    type="hidden"
+                    name="nickname"
+                    value={currentNicknameLabel}
+                  />
                   <label className="chat-info-item full">
                     <span>提示词</span>
                     <select name="prompt" defaultValue={currentPrompt}>
@@ -330,13 +371,13 @@ const ChatConfigPanel = ({
                       ))}
                     </select>
                   </label>
-                </form>
+                </PanelForm>
               </div>
               <div className="chat-switch-status-list">
                 {panelGroupSwitchDefinitions.map((item) => {
                   const enabled = currentGroupConfig.switches[item.key];
                   return (
-                    <form
+                    <PanelForm
                       action="/panel/action/update-group-config"
                       key={`${idPrefix}-group-switch-${item.key}`}
                       method="post"
@@ -380,7 +421,7 @@ const ChatConfigPanel = ({
                         <span>{item.label}</span>
                         <strong>{enabled ? "开" : "关"}</strong>
                       </button>
-                    </form>
+                    </PanelForm>
                   );
                 })}
               </div>
@@ -395,7 +436,10 @@ const ChatConfigPanel = ({
           {workspaceNames.length ? (
             <div className="chat-directory-list">
               {workspaceNames.map((item) => (
-                <div className="chat-directory-item" key={`${idPrefix}-workspace-${item}`}>
+                <div
+                  className="chat-directory-item"
+                  key={`${idPrefix}-workspace-${item}`}
+                >
                   <div className="conversation-name">{item}</div>
                   <div className="conversation-last">public/{item}</div>
                 </div>
@@ -1781,6 +1825,60 @@ const AppStyle = () => (
   `}</style>
 );
 
+const PanelServerControls = ({ state }: { state: PanelServerStatus }) => (
+  <section className="panel" aria-label="独立网页服务">
+    <div className="panel-head">
+      <div className="panel-title">独立网页</div>
+      <span className={state.running ? "tone-green" : "summary-meta"}>
+        {state.running ? `运行中 · 端口 ${state.port}` : "未开启"}
+      </span>
+    </div>
+    <div className="section">
+      <div className="source-note">
+        按需开启原有独立网页。关闭后仍可使用 AlemonX
+        页面，重启机器人后需重新开启。
+      </div>
+      <PanelForm
+        action={
+          state.running
+            ? "/panel/action/server/stop"
+            : "/panel/action/server/start"
+        }
+        method="post"
+        className="panel-action-form"
+      >
+        <div className="field">
+          <label htmlFor="standalone-port">独立网页端口</label>
+          <input
+            id="standalone-port"
+            name="port"
+            type="number"
+            min="1"
+            max="65535"
+            step="1"
+            defaultValue={state.port}
+            required
+            disabled={state.running}
+          />
+        </div>
+        <div className="group-add-actions">
+          <div className="group-add-toggle">
+            {state.running
+              ? "更换端口时，请先关闭再重新开启。"
+              : "仅设置独立网页端口，不影响 AlemonX 端口。"}
+          </div>
+          <button
+            className={state.running ? "danger" : "primary"}
+            type="submit"
+          >
+            {state.running ? "关闭独立网页" : "开启独立网页"}
+          </button>
+        </div>
+      </PanelForm>
+    </div>
+  </section>
+);
+
 const ConfigPage = ({
   aiConfigs = [],
   groupConfigs = [],
@@ -1878,7 +1976,7 @@ const ConfigPage = ({
                 查看群配置。展开后修改当前AI、上下文长度和各个开关，
                 保存时写回这个 guid 对应的 Redis 配置。
               </div>
-              <form
+              <PanelForm
                 action="/panel/action/add-group-config"
                 className="panel-action-form group-add-card"
                 method="post"
@@ -1926,7 +2024,7 @@ const ConfigPage = ({
                     添加群
                   </button>
                 </div>
-              </form>
+              </PanelForm>
               <div className="group-list">
                 {groupConfigs.length ? (
                   groupConfigs.map((group) => (
@@ -1952,7 +2050,7 @@ const ConfigPage = ({
                         </span>
                       </summary>
                       <div className="group-body">
-                        <form
+                        <PanelForm
                           action="/panel/action/update-group-config"
                           className="panel-action-form"
                           method="post"
@@ -2033,7 +2131,7 @@ const ConfigPage = ({
                               保存本群配置
                             </button>
                           </div>
-                        </form>
+                        </PanelForm>
                       </div>
                     </details>
                   ))
@@ -2095,7 +2193,8 @@ const ConfigPage = ({
               </summary>
               <div className="source-note">
                 数据来源：Redis 的 <strong>ai:model:*</strong>。旧版
-                <strong> ai:list:*</strong> 会自动归类为 other 并迁移；添加后写入带厂商 ID 的模型键，切换当前会话时写入
+                <strong> ai:list:*</strong> 会自动归类为 other
+                并迁移；添加后写入带厂商 ID 的模型键，切换当前会话时写入
                 <strong> ai:currentAI:&lt;guid&gt;</strong> 并同步
                 <strong> ai:config:&lt;guid&gt;</strong>。当前操作目标：
                 <strong> {currentGuid}</strong>。
@@ -2129,7 +2228,7 @@ const ConfigPage = ({
                       </summary>
                       <div className="ai-row-body">
                         <div className="ai-row-actions">
-                          <form
+                          <PanelForm
                             action="/panel/action/use-ai"
                             className="panel-action-form"
                             method="post"
@@ -2147,8 +2246,8 @@ const ConfigPage = ({
                             <button className="primary" type="submit">
                               使用这个AI
                             </button>
-                          </form>
-                          <form
+                          </PanelForm>
+                          <PanelForm
                             action="/panel/action/delete-ai"
                             className="panel-action-form"
                             method="post"
@@ -2161,7 +2260,7 @@ const ConfigPage = ({
                             <button className="subtle danger" type="submit">
                               删除AI
                             </button>
-                          </form>
+                          </PanelForm>
                         </div>
                         <div className="ai-fields">
                           <div className="field">
@@ -2330,10 +2429,14 @@ const ChatPage = ({
               <span>{modelLabel}</span>
             </div>
             <div className="chat-top-actions">
-              <a className="chat-icon-button" href={chatHref} aria-label="刷新">
+              <PanelLink
+                className="chat-icon-button"
+                href={chatHref}
+                aria-label="刷新"
+              >
                 刷新
-              </a>
-              <form
+              </PanelLink>
+              <PanelForm
                 action="/panel/action/clear-chat"
                 className="clear-chat-form"
                 method="post"
@@ -2348,7 +2451,7 @@ const ChatPage = ({
                 >
                   清空
                 </button>
-              </form>
+              </PanelForm>
             </div>
           </div>
 
@@ -2369,7 +2472,7 @@ const ChatPage = ({
                   {item.images?.length ? (
                     <div className="message-images">
                       {item.images.map((image, imageIndex) => (
-                        <img
+                        <PanelImage
                           alt="AI回复图片"
                           key={`${image}-${imageIndex}`}
                           src={image}
@@ -2390,7 +2493,7 @@ const ChatPage = ({
           </div>
 
           <div className="composer">
-            <form
+            <PanelForm
               action="/panel/action/chat"
               className="chat-composer-form"
               method="post"
@@ -2407,12 +2510,16 @@ const ChatPage = ({
                   defaultValue=""
                 />
                 <div className="chat-form-actions">
-                  <button className="send-button" type="submit" aria-label="发送">
+                  <button
+                    className="send-button"
+                    type="submit"
+                    aria-label="发送"
+                  >
                     ↑
                   </button>
                 </div>
               </div>
-            </form>
+            </PanelForm>
           </div>
         </div>
       </div>
@@ -2602,9 +2709,11 @@ const PanelNoticeScript = () => (
 
 const PanelChatScript = () => (
   <script
+    data-panel-base-path={useContext(PanelBasePath)}
     dangerouslySetInnerHTML={{
       __html: `
 (function () {
+  var basePath = document.currentScript.dataset.panelBasePath || "";
   var form = document.querySelector(".chat-composer-form");
   var messages = document.querySelector(".messages");
   if (!form || !messages || !window.fetch || !window.ReadableStream) return;
@@ -2644,7 +2753,7 @@ const PanelChatScript = () => (
       if (!src) return;
       var img = document.createElement("img");
       img.alt = "AI回复图片";
-      img.src = src;
+      img.src = src.startsWith("/") && !src.startsWith("//") ? basePath + src : src;
       wrap.appendChild(img);
     });
     if (wrap.childNodes.length) parent.appendChild(wrap);
@@ -2806,7 +2915,7 @@ const PanelChatScript = () => (
     if (sendButton) sendButton.disabled = true;
 
     try {
-      var response = await fetch("/panel/action/chat/stream", {
+      var response = await fetch(basePath + "/panel/action/chat/stream", {
         method: "POST",
         body: body,
         headers: {
@@ -2836,6 +2945,7 @@ const PanelChatScript = () => (
 );
 
 export default function PanelPreview({
+  standaloneServer,
   page = "config",
   aiConfigs = [],
   groupConfigs = [],
@@ -2870,7 +2980,9 @@ export default function PanelPreview({
       </head>
       <body>
         <main className={`shell ${page === "chat" ? "chat-shell" : ""}`}>
-          <header className={`header ${page === "chat" ? "chat-page-header" : ""}`}>
+          <header
+            className={`header ${page === "chat" ? "chat-page-header" : ""}`}
+          >
             <div className="brand">
               <div className="logo">AI</div>
               <div>
@@ -2880,6 +2992,10 @@ export default function PanelPreview({
             </div>
             {renderNav(page)}
           </header>
+
+          {page === "config" && standaloneServer ? (
+            <PanelServerControls state={standaloneServer} />
+          ) : null}
 
           {page === "chat" ? (
             <ChatPage

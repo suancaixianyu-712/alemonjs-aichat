@@ -25,6 +25,13 @@ export interface AIChatConfig {
 
 export interface AIConfig {
   provider?: "deepseek" | "openai" | "grok" | "other";
+  apiMode?: "capi" | "rapi";
+  builtinTools?: {
+    /** 未配置时按 true 处理，以兼容旧配置。 */
+    enabled?: boolean;
+    /** 单项开关覆盖；键使用内置工具的规范名称。 */
+    overrides?: Record<string, boolean>;
+  };
   host: string;
   key: string;
   model: string;
