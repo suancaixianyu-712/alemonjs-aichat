@@ -1,48 +1,30 @@
 {
-  "name": "alemonjs-aichat",
-  "version": "1.0.47",
-  "description": "alemonjs-aichat",
-  "author": "suancaixianyu",
+  "name": "alemonjs-aichat-quick-start",
+  "version": "1.0.0",
+  "description": "AlemonJS Aichat quick-start workspace",
+  "private": true,
   "license": "MIT",
-  "main": "lib/index.js",
+  "packageManager": "yarn@1.22.22",
+  "engines": {
+    "node": ">=22",
+    "yarn": "^1.22.0"
+  },
   "type": "module",
   "scripts": {
-    "dev": "npx lvy dev",
-    "build": "npx lvy build",
-    "review": "npx alemonc start",
-    "view": "npx lvy dev --view",
-    "start": "npx pm2 startOrRestart pm2.config.cjs",
-    "stop": "npx pm2 stop pm2.config.cjs",
-    "delete": "npx pm2 delete pm2.config.cjs",
-    "update": "npm publish"
+    "setup": "node scripts/setup.mjs",
+    "update:aichat": "node scripts/update-aichat.mjs",
+    "start": "node index.js",
+    "start:pm2": "pm2 startOrRestart pm2.config.cjs",
+    "stop": "pm2 stop pm2.config.cjs",
+    "logs": "pm2 logs alemon-aichat"
   },
-  "devDependencies": {
-    "@alemonjs/bubble": "^2.1.11",
-    "@alemonjs/db": "^0.0.17",
-    "@alemonjs/onebot": "^2.1.16",
-    "@types/node": "^22.19.17",
-    "@types/ssh2": "^1.15.5",
-    "alemonjs": "2.1.92",
-    "cssnano": "^7",
-    "jsxp": "^1.4.0",
-    "lvyjs": "^0.2.25",
-    "pm2": "^5",
-    "tailwindcss": "3"
-  },
-  "private": true,
   "workspaces": [
     "packages/*"
   ],
   "dependencies": {
-    "@ai-sdk/xai": "^3.0.60",
-    "@aws-sdk/client-s3": "^3.975.0",
-    "@aws-sdk/s3-request-presigner": "^3.975.0",
-    "ai": "^6.0.105",
-    "mime-types": "^3.0.2",
-    "node-fetch": "^3.3.2",
-    "openai": "^6.34.0",
-    "sharp": "^0.34.5",
-    "zod": "^4.3.6",
-    "ssh2": "^1.17.0"
+    "@alemonjs/db": "^0.0.17",
+    "@alemonjs/onebot": "^2.1.16",
+    "alemonjs": "2.1.92",
+    "pm2": "^5"
   }
 }

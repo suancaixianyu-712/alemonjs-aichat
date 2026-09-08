@@ -1,28 +1,54 @@
-
-aiChat:
-  searchApiKey: '63706fc3e6827a90e8219913297b510ff053d5238b24f64251a066e4ecea7408'
-  xaiImgProxy: ''
-  ttsServer:
-    host: ""
-  redis:
-    host: ''
-    port: 6379
-    password: ''
-    user: ''
-  baidu:
-    ak: ''
-    sk: ''
-  skills_dir: ['./skills']
-
-
+# 登录平台。快速安装骨架默认使用 OneBot。
 login: onebot
 
+# 需要加载的应用。Aichat 源码由安装脚本拉取到 packages/alemonjs-aichat。
 apps:
   - alemonjs-aichat
 
+# Aichat 使用 AlemonJS 的全局 Redis 连接。
+db:
+  redis:
+    host: '127.0.0.1'
+    port: 6379
+    password: ''
+    db: 0
+
 onebot:
-  url: '' # 正向url
-  token: '' # access_token
-  reverse_enable: false # 启用后正向连接配置失效，地址：ws://127.0.0.1:17158
-  reverse_port: 17158 # 返向连接服务端口，启用反向连接后生效
-  master_id: ['3501869534'] # 主人QQ号列表，启用反向连接后生效
+  # OneBot 正向 WebSocket 地址，例如 ws://127.0.0.1:3001。
+  url: ''
+  token: ''
+  reverse_enable: false
+  reverse_port: 17158
+  # 修改为机器人主人的 QQ 号。
+  master_id: []
+
+# 插件配置使用当前包名作为命名空间。
+alemonjs-aichat:
+  # 可选：直接声明一个 AI。也可以启动后使用“#添加ai”配置。
+  # ai:
+  #   name: deepseek
+  #   host: https://api.deepseek.com/v1
+  #   key: sk-xxxxxxxx
+  #   model: deepseek-chat
+
+  # 可选：xAI 图片服务代理地址。
+  xaiImgProxy: ''
+
+  # 可选：本地浏览器搜索配置。
+  localBrowser:
+    # 不指定 channel 时自动寻找 Chrome 或 Edge。
+    # channel: msedge
+    headless: true
+    # executablePath: 'C:\Program Files\Google\Chrome\Application\chrome.exe'
+
+  # 可选：TTS 服务地址。
+  ttsServer:
+    host: ''
+
+  # 可选：百度内容审核。
+  baidu:
+    ak: ''
+    sk: ''
+
+  skills_dir:
+    - './skills'
