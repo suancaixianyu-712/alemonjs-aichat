@@ -6,6 +6,7 @@ import {
   getProviderBuiltinToolParams,
   isBuiltinToolEnabled,
   resolveBuiltinToolName,
+  shouldDisableLocalSearchTool,
 } from "../lib/response/zreply/provider-tools.js";
 import {
   buildRapiRequest,
@@ -45,6 +46,14 @@ test("按 API 平台识别厂商，Qwen CAPI 注入 enable_search", () => {
   assert.deepEqual(getProviderBuiltinToolParams(config).capiParams, {
     enable_search: true,
   });
+  assert.equal(shouldDisableLocalSearchTool(config), true);
+  assert.equal(
+    shouldDisableLocalSearchTool({
+      ...config,
+      builtinTools: { overrides: { web_search: false } },
+    }),
+    false,
+  );
 });
 
 test("RAPI 合并本地函数和厂商工具并请求搜索来源", () => {

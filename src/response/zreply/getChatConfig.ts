@@ -4,6 +4,7 @@ import redisClient from "@src/config";
 import { Events } from "alemonjs";
 import { emojiMap } from "@src/emoji";
 import { uploadImageToR2 } from "@src/s3";
+import { shouldDisableLocalSearchTool } from "./provider-tools";
 
 /**
  * 明确不支持看图（无 vision / 多模态输入）的模型关键词
@@ -268,12 +269,15 @@ export const getChatConfig = async (
   const affections = await redisClient.getAffectionLevelAll(e.guid);
   /** 工具相关配置 */
   const availableTools = await redisClient.getAvailableTools(e.guid);
+  const useProviderWebSearch = shouldDisableLocalSearchTool(config);
   const toolConfig = {
     /** 工具开关 */
     toolSwitch: await redisClient.getToolSwitch(e.guid),
     /** 工具列表 */
     cApiToolList: availableTools.filter(
-      (tool) => textOnlyVision || tool.function?.name !== "DescribeImage",
+      (tool) =>
+        (textOnlyVision || tool.function?.name !== "DescribeImage") &&
+        (!useProviderWebSearch || tool.function?.name !== "LocalBrowser"),
     ),
     /** 工具提示开关 */
     toolPromptSwitch: await redisClient.getToolPromptSwitch(e.guid),
@@ -335,7 +339,11 @@ export const getChatConfig = async (
   
   ## 工具使用总则
   - 用户需要特定操作时，优先选用合适的工具函数来完成需求
-  - 搜索网页/访问网址用 LocalBrowser（search/visit）；仅能访问公网 HTTP/HTTPS 页面
+  ${
+    useProviderWebSearch
+      ? "- 当前已启用厂商内置网页搜索，应直接使用内置搜索；为避免重复，本轮不提供 LocalBrowser"
+      : "- 搜索网页/访问网址用 LocalBrowser（search/visit）；仅能访问公网 HTTP/HTTPS 页面"
+  }
   ${heartbeatPrompt}
   - 读取会话现有项目：Agentxxxxx...（只读操作无需开启agent）；创建/修改/删除/执行等写操作需主人先 #开启agent
   - 公共知识库位于 public/knowledge/，可跨会话只读访问；

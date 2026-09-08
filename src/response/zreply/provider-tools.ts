@@ -145,3 +145,7 @@ export const getProviderBuiltinToolParams = (config: AIConfig) => {
       : {};
   return { provider, supported, enabled, rapiTools: [], include: [], capiParams };
 };
+
+/** 厂商内置网页搜索实际可用时，隐藏功能重叠的本地 LocalBrowser。 */
+export const shouldDisableLocalSearchTool = (config: AIConfig) =>
+  getProviderBuiltinToolParams(config).enabled.includes("web_search");
