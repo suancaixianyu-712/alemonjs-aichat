@@ -811,7 +811,13 @@ const extractMessageError = (error: any) => {
 
 const parseMessageResult = (data: any) => {
   const info = data?.info || {};
-  const parts = Array.isArray(data?.parts) ? data.parts : [];
+  const parts = Array.isArray(data?.parts)
+    ? data.parts
+    : Array.isArray(data?.message?.parts)
+      ? data.message.parts
+      : Array.isArray(info?.parts)
+        ? info.parts
+        : [];
 
   const text = stripAnsi(
     parts
@@ -851,11 +857,21 @@ const parseMessageResult = (data: any) => {
       };
     });
 
+  const activity = toolCalls
+    .map((call: any) => {
+      const lines = [`${call.tool || "工具"}：${call.title || call.status}`];
+      if (call.input) lines.push(`参数：${call.input}`);
+      if (call.output) lines.push(`结果：${call.output}`);
+      return lines.join("\n");
+    })
+    .join("\n\n");
+
   return {
     info,
     text,
     reasoning,
     toolCalls,
+    activity,
     error: extractMessageError(info.error),
   };
 };
@@ -1120,6 +1136,7 @@ export const sendOpencodeSessionMessage = async (input: {
       ok: !parsed.error,
       output: truncateText(parsed.text),
       reasoning: parsed.reasoning ? truncateText(parsed.reasoning, 8000) : null,
+      activity: parsed.activity ? truncateText(parsed.activity, 16000) : null,
       error: parsed.error,
       session,
     };

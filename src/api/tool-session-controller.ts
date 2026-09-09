@@ -674,10 +674,13 @@ export class ToolSessionController {
           String(result.session.title || "新会话"),
         );
       }
-      const output = String(result.output || "").trim();
+      const activity = String(result.activity || "").trim();
+      if (activity) await send(`OpenCode 执行过程：\n${activity}`);
+
+      const output = String(result.output || result.reasoning || "").trim();
       if (output) await send(output);
       else if (result.error) await send(`OpenCode 执行失败：${result.error}`);
-      else await send("OpenCode 已完成处理，但没有返回文本内容。");
+      else if (!activity) await send("OpenCode 已完成处理，但没有可展示的结果。");
     });
     return true;
   }
