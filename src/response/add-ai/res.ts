@@ -1,6 +1,8 @@
 import redisClient from "@src/config";
 import { Text } from "alemonjs";
 import { useMessage } from "@src/utils/command-message";
+import { getOpenAIProxyFetch } from "@src/api/openaiProxy";
+import { getAiChatConfigValue } from "@src/config/app";
 
 const selects = onSelects(["message.create", "private.message.create"]);
 
@@ -108,7 +110,9 @@ const fetchModels = async (
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 15_000);
   try {
-    const response = await fetch(`${config.host}${config.modelsPath}`, {
+    const requestFetch =
+      getOpenAIProxyFetch(getAiChatConfigValue().httpProxy) || fetch;
+    const response = await requestFetch(`${config.host}${config.modelsPath}`, {
       headers: { Authorization: `Bearer ${key}` },
       signal: controller.signal,
     });

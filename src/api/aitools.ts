@@ -18,6 +18,14 @@ import { getMessageTimeString } from "./format";
 import { runLocalBrowser } from "./localBrowser";
 import { runOpencode } from "./opencode";
 import { getAiChatConfigValue } from "../config/app";
+import {
+  buildGPTImageResponsesRequest,
+  extractGPTImageResponseBase64,
+  formatGPTImageError,
+  shouldFallbackGPTImageMode,
+  type GPTImageRequestMode,
+} from "./gptImage";
+import { getOpenAIProxyFetch } from "./openaiProxy";
 
 const value = getAiChatConfigValue();
 
@@ -2568,6 +2576,7 @@ const reviewProjectCommandWithAI = async ({
       baseURL: aiConfig.config.host,
       apiKey: aiConfig.config.key,
       timeout: 30000,
+      fetch: getOpenAIProxyFetch(value.httpProxy),
     });
     const response = await openai.chat.completions.create({
       model: aiConfig.config.model,
@@ -2655,6 +2664,7 @@ const reviewServerCommandWithAI = async ({
       baseURL: aiConfig.config.host,
       apiKey: aiConfig.config.key,
       timeout: 30000,
+      fetch: getOpenAIProxyFetch(value.httpProxy),
     });
     const response = await openai.chat.completions.create({
       model: aiConfig.config.model,
@@ -3469,6 +3479,7 @@ export const availableTools = {
         baseURL: ocrConfig.host,
         apiKey: ocrConfig.key,
         timeout: 120000,
+        fetch: getOpenAIProxyFetch(value.httpProxy),
       });
 
       const completion = await openai.chat.completions.create({
@@ -3668,7 +3679,8 @@ export const availableTools = {
 
       console.log("最终请求体", requestBody);
 
-      const res = await fetch(
+      const requestFetch = getOpenAIProxyFetch(value.httpProxy) || fetch;
+      const res = await requestFetch(
         aiConfig.host.replace(/\/+$/, "") +
           (imgBase64Array.length > 0 ? "/images/edits" : "/images/generations"),
         {
@@ -3720,41 +3732,80 @@ export const availableTools = {
         baseURL: aiConfig.host,
         apiKey: aiConfig.key,
         timeout: 120000,
+        fetch: getOpenAIProxyFetch(value.httpProxy),
       });
 
       const model = gptImageConfig.model;
 
       const sourceImageUrl = String(image_url || "").trim();
-      const response = sourceImageUrl
-        ? await openai.images.edit({
-            model,
-            image: await imageUrlToFile(sourceImageUrl),
-            prompt,
-            n: 1,
-            size: size as any,
-            quality: quality as any,
-          })
-        : await openai.images.generate({
-            model,
-            prompt,
-            n: 1,
-            size: size as any,
-            quality: quality as any,
-            moderation: "low",
-          });
 
-      console.log("GPT 画图完成", response.data?.[0]);
+      const requestWithImageAPI = async () => {
+        const response = sourceImageUrl
+          ? await openai.images.edit({
+              model,
+              image: await imageUrlToFile(sourceImageUrl),
+              prompt,
+              n: 1,
+              size: size as any,
+              quality: quality as any,
+            })
+          : await openai.images.generate({
+              model,
+              prompt,
+              n: 1,
+              size: size as any,
+              quality: quality as any,
+              moderation: "low",
+            });
+        console.log("GPT Image API 画图完成", response.data?.[0]);
+        return {
+          url: response.data?.[0]?.url,
+          base64: response.data?.[0]?.b64_json,
+        };
+      };
+
+      const requestWithResponsesAPI = async () => {
+        const request = buildGPTImageResponsesRequest({
+          chatModel: aiConfig.model,
+          imageModel: model,
+          prompt,
+          sourceImageUrl: sourceImageUrl || undefined,
+          size,
+          quality,
+        });
+        const response = await openai.responses.create(request as any);
+        console.log("GPT Responses API 画图完成", response.id);
+        return { base64: extractGPTImageResponseBase64(response) };
+      };
+
+      const preferredMode: GPTImageRequestMode =
+        aiConfig.apiMode === "rapi" ? "responses" : "image";
+      const alternateMode: GPTImageRequestMode =
+        preferredMode === "responses" ? "image" : "responses";
+      const requestByMode = (mode: GPTImageRequestMode) =>
+        mode === "responses"
+          ? requestWithResponsesAPI()
+          : requestWithImageAPI();
+
+      let result: { url?: string; base64?: string };
+      try {
+        result = await requestByMode(preferredMode);
+      } catch (firstError) {
+        if (!shouldFallbackGPTImageMode(firstError)) throw firstError;
+        console.warn(
+          `GPT 画图的 ${preferredMode} 模式不可用，尝试 ${alternateMode} 模式`,
+        );
+        result = await requestByMode(alternateMode);
+      }
 
       // URL 结果交给外层上传 R2；上传失败时外层可直接回退到原始链接
-      if (response.data?.[0]?.url) {
-        return [{ type: "image", url: response.data[0].url }];
+      if (result.url) {
+        return [{ type: "image", url: result.url }];
       }
 
-      // gpt-image-1 默认返回 b64_json，需要先保存为本地文件
-      let imageData: string | undefined;
-      if (response.data?.[0]?.b64_json) {
-        imageData = `data:image/png;base64,${response.data[0].b64_json}`;
-      }
+      const imageData = result.base64
+        ? `data:image/png;base64,${result.base64}`
+        : undefined;
 
       if (!imageData) {
         return "生成图片失败：未获取到图片数据";
@@ -3765,7 +3816,7 @@ export const availableTools = {
       if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });
       }
-      const savePath = `${dir}/${Date.now()}.png`;
+      const savePath = `${dir}/${Date.now()}-${randomUUID()}.png`;
       const base64Data = imageData.replace(/^data:image\/\w+;base64,/, "");
       const buffer = Buffer.from(base64Data, "base64");
       fs.writeFileSync(savePath, buffer);
@@ -3773,7 +3824,7 @@ export const availableTools = {
       return [{ type: "image", url: savePath }];
     } catch (error: any) {
       console.error("Error calling GPT image API:", error);
-      let errormsg: string = error?.message || error;
+      let errormsg = formatGPTImageError(error, gptImageConfig.model);
       if (errormsg.includes("sexual"))
         errormsg = "什么⭐🦆🐜，不给你画了，哼！";
       return "调用 GPT 画图接口失败: " + errormsg;
@@ -3834,7 +3885,8 @@ export const availableTools = {
 
       console.log("最终请求体", requestBody);
 
-      const res = await fetch(aiConfig.host + "/videos/generations", {
+      const requestFetch = getOpenAIProxyFetch(value.httpProxy) || fetch;
+      const res = await requestFetch(aiConfig.host + "/videos/generations", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -3868,7 +3920,8 @@ export const availableTools = {
     }
 
     try {
-      const res = await fetch(aiConfig.host + `/videos/${request_id}`, {
+      const requestFetch = getOpenAIProxyFetch(value.httpProxy) || fetch;
+      const res = await requestFetch(aiConfig.host + `/videos/${request_id}`, {
         method: "GET",
         headers: {
           "Content-Type": "application/json",

@@ -12,6 +12,8 @@ export interface AIChatConfig {
     headless?: boolean;
   };
   xaiImgProxy?: string;
+  /** OpenAI 等 HTTPS 请求使用的本地 HTTP(S) 代理地址。 */
+  httpProxy?: string;
   opencodeServer?: {
     port?: number;
     hostname?: string;

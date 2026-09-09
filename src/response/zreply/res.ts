@@ -12,6 +12,7 @@ import {
 } from "alemonjs";
 import { log } from "console";
 import OpenAi from "openai";
+import { getOpenAIProxyFetch } from "../../api/openaiProxy";
 import { TTSClient } from "@src/api/tts";
 import { getAiChatConfigValue } from "@src/config/app";
 import { getGroupTimeString, getMessageTimeString } from "@src/api/format";
@@ -397,6 +398,7 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
       baseURL: config.host,
       apiKey: config.key,
       timeout: 300000,
+      fetch: getOpenAIProxyFetch(value.httpProxy),
     });
 
     let messages = redisClient.sanitizeChatMessages([

@@ -6,6 +6,8 @@ import { Text, Image } from "alemonjs";
 import { useMessage } from "@src/utils/command-message";
 import { renderComponentIsHtmlToBuffer } from "jsxp";
 import OpenAi from "openai";
+import { getOpenAIProxyFetch } from "../../api/openaiProxy";
+import { getAiChatConfigValue } from "@src/config/app";
 export const selects = onSelects(["message.create", "private.message.create"]);
 
 const parseArchiveSummary = (content: string) => {
@@ -34,6 +36,7 @@ const archiveCurrentConversation = async (
         baseURL: aiConfig.host,
         apiKey: aiConfig.key,
         timeout: 300000,
+        fetch: getOpenAIProxyFetch(getAiChatConfigValue().httpProxy),
       });
       const summaryPrompt =
         "请总结一下我们之前的聊天内容。请严格按以下格式输出：\n摘要:<一句到两句的简短总结>\n详细信息:<尽可能完整的要点整理，方便之后继续对话>";

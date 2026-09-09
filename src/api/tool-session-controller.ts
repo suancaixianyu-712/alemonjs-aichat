@@ -2,6 +2,8 @@ import fs from "node:fs";
 import { isIP } from "node:net";
 import path from "node:path";
 import OpenAI from "openai";
+import { getOpenAIProxyFetch } from "./openaiProxy";
+import { getAiChatConfigValue } from "@src/config/app";
 import redisClient from "@src/config";
 import {
   buildToolMessageContent,
@@ -218,6 +220,7 @@ const reviewPermissionWithCurrentAI = async (
       baseURL: config.host,
       apiKey: config.key,
       timeout: 120000,
+      fetch: getOpenAIProxyFetch(getAiChatConfigValue().httpProxy),
     });
     const params = {
       model: config.model,

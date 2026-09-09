@@ -9,6 +9,8 @@ import {
 } from "alemonjs";
 import { log } from "console";
 import OpenAi from "openai";
+import { getOpenAIProxyFetch } from "../../api/openaiProxy";
+import { getAiChatConfigValue } from "@src/config/app";
 import { TTSClient } from "@src/api/tts";
 import {
   awaitWithAITurnAbort,
@@ -442,6 +444,7 @@ export const CApiReply = async (
       baseURL: cfg.config.host,
       apiKey: cfg.config.key,
       timeout: 300000,
+      fetch: getOpenAIProxyFetch(getAiChatConfigValue().httpProxy),
     });
     const shouldStreamToOutput =
       typeof outputMessage?.streamTextDelta === "function";

@@ -4,6 +4,7 @@ import path from "path";
 import mime from "mime-types";
 import sharp from "sharp"; // 需要安装: npm install sharp
 import { getAiChatConfigValue } from "./config/app";
+import { getOpenAIProxyFetch } from "./api/openaiProxy";
 const value = getAiChatConfigValue();
 
 const R2_CONFIG = {
@@ -222,12 +223,16 @@ export const getImageBuffer = async (
     // 远程 URL
     let url = source.replace("!/fwfh/368x238", "");
 
-    // 判断是否为 https://imgen.x.ai 开头
-    if (url.startsWith("https://imgen.x.ai")) {
+    const isXAIImage = url.startsWith("https://imgen.x.ai");
+    if (isXAIImage && value.xaiImgProxy) {
       url = url.replace("https://imgen.x.ai", value.xaiImgProxy);
     }
 
-    let response = await fetch(url);
+    const requestFetch =
+      isXAIImage && !value.xaiImgProxy
+        ? getOpenAIProxyFetch(value.httpProxy) || fetch
+        : fetch;
+    let response = await requestFetch(url);
     if (!response.ok) {
       if (url.startsWith("https://img.suancaixianyu.cn")) {
         url = url.replace(

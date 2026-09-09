@@ -6,7 +6,6 @@ import { startScheduledAITaskScheduler } from "./scheduler";
 import { getRuntimeConfig } from "./config/runtime";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
-import { setupGlobalProxy } from "./utils/proxy";
 
 export default defineChildren({
   register() {
@@ -17,10 +16,6 @@ export default defineChildren({
     };
   },
   onCreated() {
-    // 全局代理：配置了 aiChat.proxy 时，所有 fetch / undici 请求统一走代理
-    // （含 openai、ai-sdk 等三方 SDK）。未配置时行为不变。
-    setupGlobalProxy();
-
     const runtimeConfig = getRuntimeConfig();
     mkdirSync(path.resolve(process.cwd(), "public", "knowledge"), {
       recursive: true,

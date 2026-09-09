@@ -1,6 +1,6 @@
 {
   "name": "alemonjs-aichat",
-  "version": "1.0.78",
+  "version": "1.0.80",
   "description": "alemonjs-aichat",
   "author": "suancaixianyu",
   "license": "MIT",
@@ -83,14 +83,14 @@
         ]
       },
       {
-        "description": "全局网络代理, 例如 http://127.0.0.1:7890, 配置后所有 fetch/undici 请求走代理",
-        "name": "proxy",
+        "description": "xAI 图片服务的代理地址",
+        "name": "xaiImgProxy",
         "required": false,
         "type": "string"
       },
       {
-        "description": "xAI 图片服务的代理地址",
-        "name": "xaiImgProxy",
+        "description": "OpenAI 请求使用的本地 HTTP(S) 代理地址",
+        "name": "httpProxy",
         "required": false,
         "type": "string"
       },
@@ -172,6 +172,7 @@
     "@alemonjs/db": "^0.0.16",
     "@aws-sdk/client-s3": "^3.975.0",
     "@aws-sdk/s3-request-presigner": "^3.975.0",
+    "https-proxy-agent": "^7.0.6",
     "ai": "^6.0.105",
     "jsxp": "^1.4.0",
     "koa": "^3.2.0",
@@ -186,7 +187,6 @@
     "react-dom": "^19.2.5",
     "sharp": "^0.34.5",
     "systeminformation": "^5.30.5",
-    "undici": "^6.28.0",
     "zod": "^4.3.6"
   }
 }

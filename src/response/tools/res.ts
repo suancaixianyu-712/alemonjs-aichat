@@ -9,6 +9,7 @@
 } from "alemonjs";
 import { useMessage } from "@src/utils/command-message";
 import OpenAi from "openai";
+import { getOpenAIProxyFetch } from "../../api/openaiProxy";
 import { sendTTSMessage } from "../zreply/res";
 import { availableTools } from "@src/api/aitools";
 import { TTSClient } from "@src/api/tts";
@@ -221,6 +222,7 @@ export default onResponse(selects, async (e) => {
           baseURL: aiConfig.host,
           apiKey: aiConfig.key,
           timeout: 300000,
+          fetch: getOpenAIProxyFetch(configValue.httpProxy),
         });
 
         const response = await openai.chat.completions.create({
