@@ -33,6 +33,7 @@ export const getAiChatConfigValue = (): Record<string, any> => {
     "searchApiKey",
     "ai",
     "xaiImgProxy",
+    "proxy",
     "ttsServer",
     "baidu",
     "skills_dir",
