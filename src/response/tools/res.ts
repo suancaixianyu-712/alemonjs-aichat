@@ -62,12 +62,12 @@ export default onResponse(selects, async (e) => {
     return;
   }
 
-  // Grok 画图/修图
-  if (/(\/|#)(ai)?(pt|p图|ps|修图)(.*)$/i.test(e.msg)) {
-    const match = e.msg.match(/(\/|#)(ai)?(pt|p图|ps|修图)(.*)$/i);
-    const [, , , , content] = match;
+  // Grok 画图：“画图”后必须是空白或结束，不匹配“grok画图配置”
+  if (/^(\/|#)grok画图(?:\s+[\s\S]*)?$/i.test(e.msg)) {
+    const match = e.msg.match(/^(\/|#)grok画图(?:\s+([\s\S]*))?$/i);
+    const content = match?.[2] || "";
     if (!content.trim()) {
-      message.send(format(Text("请提供修图内容，例如：\n#修图 换个背景")));
+      message.send(format(Text("请提供画图内容，例如：\n#grok画图 换个背景")));
       return;
     }
 
@@ -102,7 +102,7 @@ export default onResponse(selects, async (e) => {
         ),
     );
 
-    message.send(format(Text("开始修图喵~")));
+    message.send(format(Text("开始用 Grok 画图喵~")));
 
     const res = await availableTools.Photoshop({
       image_url: await Promise.all(uploadedImgUrls),
@@ -110,17 +110,28 @@ export default onResponse(selects, async (e) => {
     });
 
     if (res && typeof res === "object" && res.length > 0) {
-      const imgUrl = res[0].url.replace(
+      const originalImgUrl = String(res[0]?.url || "").trim();
+      if (!originalImgUrl) {
+        message.send(format(Text("Grok 画图失败了喵~：接口未返回图片地址")));
+        return;
+      }
+      const downloadUrl = originalImgUrl.replace(
         "https://imgen.x.ai",
         configValue.xaiImgProxy || "https://imgen.x.ai",
       );
+      let imgUrl = originalImgUrl;
+      try {
+        imgUrl = await uploadImageToR2(downloadUrl);
+      } catch (error) {
+        console.error("Grok画图结果上传R2失败，改用原始链接:", error);
+      }
 
       const R18Switch = await redisClient.getR18Switch(e.guid);
       if (R18Switch === "1") {
-        message.send(format(Text("修图完成喵~"), ImageURL(imgUrl)));
+        message.send(format(Text("Grok 画图完成喵~"), ImageURL(imgUrl)));
         return;
       }
-      const reviewRes = await imageReview(await uploadImageToR2(imgUrl));
+      const reviewRes = await imageReview(imgUrl);
       if (reviewRes && reviewRes.conclusion === "不合规") {
         message.send(
           format(
@@ -141,7 +152,7 @@ export default onResponse(selects, async (e) => {
         console.log("res", json);
         message.send(format(Text(json.error)));
       } catch (error) {
-        message.send(format(Text("修图报错了喵~:" + res)));
+        message.send(format(Text("Grok 画图报错了喵~:" + res)));
       }
     }
   }

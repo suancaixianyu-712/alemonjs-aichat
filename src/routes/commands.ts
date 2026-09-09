@@ -50,7 +50,7 @@ export const commandChildren = [
   // tools (多条正则合并)
   {
     regular: Regular.or(
-      /(\/|#)(ai)?(pt|p图|ps|修图)(.*)$/i,
+      /^(\/|#)grok画图(?:\s+[\s\S]*)?$/i,
       /(\/|#)(ai)?(画图)(.*)$/i,
       /(\/|#)(ai)?(生成视频)(.*)$/i,
       /(\/|#)(ai)?(查询)(.*)$/i,

@@ -3615,16 +3615,18 @@ export const availableTools = {
     if (!grokImageConfig) {
       return "未配置 Grok 画图接口，请使用命令：\n#grok画图配置 <AI配置编号> <画图模型>";
     }
-    const aiConfig = await redisClient.getAIListConfig(
-      grokImageConfig.aiName,
-    );
+    const aiConfig = await redisClient.getAIListConfig(grokImageConfig.aiName);
     if (!aiConfig?.host?.trim() || !aiConfig.key?.trim()) {
       return `Grok 画图引用的 AI 配置「${grokImageConfig.aiName}」不存在或不完整，请重新使用：\n#grok画图配置 <AI配置编号> <画图模型>`;
     }
 
     try {
-      // 处理单个或多个图片
-      const imageUrls = Array.isArray(image_url) ? image_url : [image_url];
+      // 无图片时生成图片，有图片时编辑单张或多张图片
+      const imageUrls = (
+        Array.isArray(image_url) ? image_url : [image_url]
+      ).filter(
+        (url): url is string => typeof url === "string" && Boolean(url.trim()),
+      );
       const imgBase64Array: string[] = [];
 
       for (const url of imageUrls) {
@@ -3637,30 +3639,38 @@ export const availableTools = {
         imgBase64Array.push(imgBase64);
       }
 
-      const requestBody = Array.isArray(image_url)
-        ? {
-            model: grokImageConfig.model,
-            images: imgBase64Array.map((base64) => ({
-              url: base64,
-              type: "image_url",
-            })),
-            prompt: instruction,
-            n: 1,
-          }
-        : {
-            model: grokImageConfig.model,
-            image: {
-              url: imgBase64Array[0],
-              type: "image_url",
-            },
-            prompt: instruction,
-            n: 1,
-          };
+      const requestBody =
+        imgBase64Array.length > 1
+          ? {
+              model: grokImageConfig.model,
+              images: imgBase64Array.map((base64) => ({
+                url: base64,
+                type: "image_url",
+              })),
+              prompt: instruction,
+              n: 1,
+            }
+          : imgBase64Array.length === 1
+            ? {
+                model: grokImageConfig.model,
+                image: {
+                  url: imgBase64Array[0],
+                  type: "image_url",
+                },
+                prompt: instruction,
+                n: 1,
+              }
+            : {
+                model: grokImageConfig.model,
+                prompt: instruction,
+                n: 1,
+              };
 
       console.log("最终请求体", requestBody);
 
       const res = await fetch(
-        aiConfig.host.replace(/\/+$/, "") + "/images/edits",
+        aiConfig.host.replace(/\/+$/, "") +
+          (imgBase64Array.length > 0 ? "/images/edits" : "/images/generations"),
         {
           method: "POST",
           headers: {
@@ -3735,12 +3745,15 @@ export const availableTools = {
 
       console.log("GPT 画图完成", response.data?.[0]);
 
-      // gpt-image-1 默认返回 b64_json，也可能返回 url
+      // URL 结果交给外层上传 R2；上传失败时外层可直接回退到原始链接
+      if (response.data?.[0]?.url) {
+        return [{ type: "image", url: response.data[0].url }];
+      }
+
+      // gpt-image-1 默认返回 b64_json，需要先保存为本地文件
       let imageData: string | undefined;
       if (response.data?.[0]?.b64_json) {
         imageData = `data:image/png;base64,${response.data[0].b64_json}`;
-      } else if (response.data?.[0]?.url) {
-        imageData = response.data[0].url;
       }
 
       if (!imageData) {
@@ -3753,18 +3766,8 @@ export const availableTools = {
         fs.mkdirSync(dir, { recursive: true });
       }
       const savePath = `${dir}/${Date.now()}.png`;
-      let buffer: Buffer;
-      if (imageData.startsWith("data:image/")) {
-        const base64Data = imageData.replace(/^data:image\/\w+;base64,/, "");
-        buffer = Buffer.from(base64Data, "base64");
-      } else {
-        const res = await fetch(imageData);
-        if (!res.ok) {
-          return "生成图片失败：下载图片失败";
-        }
-        const arrayBuffer = await res.arrayBuffer();
-        buffer = Buffer.from(arrayBuffer);
-      }
+      const base64Data = imageData.replace(/^data:image\/\w+;base64,/, "");
+      const buffer = Buffer.from(base64Data, "base64");
       fs.writeFileSync(savePath, buffer);
 
       return [{ type: "image", url: savePath }];
