@@ -1,12 +1,70 @@
-import { Text, useMessage } from "alemonjs";
+import { Mention, Text, useMessage } from "alemonjs";
 import redisClient from "@src/config";
 import { CApiReply } from "@src/response/zreply/capi";
 import {
   buildUserMessage,
   getChatConfig,
 } from "@src/response/zreply/getChatConfig";
+import { toolSessionController } from "@src/api/tool-session-controller";
 
 const selects = onSelects(["message.create", "private.message.create"]);
+
+type QueuedAITurnChain = {
+  tail: Promise<void>;
+  count: number;
+};
+
+const queuedAITurnChains = new Map<string, QueuedAITurnChain>();
+const waitForQueueRetry = () =>
+  new Promise<void>((resolve) => setTimeout(resolve, 300));
+
+const getAITurnQueueKey = (event: any) =>
+  `${event.guid}:${event.Platform || "default"}`;
+
+const enqueueIndependentAITurn = (
+  event: any,
+  outputMessage: any,
+): { position: number; completed: Promise<void> } => {
+  const key = getAITurnQueueKey(event);
+  let chain = queuedAITurnChains.get(key);
+  if (!chain) {
+    chain = { tail: Promise.resolve(), count: 0 };
+    queuedAITurnChains.set(key, chain);
+  }
+
+  chain.count += 1;
+  const position = chain.count;
+  const run = chain.tail
+    .catch(() => undefined)
+    .then(async () => {
+      while (true) {
+        const active = await redisClient.getAIToolLoopState(
+          event.guid,
+          event.Platform,
+        );
+        if (active) {
+          await waitForQueueRetry();
+          continue;
+        }
+
+        const result = await CApiReply(event, outputMessage);
+        if (!result?.busy) {
+          if (result) event["Xianyu"] = result.next;
+          return;
+        }
+        await waitForQueueRetry();
+      }
+    });
+
+  const completed = run.finally(() => {
+    chain!.count -= 1;
+    if (chain!.count === 0 && queuedAITurnChains.get(key) === chain) {
+      queuedAITurnChains.delete(key);
+    }
+  });
+  chain.tail = completed;
+  return { position, completed };
+};
 
 const prependGuidancePrefix = (message: any) => ({
   ...message,
@@ -110,10 +168,60 @@ const canPassReplyTriggerGate = async (event: any) => {
 };
 
 export default onResponse(selects, async (event, next) => {
+  const [toolMessage] = useMessage(event);
+  try {
+    const handledByThirdPartyTool = await toolSessionController.handleMessage(
+      event,
+      (text) => toolMessage.send(format(Text(text))),
+    );
+    if (handledByThirdPartyTool) {
+      event["Xianyu"] = false;
+      return next();
+    }
+  } catch (error) {
+    await toolMessage.send(
+      format(
+        Text(
+          `第三方工具处理失败：${error instanceof Error ? error.message : String(error)}`,
+        ),
+      ),
+    );
+    event["Xianyu"] = false;
+    return next();
+  }
+
+  const toolLoopState = await redisClient.getAIToolLoopState(
+    event.guid,
+    event.Platform,
+  );
+  const currentUserID = String(event.UserId || "");
   const shouldReply = await canPassReplyTriggerGate(event);
-  const toolLoopProcessing =
-    (await redisClient.getAIToolLoopProcessing(event.guid, event.Platform)) ===
-    "1";
+  const queueKey = getAITurnQueueKey(event);
+  const hasQueuedTurns = queuedAITurnChains.has(queueKey);
+
+  const belongsToActiveTurn =
+    toolLoopState?.userID && toolLoopState.userID === currentUserID;
+  if (
+    shouldReply &&
+    ((toolLoopState && !belongsToActiveTurn) ||
+      (!toolLoopState && hasQueuedTurns))
+  ) {
+    const [message] = useMessage(event);
+    const queued = enqueueIndependentAITurn(event, message);
+    await message.send(
+      format(
+        Mention(event.UserId),
+        Text(
+          `当前任务正在执行，你的消息已加入队列（第 ${queued.position} 位）。`,
+        ),
+      ),
+    );
+    event["Xianyu"] = false;
+    await queued.completed;
+    return next();
+  }
+
+  const toolLoopProcessing = Boolean(toolLoopState);
 
   if (toolLoopProcessing && shouldReply) {
     const guidanceMessage = await buildGuidanceMessage(event);

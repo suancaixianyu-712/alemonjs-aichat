@@ -566,6 +566,14 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
           functionArgs.isPrivate = e.name === "private.message.create";
         }
 
+        if (
+          functionName === "RunOpencode" &&
+          functionArgs &&
+          typeof functionArgs === "object"
+        ) {
+          functionArgs.userID = String(e.UserId || "");
+        }
+
         const functionToCall = availableTools[functionName];
         let functionResult: any;
 
@@ -576,16 +584,16 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
             error: `未找到函数：${functionName}`,
           };
         } else {
-            try {
-              const toolGuid = await assertAgentToolAccess(
-                functionName,
-                e.guid,
-                functionArgs?.scope,
-                e.IsMaster === true,
-              );
-              if (
-                (await redisClient.getToolStatus(e.guid, functionName)) === "1"
-              ) {
+          try {
+            const toolGuid = await assertAgentToolAccess(
+              functionName,
+              e.guid,
+              functionArgs?.scope,
+              e.IsMaster === true,
+            );
+            if (
+              (await redisClient.getToolStatus(e.guid, functionName)) === "1"
+            ) {
               console.error(`工具被禁用：${functionName}`);
               functionResult = {
                 ok: false,
@@ -599,7 +607,11 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
               // 公共知识库仅映射工作目录；审核配置仍绑定真实会话。
               if (functionArgs && typeof functionArgs === "object") {
                 functionArgs.guid = toolGuid;
-                if (functionArgs.scope === "public") {
+                if (
+                  functionName === "RunServerCommand" ||
+                  functionArgs.scope === "public" ||
+                  functionArgs.scope === "root"
+                ) {
                   functionArgs.reviewGuid = e.guid;
                 }
               }

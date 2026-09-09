@@ -2,6 +2,7 @@ import redisClient from "@src/config";
 import type { AIConfig } from "@src/types";
 import { Text } from "alemonjs";
 import { useMessage } from "@src/utils/command-message";
+import { toolSessionController } from "@src/api/tool-session-controller";
 
 const selects = onSelects(["message.create", "private.message.create"]);
 
@@ -106,6 +107,7 @@ const switchToModel = async (e: any, identifier: string) => {
     await message.send(format(Text(`切换失败，未找到 AI ${identifier}。`)));
     return false;
   }
+  await toolSessionController.syncModelFromCurrentAI(e.guid);
   await message.send(
     format(
       Text(`已切换到 AI ${identifier}。`),

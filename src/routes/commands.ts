@@ -75,7 +75,6 @@ export const commandChildren = [
       /^(\/|#)删除对话$/i,
       /^(\/|#)清空(所有|全部)对话$/i,
       /^(\/|#)get (.+)$/i,
-      /(\/|#)(开启)?(new|新对话|新会话)$/i,
       /^(\/|#)ai状态$/,
     ),
     handler: lazy(() => import("../response/config/res")),
@@ -91,6 +90,20 @@ export const commandChildren = [
   {
     regular: /^(#|\/)切换接口(?:\s+(?:capi|rapi))?$/i,
     handler: lazy(() => import("../response/switch-api/res")),
+  },
+
+  // third-party tool sessions
+  {
+    regular: Regular.or(
+      /^(#|\/)切换工具(?:\s*(?:opencode|默认))?$/i,
+      /^(#|\/)(?:修改|设置)权限(?:\s*(?:只读|手动确认|自动审核|完全访问))?$/i,
+      /^(#|\/)new$/i,
+      /^(#|\/)会话列表$/i,
+      /^(#|\/)models$/i,
+      /^(#|\/)model(?:\s+.+)?$/i,
+      /^(#|\/)切换会话(?:\s+.+)?$/i,
+    ),
+    handler: lazy(() => import("../response/tool-session/res")),
   },
 
   // provider built-in tools

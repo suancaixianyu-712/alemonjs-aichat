@@ -50,7 +50,7 @@ type ArchivedChatSearchResult = {
   score: number;
 };
 
-const TOOL_LOOP_TTL_SECONDS = 600;
+const TOOL_LOOP_TTL_SECONDS = 3600;
 const TOOL_LOOP_STALE_MS = TOOL_LOOP_TTL_SECONDS * 1000;
 export const NEXT_USER_MESSAGE_SUBSCRIPTION_TTL_SECONDS = 600;
 export const DEFAULT_CAPI_CONTEXT_LIMIT = 512000;
@@ -64,6 +64,7 @@ const ARCHIVED_CHAT_RECORD_MAX_PARSE_BYTES = 1024 * 1024;
 
 type AIToolLoopState = {
   processing: true;
+  userID: string;
   startedAt: number;
   updatedAt: number;
 };
@@ -1504,15 +1505,70 @@ class db {
     return count <= limit;
   }
   /** 设置工具调用中的处理状态 */
+  async acquireAIToolLoop(
+    guid: string,
+    userID: string,
+    platform?: string,
+  ): Promise<boolean> {
+    const now = Date.now();
+    const state: AIToolLoopState = {
+      processing: true,
+      userID,
+      startedAt: now,
+      updatedAt: now,
+    };
+    const result = await this.redis.set(
+      this.getToolLoopStateKey(guid, platform),
+      JSON.stringify(state),
+      "EX",
+      TOOL_LOOP_TTL_SECONDS,
+      "NX",
+    );
+    return result === "OK";
+  }
+
+  async releaseAIToolLoop(
+    guid: string,
+    userID: string,
+    platform?: string,
+  ): Promise<boolean> {
+    const keys = [
+      this.getToolLoopStateKey(guid, platform),
+      `ai:tool_loop_processing:${guid}`,
+    ].filter((key, index, values) => values.indexOf(key) === index);
+    const released = await this.redis.eval(
+      `
+      local released = 0
+      for _, key in ipairs(KEYS) do
+        local value = redis.call("GET", key)
+        if value and value ~= "1" then
+          local ok, state = pcall(cjson.decode, value)
+          if ok and tostring(state.userID or "") == ARGV[1] then
+            redis.call("DEL", key)
+            released = released + 1
+          end
+        end
+      end
+      return released
+      `,
+      keys.length,
+      ...keys,
+      userID,
+    );
+    return Number(released) > 0;
+  }
+
   async setAIToolLoopProcessing(
     guid: string,
     processing: boolean,
     platform?: string,
+    userID = "",
   ): Promise<void> {
     if (processing) {
       const now = Date.now();
       const state: AIToolLoopState = {
         processing: true,
+        userID,
         startedAt: now,
         updatedAt: now,
       };
@@ -1532,48 +1588,53 @@ class db {
   }
 
   /** 获取工具调用中的处理状态 */
-  async getAIToolLoopProcessing(
+  async getAIToolLoopState(
     guid: string,
     platform?: string,
-  ): Promise<string> {
+  ): Promise<AIToolLoopState | null> {
     const key = this.getToolLoopStateKey(guid, platform);
     let processing = await this.redis.get(key);
     if (!processing && platform) {
       processing = await this.redis.get(`ai:tool_loop_processing:${guid}`);
     }
-    if (!processing) {
-      return "0";
+    if (!processing) return null;
+
+    if (processing === "1") {
+      return {
+        processing: true,
+        userID: "",
+        startedAt: Date.now(),
+        updatedAt: Date.now(),
+      };
     }
 
-    let state: AIToolLoopState | null = null;
-    if (processing !== "1") {
-      try {
-        const parsed = JSON.parse(processing);
-        if (parsed?.processing === true) {
-          state = parsed as AIToolLoopState;
-        }
-      } catch {
-        await this.clearAITransientState(guid);
-        return "0";
-      }
-
-      const updatedAt = Number(state?.updatedAt || state?.startedAt || 0);
+    try {
+      const parsed = JSON.parse(processing);
+      if (parsed?.processing !== true) return null;
+      const updatedAt = Number(parsed.updatedAt || parsed.startedAt || 0);
       if (!updatedAt || Date.now() - updatedAt > TOOL_LOOP_STALE_MS) {
         await this.clearAITransientState(guid);
-        return "0";
+        return null;
       }
+      const ttl = await this.redis.ttl(key);
+      if (ttl === -1) await this.redis.expire(key, TOOL_LOOP_TTL_SECONDS);
+      return {
+        processing: true,
+        userID: String(parsed.userID || ""),
+        startedAt: Number(parsed.startedAt || updatedAt),
+        updatedAt,
+      };
+    } catch {
+      await this.clearAITransientState(guid);
+      return null;
     }
+  }
 
-    const ttl = await this.redis.ttl(key);
-    if (ttl === -1) {
-      if (processing === "1") {
-        await this.clearAITransientState(guid);
-        return "0";
-      }
-      await this.redis.expire(key, TOOL_LOOP_TTL_SECONDS);
-    }
-
-    return "1";
+  async getAIToolLoopProcessing(
+    guid: string,
+    platform?: string,
+  ): Promise<string> {
+    return (await this.getAIToolLoopState(guid, platform)) ? "1" : "0";
   }
 
   /** 获取工具调用期间追加的引导消息 */

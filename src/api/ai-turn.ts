@@ -2,16 +2,22 @@ type AITurnRecord = {
   id: symbol;
   guid: string;
   platform?: string;
+  userID: string;
   controller: AbortController;
 };
 
 const activeAITurns = new Set<AITurnRecord>();
 
-export const beginAITurn = (guid: string, platform?: string) => {
+export const beginAITurn = (
+  guid: string,
+  platform: string | undefined,
+  userID: string,
+) => {
   const record: AITurnRecord = {
     id: Symbol("ai-turn"),
     guid,
     platform,
+    userID,
     controller: new AbortController(),
   };
   activeAITurns.add(record);
@@ -25,12 +31,14 @@ export const beginAITurn = (guid: string, platform?: string) => {
 export const abortAITurns = (options: {
   guid: string;
   platform?: string;
+  userID: string;
 }): { aborted: number } => {
   let aborted = 0;
 
   for (const turn of activeAITurns) {
     if (turn.guid !== options.guid) continue;
     if (options.platform && turn.platform !== options.platform) continue;
+    if (turn.userID !== options.userID) continue;
     if (turn.controller.signal.aborted) continue;
 
     turn.controller.abort(new Error("当前 AI 回复已被用户停止"));

@@ -1,4 +1,5 @@
 import redisClient from "@src/config";
+import { toolSessionController } from "@src/api/tool-session-controller";
 import { loadSkills } from "@src/api/loadSkill";
 import AiConfig from "@src/image/conponent/AiConfig";
 import { Text, Image } from "alemonjs";
@@ -140,9 +141,36 @@ export default onResponse(selects, async (e, next) => {
 
   // 查看AI状态
   if (/^(\/|#)ai状态$/i.test(e.msg)) {
+    const toolStatus = await toolSessionController.getStatus(e.guid);
+    if (toolStatus.tool !== "default") {
+      const currentAI = await redisClient.getCurrentAI(e.guid);
+      message.send(
+        format(
+          Text(
+            [
+              "当前AI状态：",
+              `当前工具: ${toolStatus.toolLabel}`,
+              `当前AI: ${currentAI || "未设置"}`,
+              `模型: ${toolStatus.model || "未设置"}`,
+              `权限: ${toolStatus.permissionLabel}`,
+              `当前会话: ${toolStatus.title || "未创建"}`,
+              `会话ID: ${toolStatus.sessionId || "未创建"}`,
+            ].join("\n"),
+          ),
+        ),
+      );
+      return;
+    }
     const stats = await redisClient.getAIContextStats(e.guid);
     const capiContextLimit = await redisClient.getCAPIContextLimit(e.guid);
-    message.send(format(Text(formatAIContextStatus(stats, capiContextLimit))));
+    message.send(
+      format(
+        Text(
+          `当前工具: ${toolStatus.toolLabel}\n${formatAIContextStatus(stats, capiContextLimit)}`,
+        ),
+      ),
+    );
+    return;
   }
 
   // 查看AI配置
@@ -174,31 +202,35 @@ export default onResponse(selects, async (e, next) => {
 
     try {
       const scale = await redisClient.getRenderPrecision(e.guid);
-      const img = await renderComponentIsHtmlToBuffer(AiConfig, {
-        switch: config.model != "",
-        tools: toolsIsOpen == "1",
-        complex: complexResponse == "1",
-        affection: affectionIsOpen == "1",
-        tts: isOpenTTSReply == "1",
-        deep: deepThinkingIsOpen == "1",
-        model: config.model,
-        prompt: config.systemPrompt,
-        atTrigger: atTriggerSwitch == "1",
-        imageBedSwitch: imageBedSwitch == "1",
-        aiList: aiList,
-        currentAI: currentAI,
-        skillList,
-        toolList: toolList,
-        toolPromptSwitch: toolPromptSwitch == "1",
-        toolPromptRevokeSwitch: toolPromptRevokeSwitch == "1",
-        toolPromptArgsSwitch: toolPromptArgsSwitch == "1",
-        toolCallContentSwitch: toolCallContentSwitch == "1",
-        capiContextLimit: formatContextLimit(capiContextLimit),
-      }, {
-        playwright: {
-          context: { deviceScaleFactor: scale },
+      const img = await renderComponentIsHtmlToBuffer(
+        AiConfig,
+        {
+          switch: config.model != "",
+          tools: toolsIsOpen == "1",
+          complex: complexResponse == "1",
+          affection: affectionIsOpen == "1",
+          tts: isOpenTTSReply == "1",
+          deep: deepThinkingIsOpen == "1",
+          model: config.model,
+          prompt: config.systemPrompt,
+          atTrigger: atTriggerSwitch == "1",
+          imageBedSwitch: imageBedSwitch == "1",
+          aiList: aiList,
+          currentAI: currentAI,
+          skillList,
+          toolList: toolList,
+          toolPromptSwitch: toolPromptSwitch == "1",
+          toolPromptRevokeSwitch: toolPromptRevokeSwitch == "1",
+          toolPromptArgsSwitch: toolPromptArgsSwitch == "1",
+          toolCallContentSwitch: toolCallContentSwitch == "1",
+          capiContextLimit: formatContextLimit(capiContextLimit),
         },
-      });
+        {
+          playwright: {
+            context: { deviceScaleFactor: scale },
+          },
+        },
+      );
       if (img) {
         message.send(format(Image(img)));
       } else {
@@ -310,23 +342,6 @@ export default onResponse(selects, async (e, next) => {
     } catch (error) {
       message.send(format(Text(`请求 ${url} 失败：${error}`)));
     }
-  }
-
-  // 新对话
-  if (/(\/|#)(开启)?(new|新对话|新会话)$/i.test(e.msg)) {
-    const match = e.msg.match(/^(\/|#)(开启)?(new|新对话|新会话)$/i);
-    if (!match) {
-      message.send(format(Text("格式错误，请按照 格式：/new 进行开启新对话")));
-      return;
-    }
-
-    const aiConfig = await redisClient.getAIConfig(e.guid);
-    const archived = await archiveCurrentConversation(e.guid, "new", aiConfig);
-    await redisClient.clearAIChatHistory(e.guid);
-    await redisClient.deleteSessionId(e.guid);
-    message.send(
-      format(Text(archived ? "已归档当前对话并开启新对话" : "已开启新对话")),
-    );
   }
 
   next();

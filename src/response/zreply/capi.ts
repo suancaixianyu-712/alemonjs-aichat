@@ -423,7 +423,19 @@ export const CApiReply = async (
   const generatedCurrentImageUrls = new Set<string>();
   console.log("发送给AI的当前消息:\n", JSON.stringify(usermessage, null, 2));
 
-  const aiTurn = beginAITurn(e.guid, e.Platform);
+  const turnUserID = String(e.UserId || "");
+  const acquiredTurnLock = await redisClient.acquireAIToolLoop(
+    e.guid,
+    turnUserID,
+    e.Platform,
+  );
+  if (!acquiredTurnLock) {
+    return {
+      next: false,
+      busy: true,
+    };
+  }
+  const aiTurn = beginAITurn(e.guid, e.Platform, turnUserID);
 
   try {
     const openai = new OpenAi({
@@ -621,10 +633,6 @@ export const CApiReply = async (
 
     // 检查是否有工具调用需要处理
     let toolRound = 0;
-    if (res.choices[0].message?.tool_calls?.length) {
-      await redisClient.setAIToolLoopProcessing(e.guid, true, e.Platform);
-    }
-
     try {
       while (true) {
         throwIfAITurnAborted(aiTurn.signal);
@@ -796,6 +804,14 @@ export const CApiReply = async (
             functionArgs.isPrivate = e.name === "private.message.create";
           }
 
+          if (
+            functionName === "RunOpencode" &&
+            functionArgs &&
+            typeof functionArgs === "object"
+          ) {
+            functionArgs.userID = turnUserID;
+          }
+
           // 框架指令绑定当前真实事件，并在工具调用期间直接执行。
           // 捕获到的文字和图片链接会作为本次工具结果返回给 AI。
           if (
@@ -842,7 +858,11 @@ export const CApiReply = async (
                 // 公共知识库仅映射工作目录；审核配置仍绑定真实会话。
                 if (functionArgs && typeof functionArgs === "object") {
                   functionArgs.guid = toolGuid;
-                  if (functionArgs.scope === "public") {
+                  if (
+                    functionName === "RunServerCommand" ||
+                    functionArgs.scope === "public" ||
+                    functionArgs.scope === "root"
+                  ) {
                     functionArgs.reviewGuid = e.guid;
                   }
                 }
@@ -931,7 +951,7 @@ export const CApiReply = async (
         }
       }
     } finally {
-      await redisClient.setAIToolLoopProcessing(e.guid, false, e.Platform);
+      await redisClient.releaseAIToolLoop(e.guid, turnUserID, e.Platform);
     }
 
     // 如果没有工具调用，处理最终回复
@@ -958,7 +978,7 @@ export const CApiReply = async (
       next: false,
     };
   } catch (error) {
-    await redisClient.setAIToolLoopProcessing(e.guid, false, e.Platform);
+    await redisClient.releaseAIToolLoop(e.guid, turnUserID, e.Platform);
     if (isAITurnAbortError(error, aiTurn.signal)) {
       log(`当前 AI 回复已停止: ${e.guid}`);
       return {
@@ -976,6 +996,7 @@ export const CApiReply = async (
       next: true,
     };
   } finally {
+    await redisClient.releaseAIToolLoop(e.guid, turnUserID, e.Platform);
     aiTurn.finish();
   }
 };

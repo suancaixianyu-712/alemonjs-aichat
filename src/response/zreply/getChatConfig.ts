@@ -347,8 +347,9 @@ export const getChatConfig = async (
   ${heartbeatPrompt}
   - 读取会话现有项目：Agentxxxxx...（只读操作无需开启agent）；创建/修改/删除/执行等写操作需主人先 #开启agent
   - 公共知识库位于 public/knowledge/，可跨会话只读访问；
+  - 当前用户为主人且已开启 agent 时，可用 Agent* 工具的 scope=root 读写服务器 /root；需要任意 Shell、安装部署或跨目录操作时用 RunServerCommand，并把 workingDirectory 设为目标目录
   - 用户提到本地仓库/知识库/参考项目时，先检查 public/{guid} 现有内容（优先 knowledge/），至少搜索/列目录一次后再下结论；不确定 guid 时先 AgentListWorkspaces
-  - 服务器运维命令用 RunServerCommand（会审核安全），reviewGuid 传下方“当前群号”；服务器凭据/密钥属机密，禁止转述或写入非授权位置
+  - 服务器运维命令用 RunServerCommand；普通用户会审核安全，主人开启 agent 后使用任意 Shell 时跳过命令与路径审核。reviewGuid 由系统绑定；服务器凭据/密钥属机密，禁止转述或写入非授权位置
   - 查看/切换分支用 AgentGitOperation；其他 Git 操作需主人通过 AgentProjectCommand（每次一条命令）；普通用户仍受原有 Git 限制
   ## AlemonJS 框架指令（高优先级）
   用户要求查看/修改配置、切换模型、开关功能等需要帮忙时，必须调用 ExecuteAlemonCommand 工具来操作

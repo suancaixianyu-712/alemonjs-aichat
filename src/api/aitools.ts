@@ -364,7 +364,7 @@ export const tools: ChatCompletionTool[] = [
     function: {
       name: "RunServerCommand",
       description:
-        "直接在服务器上执行运维指令，可用于查看状态、管理服务、Docker、PM2、日志和部署流程。执行前必须通过本地基础拦截和 AI 自动审核；审核不可用或未通过时不会执行。命令和输出中的公网 IP、密码、令牌、密钥等敏感信息会被自动隐藏，禁止尝试绕过脱敏或把这些信息写入网页、项目文件和公开内容。不要用它操作 public/{guid} 项目文件，AI agent 项目文件操作仍使用 Agent* 工具。",
+        "直接在服务器上执行运维指令，可用于查看状态、管理服务、Docker、PM2、日志和部署流程。普通用户执行前必须通过本地基础拦截和 AI 自动审核；框架确认当前用户是主人且当前会话已开启 agent 时，可在任意服务器目录执行任意 Shell 指令，不再受项目路径和命令审核限制。主人身份由框架注入，不能由参数伪造。普通用户的命令和输出仍会隐藏公网 IP、密码、令牌、密钥等敏感信息。不要用它操作 public/{guid} 项目文件，常规项目文件操作仍优先使用 Agent* 工具。",
       parameters: {
         type: "object",
         properties: {
@@ -376,7 +376,7 @@ export const tools: ChatCompletionTool[] = [
           workingDirectory: {
             type: "string",
             description:
-              "可选。服务器上的执行目录，可以是绝对路径或相对当前进程目录，默认为服务进程当前目录",
+              "可选。服务器上的执行目录；主人开启 agent 后可使用 /root 等任意绝对目录，普通用户仍只能使用项目目录。默认为服务进程当前目录",
           },
           reviewGuid: {
             type: "string",
@@ -1409,6 +1409,7 @@ const READ_ONLY_AGENT_TOOL_NAMES = new Set([
 ]);
 
 const PUBLIC_KNOWLEDGE_GUID = "knowledge";
+const SERVER_ROOT_GUID = "__server_root__";
 const AGENT_WORKSPACE_TOOL_NAMES = new Set(
   [...AGENT_TOOL_NAMES].filter((name) => name !== "RunServerCommand"),
 );
@@ -1430,17 +1431,17 @@ for (const tool of tools) {
     },
     scope: {
       type: "string",
-      enum: ["session", "public"],
+      enum: ["session", "public", "root"],
       default: "session",
       description:
-        "session（默认）访问当前会话项目；public 访问所有会话共享的 public/knowledge/ 公共知识库。全部路径参数相对于所选目录。公共知识库的列出、读取和搜索无需开启 agent，其他操作仅限主人开启当前会话的 agent 后使用。",
+        "session（默认）访问当前会话项目；public 访问所有会话共享的 public/knowledge/ 公共知识库；root 访问服务器 /root（Windows 为当前盘根目录）。全部路径参数相对于所选目录。root 仅限框架确认的主人在当前会话开启 agent 后使用。",
     },
   };
   parameters.required = (parameters.required as string[]).filter(
     (name) => name !== "guid",
   );
   tool.function.description +=
-    " 支持 scope=public：此时文中 public/{guid}/ 指 public/knowledge/ 公共知识库，所有路径均相对此目录；公共库仅主人开启 agent 后可维护。";
+    " 支持 scope=public：此时文中 public/{guid}/ 指 public/knowledge/ 公共知识库。支持 scope=root：此时路径相对服务器 /root（Windows 为当前盘根目录），仅限主人开启当前会话 agent 后使用。";
 }
 
 export const assertAgentEnabled = async (guid?: string) => {
@@ -1459,13 +1460,27 @@ export const assertAgentToolAccess = async (
 ) => {
   const isWorkspaceTool = AGENT_WORKSPACE_TOOL_NAMES.has(functionName);
   if (isWorkspaceTool) {
-    if (scope !== undefined && scope !== "session" && scope !== "public") {
-      throw new Error("scope 只能是 session 或 public");
+    if (
+      scope !== undefined &&
+      scope !== "session" &&
+      scope !== "public" &&
+      scope !== "root"
+    ) {
+      throw new Error("scope 只能是 session、public 或 root");
+    }
+    if (scope === "root") {
+      if (isMaster !== true) {
+        throw new Error("服务器 root 目录仅主人可访问");
+      }
+      await assertAgentEnabled(guid);
+      return SERVER_ROOT_GUID;
     }
     if (scope === "public") {
       if (!READ_ONLY_AGENT_TOOL_NAMES.has(functionName)) {
         if (isMaster !== true) {
-          throw new Error("公共知识库仅主人可维护，其他用户只能列出、搜索和读取");
+          throw new Error(
+            "公共知识库仅主人可维护，其他用户只能列出、搜索和读取",
+          );
         }
         // 开关属于真实会话，不能读取 knowledge 这个目录名对应的开关。
         await assertAgentEnabled(guid);
@@ -1475,10 +1490,16 @@ export const assertAgentToolAccess = async (
     if (guid?.trim().toLowerCase() === PUBLIC_KNOWLEDGE_GUID) {
       throw new Error("knowledge 为公共知识库保留目录，请使用 scope=public");
     }
+    if (guid?.trim().toLowerCase() === SERVER_ROOT_GUID) {
+      throw new Error("服务器 root 为保留范围，请使用 scope=root");
+    }
   } else if (isAgentTool(functionName) && scope === "public") {
     throw new Error("此工具不支持公共知识库范围，请使用 Agent 工作目录工具");
   }
-  if (isAgentTool(functionName) && !READ_ONLY_AGENT_TOOL_NAMES.has(functionName)) {
+  if (
+    isAgentTool(functionName) &&
+    !READ_ONLY_AGENT_TOOL_NAMES.has(functionName)
+  ) {
     await assertAgentEnabled(guid);
   }
   return guid;
@@ -1556,6 +1577,17 @@ const resolveAgentRoot = (guid: string, createIfMissing = true) => {
     throw new Error("guid 不能为空");
   }
   const safeGuid = guid.trim();
+  if (safeGuid === SERVER_ROOT_GUID) {
+    const serverRoot =
+      process.platform === "win32" ? path.parse(process.cwd()).root : "/root";
+    if (!fs.existsSync(serverRoot)) {
+      throw new Error("服务器 root 目录不存在");
+    }
+    if (!fs.statSync(serverRoot).isDirectory()) {
+      throw new Error("服务器 root 路径不是目录");
+    }
+    return fs.realpathSync.native(serverRoot);
+  }
   if (!safeGuid || safeGuid === "." || safeGuid === "..") {
     throw new Error("guid 必须是 public 下的有效目录名");
   }
@@ -1602,6 +1634,19 @@ const listAgentWorkspaces = (
   includeKnowledge = true,
   maxResults = 50,
 ) => {
+  if (guid === SERVER_ROOT_GUID) {
+    return [
+      {
+        guid: SERVER_ROOT_GUID,
+        path:
+          process.platform === "win32"
+            ? path.parse(process.cwd()).root
+            : "/root",
+        hasKnowledge: false,
+        knowledgeProjects: [],
+      },
+    ];
+  }
   const publicRoot = path.resolve(process.cwd(), "public");
   if (!fs.existsSync(publicRoot)) {
     return [];
@@ -2674,7 +2719,10 @@ const reviewServerCommandWithAI = async ({
   }
 };
 
-const resolveServerWorkingDirectory = (workingDirectory?: string) => {
+const resolveServerWorkingDirectory = (
+  workingDirectory?: string,
+  isMaster?: boolean,
+) => {
   if (workingDirectory?.includes("\0")) {
     throw new Error("workingDirectory 包含非法空字符");
   }
@@ -2685,7 +2733,9 @@ const resolveServerWorkingDirectory = (workingDirectory?: string) => {
   if (!fs.statSync(cwd).isDirectory()) {
     throw new Error("workingDirectory 不是目录");
   }
-  assertRealPathInside(path.resolve(process.cwd()), cwd);
+  if (isMaster !== true) {
+    assertRealPathInside(path.resolve(process.cwd()), cwd);
+  }
   return cwd;
 };
 
@@ -3035,6 +3085,47 @@ const performServerCommandReview = async ({
   workingDirectory: string;
   isMaster?: boolean;
 }) => {
+  if (isMaster === true) {
+    const trimmed = command?.trim();
+    if (!trimmed) {
+      return {
+        allowed: false,
+        risk: "blocked" as const,
+        localReview: {
+          allowed: false,
+          risk: "blocked" as const,
+          reasons: ["命令不能为空"],
+        },
+        aiReview: { status: "skipped" as const, reason: "命令不能为空" },
+      };
+    }
+    if (trimmed.includes("\0")) {
+      return {
+        allowed: false,
+        risk: "blocked" as const,
+        localReview: {
+          allowed: false,
+          risk: "blocked" as const,
+          reasons: ["命令包含非法空字符"],
+        },
+        aiReview: { status: "skipped" as const, reason: "命令包含非法空字符" },
+      };
+    }
+    return {
+      allowed: true,
+      risk: "high" as const,
+      localReview: {
+        allowed: true,
+        risk: "high" as const,
+        reasons: ["主人已开启 agent，允许执行任意服务器 Shell 指令"],
+      },
+      aiReview: {
+        status: "skipped" as const,
+        reason: "主人高权限模式，跳过本地命令限制和 AI 审核",
+      },
+    };
+  }
+
   const localReview = buildServerCommandLocalReview(command);
   if (!localReview.allowed) {
     return {
@@ -3044,19 +3135,6 @@ const performServerCommandReview = async ({
       aiReview: {
         status: "skipped" as const,
         reason: "本地基础拦截未通过，主人权限也不能绕过",
-      },
-    };
-  }
-
-  // 主人权限仅跳过 AI 审核，不能绕过本地硬拦截。
-  if (isMaster === true) {
-    return {
-      allowed: true,
-      risk: localReview.risk,
-      localReview,
-      aiReview: {
-        status: "skipped" as const,
-        reason: "主人权限，仅跳过 AI 审核",
       },
     };
   }
@@ -3817,7 +3895,11 @@ export const availableTools = {
     maxResults?: number;
   }) => {
     try {
-      const workspaces = listAgentWorkspaces(guid, includeKnowledge, maxResults);
+      const workspaces = listAgentWorkspaces(
+        guid,
+        includeKnowledge,
+        maxResults,
+      );
       return {
         success: true,
         count: workspaces.length,
@@ -3943,8 +4025,10 @@ export const availableTools = {
       if (!reviewGuid?.trim()) {
         throw new Error("reviewGuid 必填，请传入当前群号");
       }
-      const cwd = resolveServerWorkingDirectory(workingDirectory);
-      assertServerCommandPathsInsideProject(command);
+      const cwd = resolveServerWorkingDirectory(workingDirectory, isMaster);
+      if (isMaster !== true) {
+        assertServerCommandPathsInsideProject(command);
+      }
       const timeoutMs = normalizeServerCommandTimeoutMs(timeoutSeconds);
       const review = await performServerCommandReview({
         command,
@@ -4918,6 +5002,7 @@ export const availableTools = {
         autoApprove: args?.autoApprove,
         timeoutSeconds: args?.timeoutSeconds,
         guid: args?.guid,
+        userID: args?.userID,
       });
     } catch (error) {
       return toToolError(error);
