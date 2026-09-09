@@ -118,6 +118,9 @@ const preprocessImage = async (
   // 检查是否为动画
   const { isAnimated, frameCount } = await getImageAnimationInfo(buffer);
 
+  // 是否需要保留全部帧（动图）
+  let preserveAnimation = false;
+
   // 处理动图
   if (isAnimated) {
     console.log(
@@ -129,8 +132,9 @@ const preprocessImage = async (
     }
 
     if (animatedBehavior === "keep") {
-      // 保持原样，但还是要转换格式
+      // 保持动图格式：后续 sharp 处理需要带上 animated，否则只会输出第一帧
       console.log("保持动图格式");
+      preserveAnimation = true;
     }
 
     if (animatedBehavior === "first-frame") {
@@ -153,11 +157,12 @@ const preprocessImage = async (
   }
 
   try {
-    // 使用sharp处理图片
-    let sharpInstance = sharp(buffer).resize(maxWidth, maxHeight, {
-      fit: "inside", // 保持宽高比
-      withoutEnlargement: true, // 不放大图片
-    });
+    // 使用sharp处理图片；保留动图时必须开启 animated，否则只会输出第一帧
+    let sharpInstance = sharp(buffer, preserveAnimation ? { animated: true } : {})
+      .resize(maxWidth, maxHeight, {
+        fit: "inside", // 保持宽高比
+        withoutEnlargement: true, // 不放大图片
+      });
 
     // 根据目标格式进行处理
     let processedBuffer: Buffer;

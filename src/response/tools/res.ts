@@ -529,7 +529,10 @@ export default onResponse(selects, async (e) => {
     const stickerUrl = stickerUrls[0];
     try {
       // 下载表情图片并上传到图床，避免表情链接过期或无法直接发送
-      const r2Url = await uploadImageToR2(stickerUrl);
+      // 动图保留全部帧，不做首帧截断
+      const r2Url = await uploadImageToR2(stickerUrl, undefined, {
+        animatedBehavior: "keep",
+      });
       message.send(format(Image(r2Url)));
       await redisClient.addImgUrl(e.guid, r2Url);
     } catch (error) {
