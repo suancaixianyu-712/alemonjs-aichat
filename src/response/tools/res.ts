@@ -1,5 +1,6 @@
 ﻿import {
   Image,
+  ImageFile,
   Text,
   ImageURL,
   Video,
@@ -126,9 +127,11 @@ export default onResponse(selects, async (e) => {
         console.error("Grok画图结果上传R2失败，改用原始链接:", error);
       }
 
+      const imageMessage = ImageURL(imgUrl);
+
       const R18Switch = await redisClient.getR18Switch(e.guid);
       if (R18Switch === "1") {
-        message.send(format(Text("Grok 画图完成喵~"), ImageURL(imgUrl)));
+        message.send(format(Text("Grok 画图完成喵~\n"), imageMessage));
         return;
       }
       const reviewRes = await imageReview(imgUrl);
@@ -142,7 +145,7 @@ export default onResponse(selects, async (e) => {
         );
       } else {
         message.send(
-          format(Text("画图完成喵~\n"), Text(content), Image(imgUrl)),
+          format(Text("画图完成喵~\n"), Text(content), imageMessage),
         );
       }
       await redisClient.addImgUrl(e.guid, imgUrl);
@@ -337,10 +340,13 @@ export default onResponse(selects, async (e) => {
       } catch (err) {
         console.error("GPT画图上传R2失败:", err);
       }
+      const imageMessage = /^https?:\/\//i.test(r2Url)
+        ? ImageURL(r2Url)
+        : ImageFile(r2Url);
 
       if (R18Switch === "1") {
         message.send(
-          format(Text("画图完成喵~\n"), Text(content), ImageURL(r2Url)),
+          format(Text("画图完成喵~\n"), Text(content), imageMessage),
         );
       } else {
         const reviewRes = await imageReview(r2Url);
@@ -354,7 +360,7 @@ export default onResponse(selects, async (e) => {
           );
         } else {
           message.send(
-            format(Text("画图完成喵~\n"), Text(content), ImageURL(r2Url)),
+            format(Text("画图完成喵~\n"), Text(content), imageMessage),
           );
         }
       }
