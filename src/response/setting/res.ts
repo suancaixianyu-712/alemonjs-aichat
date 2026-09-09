@@ -299,6 +299,30 @@ export default onResponse(selects, async (e, next) => {
     return;
   }
 
+  // 设置全局 HTTP 代理开关
+  if (/^(\/|#)(开启|关闭)代理$/i.test(e.msg)) {
+    if (!e.IsMaster) {
+      message.send(format(Text("仅管理员可设置全局代理开关。")));
+      return;
+    }
+    const match = e.msg.match(/^(\/|#)(开启|关闭)代理$/i);
+    if (!match) return;
+    const enable = match[2] === "开启";
+    if (enable && !String(getAiChatConfigValue().httpProxy || "").trim()) {
+      message.send(
+        format(
+          Text(
+            "未配置代理地址，请先在 alemon.config.yaml 中填写 aichat.httpProxy。",
+          ),
+        ),
+      );
+      return;
+    }
+    await redisClient.setHttpProxySwitch(enable);
+    message.send(format(Text(`已${enable ? "开启" : "关闭"}全局代理。`)));
+    return;
+  }
+
   // 设置工具开关
   if (/(\/|#)(开启|关闭)(MCP)?工具$/i.test(e.msg)) {
     const match = e.msg.match(/(\/|#)(开启|关闭)(MCP)?工具$/i);

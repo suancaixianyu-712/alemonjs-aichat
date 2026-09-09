@@ -220,7 +220,10 @@ const reviewPermissionWithCurrentAI = async (
       baseURL: config.host,
       apiKey: config.key,
       timeout: 120000,
-      fetch: getOpenAIProxyFetch(getAiChatConfigValue().httpProxy),
+      fetch: getOpenAIProxyFetch(
+        getAiChatConfigValue().httpProxy,
+        (await redisClient.getHttpProxySwitch()) === "1",
+      ),
     });
     const params = {
       model: config.model,

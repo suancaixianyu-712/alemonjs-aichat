@@ -111,7 +111,10 @@ const fetchModels = async (
   const timeout = setTimeout(() => controller.abort(), 15_000);
   try {
     const requestFetch =
-      getOpenAIProxyFetch(getAiChatConfigValue().httpProxy) || fetch;
+      getOpenAIProxyFetch(
+        getAiChatConfigValue().httpProxy,
+        (await redisClient.getHttpProxySwitch()) === "1",
+      ) || fetch;
     const response = await requestFetch(`${config.host}${config.modelsPath}`, {
       headers: { Authorization: `Bearer ${key}` },
       signal: controller.signal,

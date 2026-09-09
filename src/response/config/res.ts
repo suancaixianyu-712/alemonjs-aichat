@@ -36,7 +36,10 @@ const archiveCurrentConversation = async (
         baseURL: aiConfig.host,
         apiKey: aiConfig.key,
         timeout: 300000,
-        fetch: getOpenAIProxyFetch(getAiChatConfigValue().httpProxy),
+        fetch: getOpenAIProxyFetch(
+          getAiChatConfigValue().httpProxy,
+          (await redisClient.getHttpProxySwitch()) === "1",
+        ),
       });
       const summaryPrompt =
         "请总结一下我们之前的聊天内容。请严格按以下格式输出：\n摘要:<一句到两句的简短总结>\n详细信息:<尽可能完整的要点整理，方便之后继续对话>";
@@ -88,6 +91,11 @@ const formatContextLimit = (tokens: number) => {
     return `${tokens / 1000}k`;
   }
   return `${tokens}`;
+};
+
+const formatHttpProxyStatus = (enabled: boolean, configured: boolean) => {
+  if (!enabled) return `代理: 已关闭（${configured ? "已配置" : "未配置"}）`;
+  return configured ? "代理: 已开启" : "代理: 已开启（未配置，当前不生效）";
 };
 
 const formatAIContextStatus = (
@@ -145,6 +153,14 @@ export default onResponse(selects, async (e, next) => {
   // 查看AI状态
   if (/^(\/|#)ai状态$/i.test(e.msg)) {
     const toolStatus = await toolSessionController.getStatus(e.guid);
+    const httpProxyEnabled = (await redisClient.getHttpProxySwitch()) === "1";
+    const httpProxyConfigured = Boolean(
+      String(getAiChatConfigValue().httpProxy || "").trim(),
+    );
+    const httpProxyStatus = formatHttpProxyStatus(
+      httpProxyEnabled,
+      httpProxyConfigured,
+    );
     if (toolStatus.tool !== "default") {
       const currentAI = await redisClient.getCurrentAI(e.guid);
       message.send(
@@ -155,6 +171,7 @@ export default onResponse(selects, async (e, next) => {
               `当前工具: ${toolStatus.toolLabel}`,
               `当前AI: ${currentAI || "未设置"}`,
               `模型: ${toolStatus.model || "未设置"}`,
+              httpProxyStatus,
               `权限: ${toolStatus.permissionLabel}`,
               `当前会话: ${toolStatus.title || "未创建"}`,
               `会话ID: ${toolStatus.sessionId || "未创建"}`,
@@ -169,7 +186,7 @@ export default onResponse(selects, async (e, next) => {
     message.send(
       format(
         Text(
-          `当前工具: ${toolStatus.toolLabel}\n${formatAIContextStatus(stats, capiContextLimit)}`,
+          `当前工具: ${toolStatus.toolLabel}\n${httpProxyStatus}\n${formatAIContextStatus(stats, capiContextLimit)}`,
         ),
       ),
     );

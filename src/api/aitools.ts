@@ -2576,7 +2576,10 @@ const reviewProjectCommandWithAI = async ({
       baseURL: aiConfig.config.host,
       apiKey: aiConfig.config.key,
       timeout: 30000,
-      fetch: getOpenAIProxyFetch(value.httpProxy),
+      fetch: getOpenAIProxyFetch(
+        value.httpProxy,
+        (await redisClient.getHttpProxySwitch()) === "1",
+      ),
     });
     const response = await openai.chat.completions.create({
       model: aiConfig.config.model,
@@ -2664,7 +2667,10 @@ const reviewServerCommandWithAI = async ({
       baseURL: aiConfig.config.host,
       apiKey: aiConfig.config.key,
       timeout: 30000,
-      fetch: getOpenAIProxyFetch(value.httpProxy),
+      fetch: getOpenAIProxyFetch(
+        value.httpProxy,
+        (await redisClient.getHttpProxySwitch()) === "1",
+      ),
     });
     const response = await openai.chat.completions.create({
       model: aiConfig.config.model,
@@ -3479,7 +3485,10 @@ export const availableTools = {
         baseURL: ocrConfig.host,
         apiKey: ocrConfig.key,
         timeout: 120000,
-        fetch: getOpenAIProxyFetch(value.httpProxy),
+        fetch: getOpenAIProxyFetch(
+          value.httpProxy,
+          (await redisClient.getHttpProxySwitch()) === "1",
+        ),
       });
 
       const completion = await openai.chat.completions.create({
@@ -3679,7 +3688,11 @@ export const availableTools = {
 
       console.log("最终请求体", requestBody);
 
-      const requestFetch = getOpenAIProxyFetch(value.httpProxy) || fetch;
+      const requestFetch =
+        getOpenAIProxyFetch(
+          value.httpProxy,
+          (await redisClient.getHttpProxySwitch()) === "1",
+        ) || fetch;
       const res = await requestFetch(
         aiConfig.host.replace(/\/+$/, "") +
           (imgBase64Array.length > 0 ? "/images/edits" : "/images/generations"),
@@ -3732,7 +3745,10 @@ export const availableTools = {
         baseURL: aiConfig.host,
         apiKey: aiConfig.key,
         timeout: 120000,
-        fetch: getOpenAIProxyFetch(value.httpProxy),
+        fetch: getOpenAIProxyFetch(
+          value.httpProxy,
+          (await redisClient.getHttpProxySwitch()) === "1",
+        ),
       });
 
       const model = gptImageConfig.model;
@@ -3885,7 +3901,11 @@ export const availableTools = {
 
       console.log("最终请求体", requestBody);
 
-      const requestFetch = getOpenAIProxyFetch(value.httpProxy) || fetch;
+      const requestFetch =
+        getOpenAIProxyFetch(
+          value.httpProxy,
+          (await redisClient.getHttpProxySwitch()) === "1",
+        ) || fetch;
       const res = await requestFetch(aiConfig.host + "/videos/generations", {
         method: "POST",
         headers: {
@@ -3920,7 +3940,11 @@ export const availableTools = {
     }
 
     try {
-      const requestFetch = getOpenAIProxyFetch(value.httpProxy) || fetch;
+      const requestFetch =
+        getOpenAIProxyFetch(
+          value.httpProxy,
+          (await redisClient.getHttpProxySwitch()) === "1",
+        ) || fetch;
       const res = await requestFetch(aiConfig.host + `/videos/${request_id}`, {
         method: "GET",
         headers: {

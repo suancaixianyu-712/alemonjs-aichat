@@ -14,6 +14,11 @@ export const createOpenAIProxyFetch = (proxyUrl?: string) => {
     nodeFetch(url, { ...init, agent } as any)) as any;
 };
 
-/** 为 OpenAI 兼容客户端复用同一代理构造入口。 */
-export const getOpenAIProxyFetch = (proxyUrl?: string) =>
-  createOpenAIProxyFetch(proxyUrl);
+/**
+ * 为 OpenAI 兼容客户端复用同一代理构造入口。
+ * 调用方负责传入 Redis 中的全局持久化开关状态。
+ */
+export const getOpenAIProxyFetch = (proxyUrl?: string, enabled = false) => {
+  if (!enabled) return undefined;
+  return createOpenAIProxyFetch(proxyUrl);
+};

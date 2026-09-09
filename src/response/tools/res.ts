@@ -222,7 +222,10 @@ export default onResponse(selects, async (e) => {
           baseURL: aiConfig.host,
           apiKey: aiConfig.key,
           timeout: 300000,
-          fetch: getOpenAIProxyFetch(configValue.httpProxy),
+          fetch: getOpenAIProxyFetch(
+            configValue.httpProxy,
+            (await redisClient.getHttpProxySwitch()) === "1",
+          ),
         });
 
         const response = await openai.chat.completions.create({

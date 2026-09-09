@@ -444,7 +444,10 @@ export const CApiReply = async (
       baseURL: cfg.config.host,
       apiKey: cfg.config.key,
       timeout: 300000,
-      fetch: getOpenAIProxyFetch(getAiChatConfigValue().httpProxy),
+      fetch: getOpenAIProxyFetch(
+        getAiChatConfigValue().httpProxy,
+        (await redisClient.getHttpProxySwitch()) === "1",
+      ),
     });
     const shouldStreamToOutput =
       typeof outputMessage?.streamTextDelta === "function";

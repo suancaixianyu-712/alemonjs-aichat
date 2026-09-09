@@ -862,6 +862,16 @@ class db {
     await this.redis.set("ai:image_bed:switch:global", enable ? "1" : "0");
   }
 
+  /** 获取全局 HTTP 代理开关状态，默认关闭 */
+  async getHttpProxySwitch(): Promise<string> {
+    return (await this.redis.get("ai:http_proxy:switch:global")) || "0";
+  }
+
+  /** 设置全局 HTTP 代理开关状态 */
+  async setHttpProxySwitch(enable: boolean): Promise<void> {
+    await this.redis.set("ai:http_proxy:switch:global", enable ? "1" : "0");
+  }
+
   /** 获取AI配置 */
   async getAIConfig(guid?: string): Promise<AIConfig> {
     const id = guid ?? "global";

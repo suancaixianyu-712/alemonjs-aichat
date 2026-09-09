@@ -7,7 +7,10 @@ import {
   formatGPTImageError,
   shouldFallbackGPTImageMode,
 } from "../lib/api/gptImage.js";
-import { createOpenAIProxyFetch } from "../lib/api/openaiProxy.js";
+import {
+  createOpenAIProxyFetch,
+  getOpenAIProxyFetch,
+} from "../lib/api/openaiProxy.js";
 
 test("未配置代理时沿用 SDK 默认网络，配置后创建代理 fetch", () => {
   assert.equal(createOpenAIProxyFetch(), undefined);
@@ -15,6 +18,13 @@ test("未配置代理时沿用 SDK 默认网络，配置后创建代理 fetch", 
     typeof createOpenAIProxyFetch("http://127.0.0.1:7897"),
     "function",
   );
+});
+
+test("代理 fetch 只有在持久化开关开启时才创建", () => {
+  const proxyUrl = "http://127.0.0.1:7897";
+  assert.equal(getOpenAIProxyFetch(proxyUrl, false), undefined);
+  assert.equal(getOpenAIProxyFetch(undefined, true), undefined);
+  assert.equal(typeof getOpenAIProxyFetch(proxyUrl, true), "function");
 });
 
 test("Responses API 生成模式使用主模型和独立图片模型", () => {

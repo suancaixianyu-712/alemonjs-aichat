@@ -5,6 +5,7 @@ import mime from "mime-types";
 import sharp from "sharp"; // 需要安装: npm install sharp
 import { getAiChatConfigValue } from "./config/app";
 import { getOpenAIProxyFetch } from "./api/openaiProxy";
+import redisClient from "./config";
 const value = getAiChatConfigValue();
 
 const R2_CONFIG = {
@@ -230,7 +231,10 @@ export const getImageBuffer = async (
 
     const requestFetch =
       isXAIImage && !value.xaiImgProxy
-        ? getOpenAIProxyFetch(value.httpProxy) || fetch
+        ? getOpenAIProxyFetch(
+            value.httpProxy,
+            (await redisClient.getHttpProxySwitch()) === "1",
+          ) || fetch
         : fetch;
     let response = await requestFetch(url);
     if (!response.ok) {

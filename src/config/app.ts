@@ -23,7 +23,8 @@ const mergeConfig = (
  * 读取 AI Chat 配置。
  *
  * AlemonX 按当前 npm 包名写入 `alemonjs-aichat:`；旧版项目使用
- * `aiChat:`。合并两者可让工作台配置生效，同时保留现有配置文件兼容性。
+ * `aichat:` / `aiChat:`。合并这些命名空间可让工作台配置生效，同时保留
+ * 现有配置文件兼容性。
  */
 export const getAiChatConfigValue = (): Record<string, any> => {
   const root = getConfigValue() as Record<string, any>;
@@ -45,12 +46,16 @@ export const getAiChatConfigValue = (): Record<string, any> => {
       .filter((key) => root[key] !== undefined)
       .map((key) => [key, root[key]]),
   );
+  const legacyLowercase = isRecord(root.aichat) ? root.aichat : {};
   const legacy = isRecord(root.aiChat) ? root.aiChat : {};
   const current = isRecord(root["alemonjs-aichat"])
     ? root["alemonjs-aichat"]
     : {};
 
-  return mergeConfig(mergeConfig(topLevel, legacy), current);
+  return mergeConfig(
+    mergeConfig(mergeConfig(topLevel, legacyLowercase), legacy),
+    current,
+  );
 };
 
 export type DeclaredAIConfig = {
