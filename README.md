@@ -70,7 +70,7 @@ db:
 
 ```yaml
 # 代理默认可不填
-xaiImgProxy: "http://127.0.0.1:3002/ximgen"
+httpProxy: "http://127.0.0.1:7897"
 ```
 
 ai修图依赖于xai, 需要使用该功能必须添加一个grok模型, 在启动机器人后, 使用以下指令添加
@@ -79,13 +79,9 @@ ai修图依赖于xai, 需要使用该功能必须添加一个grok模型, 在启�
 #添加ai grok https://api.x.ai/v1 <你的apiKey> grok-4.5
 ```
 
-通常情况下nodejs不会使用本地的代理, 因此你可能需要自己解决一下无法访问ai的问题, 例如另写一个脚本, 脚本已经预备好了, 下载项目中的`daili.js`然后运行它即可(Clash的默认端口一般是7890, 可能需要修改一下daili.js中的端口)
+Node.js 默认不会自动使用系统代理。如需通过 Clash 等本地代理访问 AI 服务，请配置 `httpProxy`。程序会保留每条 AI 配置中的服务器地址，并在网络层通过该代理发起请求，不需要额外启动转发脚本。
 
-```sh
-node daili
-```
-
-如果你使用的是`daili.js`, 那么地址需要改为`http://127.0.0.1:3002/x/v1`
+例如 xAI 的服务器地址仍填写 `https://api.x.ai/v1`，OpenAI 填写 `https://api.openai.com/v1`；不要把 AI 服务器地址填写成本地 HTTP 代理地址。
 
 #### 配置搜索工具
 
