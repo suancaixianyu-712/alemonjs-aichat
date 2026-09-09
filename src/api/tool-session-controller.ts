@@ -101,8 +101,18 @@ type PendingApproval = {
   timer: NodeJS.Timeout;
 };
 
+type QueuedStartupMessage = {
+  event: any;
+  send: SendText;
+};
+
+type ToolStartupState = {
+  queue: QueuedStartupMessage[];
+};
+
 const pendingApprovals = new Map<string, PendingApproval>();
 const messageChains = new Map<string, Promise<void>>();
+const toolStartupStates = new Map<string, ToolStartupState>();
 
 const assertGuid = (guid: string) => {
   const safeGuid = String(guid || "").trim();
@@ -342,6 +352,86 @@ export class ToolSessionController {
       }
       throw error;
     }
+  }
+
+  async switchToolWithFeedback(
+    guid: string,
+    tool: ThirdPartyToolName,
+    send: SendText,
+  ) {
+    const startup = toolStartupStates.get(guid);
+    if (startup) {
+      await send(
+        tool === "opencode"
+          ? `OpenCode 正在启动，当前已有 ${startup.queue.length} 条消息等待处理。`
+          : "OpenCode 正在启动，请等待启动完成后再切换工具。",
+      );
+      return null;
+    }
+
+    const current = await this.getCurrentTool(guid);
+    const currentSession = await this.getCurrentSessionId(guid);
+    if (tool !== "opencode" || (current === tool && currentSession)) {
+      const session = await this.setCurrentTool(guid, tool);
+      await send(
+        tool === "default"
+          ? "已切换到默认工具"
+          : `当前已是 opencode：${session?.title || "新会话"}\n${session?.id || ""}`,
+      );
+      return session;
+    }
+
+    const state: ToolStartupState = { queue: [] };
+    toolStartupStates.set(guid, state);
+
+    try {
+      await send(
+        "OpenCode 正在启动，请稍候。启动期间发送的消息会自动加入队列。",
+      );
+    } catch (error) {
+      toolStartupStates.delete(guid);
+      throw error;
+    }
+
+    let session: Awaited<ReturnType<ToolSessionController["setCurrentTool"]>>;
+    try {
+      session = await this.setCurrentTool(guid, tool);
+    } catch (error) {
+      toolStartupStates.delete(guid);
+      const queuedCount = state.queue.length;
+      state.queue.length = 0;
+      await send(
+        `OpenCode 启动失败：${error instanceof Error ? error.message : String(error)}${
+          queuedCount > 0
+            ? `\n启动期间排队的 ${queuedCount} 条消息已清理。`
+            : ""
+        }`,
+      );
+      return null;
+    }
+
+    try {
+      await send(
+        `OpenCode 启动完成，已切换并创建子会话：${session?.title || "新会话"}\n${session?.id || ""}`,
+      );
+    } finally {
+      toolStartupStates.delete(guid);
+      for (const queued of state.queue) {
+        void this.enqueueMessage(queued.event, queued.send).catch(
+          async (error) => {
+            try {
+              await queued.send(
+                `第三方工具处理失败：${error instanceof Error ? error.message : String(error)}`,
+              );
+            } catch {
+              // 消息发送失败不影响后续排队任务继续执行。
+            }
+          },
+        );
+      }
+      state.queue.length = 0;
+    }
+    return session;
   }
 
   parseTool(value: string) {
@@ -598,12 +688,7 @@ export class ToolSessionController {
       const tool =
         input === "1" ? "default" : input === "2" ? "opencode" : null;
       if (!tool) return false;
-      const session = await this.setCurrentTool(event.guid, tool);
-      await send(
-        tool === "default"
-          ? "已切换到默认工具"
-          : `${session?.created ? "已切换到 opencode 并创建子会话" : "当前已是 opencode"}：${session?.title || "新会话"}\n${session?.id || ""}`,
-      );
+      await this.switchToolWithFeedback(event.guid, tool, send);
       return true;
     }
     if (selection === "permission") {
@@ -629,6 +714,22 @@ export class ToolSessionController {
 
   async handleMessage(event: any, send: SendText): Promise<boolean> {
     if (await this.handleInteractiveInput(event, send)) return true;
+    const startup = toolStartupStates.get(event.guid);
+    if (startup) {
+      if (
+        String(event.msg).startsWith("/") ||
+        String(event.msg).startsWith("#") ||
+        event.UserId == event.bot?.user_id
+      ) {
+        return true;
+      }
+      if (!event.msg && !hasToolMessageAttachments(event)) return true;
+      startup.queue.push({ event, send });
+      await send(
+        `OpenCode 正在启动，你的消息已加入队列（第 ${startup.queue.length} 位）。`,
+      );
+      return true;
+    }
     if ((await this.getCurrentTool(event.guid)) === "default") return false;
     if (
       String(event.msg).startsWith("/") ||
@@ -638,13 +739,17 @@ export class ToolSessionController {
       return true;
     }
     if (!event.msg && !hasToolMessageAttachments(event)) return true;
-    const sessionId = await this.getCurrentSessionId(event.guid);
-    if (!sessionId) {
-      await send("当前还没有 OpenCode 子会话，请由主人使用 /new 创建。");
-      return true;
-    }
+    await this.enqueueMessage(event, send);
+    return true;
+  }
 
+  private async enqueueMessage(event: any, send: SendText) {
     await enqueueByGuid(event.guid, async () => {
+      const sessionId = await this.getCurrentSessionId(event.guid);
+      if (!sessionId) {
+        await send("当前还没有 OpenCode 子会话，请由主人使用 /new 创建。");
+        return;
+      }
       const content = await buildToolMessageContent(event);
       const config = await redisClient.getAIConfig(event.guid);
       const runtime = await ensureInheritedOpencodeServer(event.guid, config);
@@ -686,7 +791,6 @@ export class ToolSessionController {
       else if (!activity && !reasoning)
         await send("OpenCode 已完成处理，但没有可展示的结果。");
     });
-    return true;
   }
 }
 

@@ -6,6 +6,7 @@ import {
   resolveFileContent,
   type FileMediaItem,
 } from "@src/api/fileMessage";
+import { inlineHttpFileAsDataUrl } from "@src/api/opencode-attachment";
 import { uploadImageToR2 } from "@src/s3";
 
 export type ToolMessageFile = {
@@ -107,16 +108,22 @@ export const buildToolMessageContent = async (
   const files: ToolMessageFile[] = [];
   for (const [index, image] of uniqueImages.entries()) {
     try {
-      const url = await uploadImageToR2(image.url);
-      const filename = imageName(url, index, image.name);
+      const publicUrl = await uploadImageToR2(image.url);
+      const filename = imageName(publicUrl, index, image.name);
+      const mimeType = resolveMime(
+        publicUrl,
+        filename,
+        image.mime || "image/webp",
+      );
+      const inlined = await inlineHttpFileAsDataUrl(publicUrl, mimeType);
       files.push({
         type: "file",
-        mime: resolveMime(url, filename, image.mime || "image/webp"),
+        mime: inlined.mime,
         filename,
-        url,
+        url: inlined.url,
       });
     } catch (error) {
-      console.error("[tool-message] 图片上传失败:", error);
+      console.error("[tool-message] 图片附件准备失败:", error);
     }
   }
 

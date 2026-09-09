@@ -36,14 +36,10 @@ export default onResponse(selects, async (event, next) => {
         await send("仅支持默认或 opencode");
         return;
       }
-      const session = await toolSessionController.setCurrentTool(
+      await toolSessionController.switchToolWithFeedback(
         event.guid,
         tool,
-      );
-      await send(
-        tool === "default"
-          ? "已切换到默认工具"
-          : `${session?.created ? "已切换到 opencode 并创建子会话" : "当前已是 opencode"}：${session?.title || "新会话"}\n${session?.id || ""}`,
+        send,
       );
       return;
     }

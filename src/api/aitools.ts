@@ -3611,10 +3611,15 @@ export const availableTools = {
   },
 
   Photoshop: async ({ image_url, instruction }) => {
-    // 从厂商模型配置中查询 Grok 凭据
-    const aiConfig = await redisClient.getProviderAIConfig("grok");
-    if (!aiConfig) {
-      return "未找到AI配置";
+    const grokImageConfig = await redisClient.getGrokImageConfig();
+    if (!grokImageConfig) {
+      return "未配置 Grok 画图接口，请使用命令：\n#grok画图配置 <AI配置编号> <画图模型>";
+    }
+    const aiConfig = await redisClient.getAIListConfig(
+      grokImageConfig.aiName,
+    );
+    if (!aiConfig?.host?.trim() || !aiConfig.key?.trim()) {
+      return `Grok 画图引用的 AI 配置「${grokImageConfig.aiName}」不存在或不完整，请重新使用：\n#grok画图配置 <AI配置编号> <画图模型>`;
     }
 
     try {
@@ -3634,7 +3639,7 @@ export const availableTools = {
 
       const requestBody = Array.isArray(image_url)
         ? {
-            model: "grok-imagine-image",
+            model: grokImageConfig.model,
             images: imgBase64Array.map((base64) => ({
               url: base64,
               type: "image_url",
@@ -3643,7 +3648,7 @@ export const availableTools = {
             n: 1,
           }
         : {
-            model: "grok-imagine-image",
+            model: grokImageConfig.model,
             image: {
               url: imgBase64Array[0],
               type: "image_url",
@@ -3654,14 +3659,17 @@ export const availableTools = {
 
       console.log("最终请求体", requestBody);
 
-      const res = await fetch(aiConfig.host + "/images/edits", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${aiConfig.key}`,
+      const res = await fetch(
+        aiConfig.host.replace(/\/+$/, "") + "/images/edits",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${aiConfig.key}`,
+          },
+          body: JSON.stringify(requestBody),
         },
-        body: JSON.stringify(requestBody),
-      });
+      );
       if (!res.ok) {
         const err = await res.text();
         console.log(err);
@@ -3689,18 +3697,22 @@ export const availableTools = {
     quality?: string;
   }) => {
     const gptImageConfig = await redisClient.getGPTImageConfig();
-    if (!gptImageConfig || !gptImageConfig.host || !gptImageConfig.key) {
-      return "未配置 GPT 画图接口，请使用命令：\n#gpt画图配置 <主机地址> <api_key> <模型>";
+    if (!gptImageConfig) {
+      return "未配置 GPT 画图接口，请使用命令：\n#gpt画图配置 <AI配置编号> <画图模型>";
+    }
+    const aiConfig = await redisClient.getAIListConfig(gptImageConfig.aiName);
+    if (!aiConfig?.host?.trim() || !aiConfig.key?.trim()) {
+      return `GPT 画图引用的 AI 配置「${gptImageConfig.aiName}」不存在或不完整，请重新使用：\n#gpt画图配置 <AI配置编号> <画图模型>`;
     }
 
     try {
       const openai = new OpenAi({
-        baseURL: gptImageConfig.host,
-        apiKey: gptImageConfig.key,
+        baseURL: aiConfig.host,
+        apiKey: aiConfig.key,
         timeout: 120000,
       });
 
-      const model = gptImageConfig.model || "gpt-image-2";
+      const model = gptImageConfig.model;
 
       const sourceImageUrl = String(image_url || "").trim();
       const response = sourceImageUrl

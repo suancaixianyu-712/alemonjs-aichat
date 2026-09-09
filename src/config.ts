@@ -647,30 +647,71 @@ class db {
     await this.redis.del(`ai:ocr_ai:${guid}`);
   }
 
-  /** 获取 GPT 画图工具专用配置 */
+  /** 获取 GPT 画图工具专用配置（复用 AI 列表中的接口地址与密钥） */
   async getGPTImageConfig(): Promise<{
-    host: string;
-    key: string;
+    aiName: string;
     model: string;
   } | null> {
     const configStr = await this.redis.get("ai:tool:gptimage");
     if (!configStr) return null;
     try {
-      return JSON.parse(configStr);
+      const config = JSON.parse(configStr) as Record<string, unknown>;
+      if (
+        typeof config.aiName !== "string" ||
+        !config.aiName.trim() ||
+        typeof config.model !== "string" ||
+        !config.model.trim()
+      ) {
+        return null;
+      }
+      return {
+        aiName: config.aiName.trim(),
+        model: config.model.trim(),
+      };
     } catch {
       return null;
     }
   }
 
   /** 设置 GPT 画图工具专用配置 */
-  async setGPTImageConfig(
-    host: string,
-    key: string,
-    model: string,
-  ): Promise<void> {
+  async setGPTImageConfig(aiName: string, model: string): Promise<void> {
     await this.redis.set(
       "ai:tool:gptimage",
-      JSON.stringify({ host, key, model }),
+      JSON.stringify({ aiName: aiName.trim(), model: model.trim() }),
+    );
+  }
+
+  /** 获取 Grok 画图/修图工具专用配置（复用 AI 列表中的接口地址与密钥） */
+  async getGrokImageConfig(): Promise<{
+    aiName: string;
+    model: string;
+  } | null> {
+    const configStr = await this.redis.get("ai:tool:grokimage");
+    if (!configStr) return null;
+    try {
+      const config = JSON.parse(configStr) as Record<string, unknown>;
+      if (
+        typeof config.aiName !== "string" ||
+        !config.aiName.trim() ||
+        typeof config.model !== "string" ||
+        !config.model.trim()
+      ) {
+        return null;
+      }
+      return {
+        aiName: config.aiName.trim(),
+        model: config.model.trim(),
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  /** 设置 Grok 画图/修图工具专用配置 */
+  async setGrokImageConfig(aiName: string, model: string): Promise<void> {
+    await this.redis.set(
+      "ai:tool:grokimage",
+      JSON.stringify({ aiName: aiName.trim(), model: model.trim() }),
     );
   }
 
@@ -921,7 +962,7 @@ class db {
         return [];
       }
     });
-    return [...new Set(providerNames)];
+    return [...new Set(providerNames)].sort((a, b) => a.localeCompare(b));
   }
 
   /** 获取带厂商 ID 的 AI 模型配置。 */

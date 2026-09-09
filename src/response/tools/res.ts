@@ -24,7 +24,45 @@ export default onResponse(selects, async (e) => {
   // 创建
   const [message] = useMessage(e);
 
-  // p图
+  // Grok 画图配置必须先于普通画图处理
+  if (/^(\/|#)grok画图配置(?:\s+[\s\S]*)?$/i.test(e.msg)) {
+    const match = e.msg.match(
+      /^(\/|#)grok画图配置\s+(\d+)\s+(\S+)\s*$/i,
+    );
+    const aiList = await redisClient.getAIList();
+    const aiMenu = aiList.length
+      ? aiList.map((name, index) => `${index + 1}. ${name}`).join("\n")
+      : "暂无 AI 配置，请先使用 #添加ai 添加。";
+    if (!match) {
+      message.send(
+        format(
+          Text(
+            `格式错误，请按照格式：\n#grok画图配置 <AI配置编号> <画图模型>\n\n当前 AI 列表：\n${aiMenu}`,
+          ),
+        ),
+      );
+      return;
+    }
+    const [, , indexText, model] = match;
+    const aiName = aiList[Number(indexText) - 1];
+    if (!aiName) {
+      message.send(
+        format(Text(`AI 配置编号无效。\n\n当前 AI 列表：\n${aiMenu}`)),
+      );
+      return;
+    }
+    await redisClient.setGrokImageConfig(aiName, model);
+    message.send(
+      format(
+        Text(
+          `Grok 画图配置已更新！\nAI 配置: ${aiName}\n画图模型: ${model}`,
+        ),
+      ),
+    );
+    return;
+  }
+
+  // Grok 画图/修图
   if (/(\/|#)(ai)?(pt|p图|ps|修图)(.*)$/i.test(e.msg)) {
     const match = e.msg.match(/(\/|#)(ai)?(pt|p图|ps|修图)(.*)$/i);
     const [, , , , content] = match;
@@ -203,23 +241,36 @@ export default onResponse(selects, async (e) => {
 
   // GPT 画图配置必须先于普通画图处理，避免被“gpt画图”前缀吞掉
   if (/^(\/|#)gpt画图配置(?:\s+[\s\S]*)?$/i.test(e.msg)) {
-    const match = e.msg.match(
-      /^(\/|#)gpt画图配置\s+(\S+)\s+(\S+)\s+(\S+)\s*$/i,
+    const match = e.msg.match(/^(\/|#)gpt画图配置\s+(\d+)\s+(\S+)\s*$/i);
+    const aiList = (await redisClient.getAIList()).sort((a, b) =>
+      a.localeCompare(b),
     );
+    const aiMenu = aiList.length
+      ? aiList.map((name, index) => `${index + 1}. ${name}`).join("\n")
+      : "暂无 AI 配置，请先使用 #添加ai 添加。";
     if (!match) {
       message.send(
         format(
           Text(
-            "格式错误，请按照格式：\n#gpt画图配置 <主机地址> <api_key> <模型>",
+            `格式错误，请按照格式：\n#gpt画图配置 <AI配置编号> <画图模型>\n\n当前 AI 列表：\n${aiMenu}`,
           ),
         ),
       );
       return;
     }
-    const [, , host, key, model] = match;
-    await redisClient.setGPTImageConfig(host, key, model);
+    const [, , indexText, model] = match;
+    const aiName = aiList[Number(indexText) - 1];
+    if (!aiName) {
+      message.send(
+        format(Text(`AI 配置编号无效。\n\n当前 AI 列表：\n${aiMenu}`)),
+      );
+      return;
+    }
+    await redisClient.setGPTImageConfig(aiName, model);
     message.send(
-      format(Text(`GPT 画图配置已更新！\n主机: ${host}\n模型: ${model}`)),
+      format(
+        Text(`GPT 画图配置已更新！\nAI 配置: ${aiName}\n画图模型: ${model}`),
+      ),
     );
     return;
   }

@@ -284,10 +284,11 @@ export default onResponse(selects, async (e, next) => {
   // 查看AI列表
   if (/^(\/|#)ai列表$/i.test(e.msg)) {
     const ailist = await redisClient.getAIList();
+    const numberedAIList = ailist.map((name, index) => `${index + 1}. ${name}`);
     message.send(
       format(
         Text("当前AI列表：\n"),
-        Text(ailist.length ? ailist.join("\n") : "暂无AI配置"),
+        Text(numberedAIList.length ? numberedAIList.join("\n") : "暂无AI配置"),
       ),
     );
   }
