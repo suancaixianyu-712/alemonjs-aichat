@@ -37,6 +37,7 @@ import { executeAlemonCommand } from "@src/routes/commands";
 import { parseAIReply, removeThinkContent, sendAIReplyToOutput } from "./tools";
 import { requestRapiCompletion } from "./rapi";
 import { getProviderBuiltinToolParams } from "./provider-tools";
+import { createScbbsProgress } from "./scbbs-progress";
 
 export const selects = onSelects(["message.create", "private.message.create"]);
 let currentModel = "派蒙-默认"; // 默认音色
@@ -438,6 +439,8 @@ export const CApiReply = async (
     };
   }
   const aiTurn = beginAITurn(e.guid, e.Platform, turnUserID);
+  const progress = createScbbsProgress(e);
+  let progressStatus: "completed" | "failed" | "interrupted" = "completed";
 
   try {
     const openai = new OpenAi({
@@ -706,7 +709,13 @@ export const CApiReply = async (
           cfg.toolConfig.toolCallContentSwitch === "1" &&
           toolCallDisplayContent.trim() !== ""
         ) {
-          await sendAIReply(toolCallDisplayContent, cfg, e, message);
+          const summary = removePublicIpFromOutput(
+            toolCallDisplayContent,
+            e.IsMaster === true,
+          );
+          if (!(await progress.append(summary))) {
+            await sendAIReply(toolCallDisplayContent, cfg, e, message);
+          }
         }
 
         // 先处理对话
@@ -811,7 +820,7 @@ export const CApiReply = async (
           }
 
           if (
-            functionName === "RunOpencode" &&
+            (functionName === "RunOpencode" || functionName === "RunCodex") &&
             functionArgs &&
             typeof functionArgs === "object"
           ) {
@@ -984,6 +993,9 @@ export const CApiReply = async (
       next: false,
     };
   } catch (error) {
+    progressStatus = isAITurnAbortError(error, aiTurn.signal)
+      ? "interrupted"
+      : "failed";
     await redisClient.releaseAIToolLoop(e.guid, turnUserID, e.Platform);
     if (isAITurnAbortError(error, aiTurn.signal)) {
       log(`当前 AI 回复已停止: ${e.guid}`);
@@ -1002,6 +1014,7 @@ export const CApiReply = async (
       next: true,
     };
   } finally {
+    await progress.finish(progressStatus);
     await redisClient.releaseAIToolLoop(e.guid, turnUserID, e.Platform);
     aiTurn.finish();
   }

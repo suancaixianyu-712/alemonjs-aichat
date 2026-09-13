@@ -164,6 +164,20 @@
             "type": "string"
           }
         ]
+      },
+      {
+        "description": "Codex 工具",
+        "name": "codexTool",
+        "required": false,
+        "type": "object",
+        "config": [
+          {
+            "description": "Codex 可执行文件路径",
+            "name": "binary",
+            "required": false,
+            "type": "string"
+          }
+        ]
       }
     ]
   },

@@ -477,7 +477,7 @@ export default onResponse(selects, async (e, next) => {
     return;
   }
 
-  // 设置识图/OCR 专用 AI（DeepSeek 等纯文本模型看图时调用）
+  // 设置识图/OCR 专用 AI（纯文本模型看图时调用）
   if (ocrAICommand.test(e.msg)) {
     const match = e.msg.match(ocrAICommand);
     if (!match) {
@@ -501,7 +501,7 @@ export default onResponse(selects, async (e, next) => {
         message.send(
           format(
             Text(
-              "当前未配置识图 AI。\n用法：/设置识图ai <AI列表名称>\n关闭：/设置识图 关闭\n提示：主模型无法看图时（deepseek、gpt-3.5、qwen 文本版等），收到图片会通过 DescribeImage 工具用该配置描述图片。",
+              "当前未配置识图 AI。\n用法：/设置识图ai <AI列表名称>\n关闭：/设置识图 关闭\n提示：主模型无法看图时（deepseek-v4-pro、gpt-3.5、qwen 文本版等），收到图片会通过 DescribeImage 工具用该配置描述图片。",
             ),
           ),
         );
@@ -554,7 +554,7 @@ export default onResponse(selects, async (e, next) => {
             ocrConfig
               ? `模型：${ocrConfig.model}\n主机：${ocrConfig.host}`
               : "",
-            "当主模型无法看图时（deepseek、gpt-3.5、qwen 文本版等），收到图片会调用 DescribeImage 工具用此配置描述图片内容。",
+            "当主模型无法看图时（deepseek-v4-pro、gpt-3.5、qwen 文本版等），收到图片会调用 DescribeImage 工具用此配置描述图片内容。",
           ]
             .filter(Boolean)
             .join("\n"),

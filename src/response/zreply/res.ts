@@ -572,7 +572,7 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
         }
 
         if (
-          functionName === "RunOpencode" &&
+          (functionName === "RunOpencode" || functionName === "RunCodex") &&
           functionArgs &&
           typeof functionArgs === "object"
         ) {

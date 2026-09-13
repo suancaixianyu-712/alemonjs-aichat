@@ -12,14 +12,7 @@ import { shouldDisableLocalSearchTool } from "./provider-tools";
  * 注意：若同时命中 VISION_MODEL_KEYWORDS，则视为可看图（如 deepseek-vl、qwen-vl）
  */
 export const NON_VISION_MODEL_KEYWORDS: string[] = [
-  // DeepSeek 文本/推理/代码（不含 vl）
-  "deepseek",
-  "deepseek-chat",
-  "deepseek-reasoner",
-  "deepseek-r1",
-  "deepseek-v3",
-  "deepseek-v2",
-  "deepseek-coder",
+  "deepseek-v4-pro",
   // OpenAI 纯文本 / 无图推理
   "gpt-3.5",
   "gpt-35",

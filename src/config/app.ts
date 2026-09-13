@@ -39,6 +39,7 @@ export const getAiChatConfigValue = (): Record<string, any> => {
     "baidu",
     "skills_dir",
     "opencodeServer",
+    "codexTool",
     "localBrowser",
   ];
   const topLevel = Object.fromEntries(

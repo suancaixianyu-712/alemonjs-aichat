@@ -19,6 +19,9 @@ export interface AIChatConfig {
     hostname?: string;
     binary?: string;
   };
+  codexTool?: {
+    binary?: string;
+  };
   ttsServer: {
     host: string;
     defaultModel: string;
