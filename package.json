@@ -10,6 +10,7 @@
     "dev": "npx lvy dev",
     "build": "npx lvy build",
     "test:panel-web": "npm run build && node --experimental-test-module-mocks --test tests/panel-web.test.mjs",
+    "test:xianyu-game": "npm run build && node tests/xianyu-game-tool.test.mjs",
     "review": "npx alemonc start",
     "view": "npx lvy dev --view",
     "img": "tsx watch --import lvyjs/register app.ts --jsxp",

@@ -19,6 +19,23 @@ type ClientRuntime = Pick<
   "ResultCode" | "useClient"
 >;
 
+type ProgressImage = string | Buffer | ArrayBuffer | NodeJS.ArrayBufferView;
+
+const serializeProgressImage = (image: ProgressImage): string => {
+  if (typeof image === "string") return image;
+  if (Buffer.isBuffer(image)) {
+    return `base64://${image.toString("base64")}`;
+  }
+  if (image instanceof ArrayBuffer) {
+    return `base64://${Buffer.from(image).toString("base64")}`;
+  }
+  return `base64://${Buffer.from(
+    image.buffer,
+    image.byteOffset,
+    image.byteLength,
+  ).toString("base64")}`;
+};
+
 export const createActiveProgressAPI = (
   event: ProgressEvent,
   { ResultCode, useClient }: ClientRuntime,
@@ -104,7 +121,7 @@ export const createScbbsProgress = (
     },
     async appendImage(
       summary: string,
-      image: string | Buffer | ArrayBuffer | NodeJS.ArrayBufferView,
+      image: ProgressImage,
     ): Promise<boolean> {
       if (event.Platform !== "scbbs" || disabled) return false;
       if (!summary.trim()) return true;
@@ -115,7 +132,9 @@ export const createScbbsProgress = (
           await api.updateAIProgressMessage({
             ...handle,
             appendStep: step,
-            stepImage: image,
+            // useClient 会跨插件调用并序列化参数，Buffer 直接传递会退化为
+            // { type: "Buffer", data: [...] }，统一转字符串避免适配器误判。
+            stepImage: serializeProgressImage(image),
           });
         } else {
           const scope =
@@ -127,7 +146,7 @@ export const createScbbsProgress = (
                 ? event.UserId
                 : (event.ChannelId ?? event.GuildId)) ?? "",
             steps: [step],
-            stepImage: image,
+            stepImage: serializeProgressImage(image),
           });
           handle = { scope: result.scope, messageId: result.messageId };
         }

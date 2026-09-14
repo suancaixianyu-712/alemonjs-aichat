@@ -124,9 +124,31 @@ test("扫雷过程图片追加到同一条进度消息", async () => {
       scope: "private",
       messageId: 56,
       appendStep: { type: "result", summary: "新增翻开 6 格" },
-      stepImage: image,
+      stepImage: `base64://${image.toString("base64")}`,
     },
   ]);
+});
+
+test("首次进度就是图片时也跨插件传递 base64 字符串", async () => {
+  const calls = [];
+  const image = new Uint8Array([1, 2, 3]);
+  const progress = createScbbsProgress(
+    {
+      Platform: "scbbs",
+      name: "private.message.create",
+      UserId: "12",
+    },
+    async () => ({
+      startAIProgressMessage: async (options) => {
+        calls.push(options);
+        return { scope: "private", messageId: 57 };
+      },
+      updateAIProgressMessage: async () => {},
+    }),
+  );
+
+  assert.equal(await progress.appendImage("首次翻开", image), true);
+  assert.equal(calls[0].stepImage, "base64://AQID");
 });
 
 for (const status of ["failed", "interrupted"]) {

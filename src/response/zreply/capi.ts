@@ -39,6 +39,7 @@ import { parseAIReply, removeThinkContent, sendAIReplyToOutput } from "./tools";
 import { requestRapiCompletion } from "./rapi";
 import { getProviderBuiltinToolParams } from "./provider-tools";
 import { createScbbsProgress } from "./scbbs-progress";
+import { buildXianyuGameSession } from "@src/api/xianyu-game";
 
 export const selects = onSelects(["message.create", "private.message.create"]);
 let currentModel = "派蒙-默认"; // 默认音色
@@ -861,6 +862,9 @@ export const CApiReply = async (
             functionArgs &&
             typeof functionArgs === "object"
           ) {
+            // 覆盖式注入真实会话作用域：模型无法伪造，AI 新建的扫雷对局
+            // 会写入这个作用域，和用户在会话里直接 #扫雷 得到的棋盘一致。
+            functionArgs.session = buildXianyuGameSession(e);
             functionArgs.progressReporter = async (update: {
               summary?: string;
               image?: string | Buffer | ArrayBuffer | NodeJS.ArrayBufferView;

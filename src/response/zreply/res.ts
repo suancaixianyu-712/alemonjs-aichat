@@ -33,6 +33,7 @@ import {
 } from "@src/api/fileMessage";
 import errorimg from "@src/assets/error.png";
 import { imageReview } from "@src/api/review";
+import { buildXianyuGameSession } from "@src/api/xianyu-game";
 import { isNonVisionModel } from "./getChatConfig";
 
 const value = getAiChatConfigValue();
@@ -577,6 +578,16 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
           typeof functionArgs === "object"
         ) {
           functionArgs.userID = String(e.UserId || "");
+        }
+
+        if (
+          functionName === "XianyuGame" &&
+          functionArgs &&
+          typeof functionArgs === "object"
+        ) {
+          // 覆盖式注入真实会话作用域：AI 新建的扫雷对局写入该作用域，
+          // 而不是依赖上一次 #扫雷 留下的旧会话。
+          functionArgs.session = buildXianyuGameSession(e);
         }
 
         const functionToCall = availableTools[functionName];
