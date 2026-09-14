@@ -4,6 +4,7 @@ import middleware from "./routes/middleware";
 import { createPanelRouter } from "./panel/server";
 import { startScheduledAITaskScheduler } from "./scheduler";
 import { getRuntimeConfig } from "./config/runtime";
+import { xianyuGameAgentExpose } from "./api/xianyu-game-agent";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 
@@ -13,6 +14,7 @@ export default defineChildren({
       middlewareRouter: middleware,
       responseRouter: commands,
       koaRouter: createPanelRouter({ hosted: true }),
+      expose: xianyuGameAgentExpose,
     };
   },
   onCreated() {

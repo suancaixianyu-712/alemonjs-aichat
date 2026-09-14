@@ -27,6 +27,7 @@ import {
   type GPTImageRequestMode,
 } from "./gptImage";
 import { getOpenAIProxyFetch } from "./openaiProxy";
+import { useXianyuGameTool } from "./xianyu-game";
 
 const value = getAiChatConfigValue();
 
@@ -1221,6 +1222,52 @@ export const tools: ChatCompletionTool[] = [
           },
         },
         required: ["prompt", "projectPath"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "XianyuGame",
+      description: `检查同一 AlemonJS 宿主中是否已加载咸鱼游戏插件、列出可用游戏，读取五子棋/扫雷棋盘，或在系统派发的游戏任务中操作。
+
+【使用要求】
+- action=status：查询插件是否可用、可用游戏和当前会话的 AI 对手状态。
+- action=gobang_snapshot：读取当前会话五子棋的结构化棋盘。棋盘数组必须按 board[y-1][x-1] 读取：x 是从左到右的横坐标，y 是从上到下的纵坐标，均从 1 开始。
+- action=gobang_move：仅在系统明确要求处理咸鱼五子棋 AI 回合时调用，先读取棋盘，再选择空位落子。必须传 x（横坐标）和 y（纵坐标），不得交换。系统会绑定当前会话和回合令牌，不能用于普通聊天代走。
+- action=minesweeper_snapshot：读取当前会话的扫雷可见棋盘，可用于自动游玩或普通聊天中给建议。快照只含已翻开数字、旗标和未知格，不含雷区答案；数组按 board[y][x] 读取，指令坐标使用 A0 形式。
+- action=minesweeper_open/minesweeper_mark/minesweeper_unmark：当用户明确要求 Aichat 操作或自动玩扫雷时使用；cells 传 A0 形式的坐标数组，可批量操作，并应持续读取结果直至游戏结束。用户只询问建议时不得修改棋盘。`,
+      parameters: {
+        type: "object",
+        properties: {
+          action: {
+            type: "string",
+            enum: [
+              "status",
+              "gobang_snapshot",
+              "gobang_move",
+              "minesweeper_snapshot",
+              "minesweeper_open",
+              "minesweeper_mark",
+              "minesweeper_unmark",
+            ],
+            description: "要执行的咸鱼游戏操作",
+          },
+          x: {
+            type: "number",
+            description: "五子棋横坐标 x，左到右为 1 到 17；仅 gobang_move 需要",
+          },
+          y: {
+            type: "number",
+            description: "五子棋纵坐标 y，上到下为 1 到 17；仅 gobang_move 需要",
+          },
+          cells: {
+            type: "array",
+            items: { type: "string" },
+            description: "扫雷坐标数组，例如 [\"A0\", \"B3\"]；仅扫雷操作需要",
+          },
+        },
+        required: ["action"],
       },
     },
   },
@@ -3230,6 +3277,9 @@ const performServerCommandReview = async ({
 };
 
 export const availableTools = {
+  XianyuGame: async ({ action, guid, x, y, cells, progressReporter }) =>
+    useXianyuGameTool({ action, guid, x, y, cells, progressReporter }),
+
   getAlemonjsConfig: async ({ key, value }) => {
     if (key == "ailist") {
       // 获取当前配置

@@ -1,5 +1,6 @@
 import {
   Events,
+  Image,
   ImageFile,
   ImageURL,
   Mention,
@@ -410,6 +411,19 @@ export const CApiReply = async (
   console.log("e.UserId", e.UserId, e.bot);
 
   const cfg = await getChatConfig(e);
+  const internalAllowedToolNames = Array.isArray((e as any).__allowedToolNames)
+    ? new Set(
+        (e as any).__allowedToolNames
+          .map((name: unknown) => String(name ?? "").trim())
+          .filter(Boolean),
+      )
+    : null;
+  const getTurnTools = () =>
+    internalAllowedToolNames
+      ? cfg.toolConfig.cApiToolList.filter((tool: any) =>
+          internalAllowedToolNames.has(String(tool?.function?.name ?? "")),
+        )
+      : cfg.toolConfig.cApiToolList;
   if (await shouldSkipAIReply(e, cfg)) {
     return {
       next: true,
@@ -598,7 +612,7 @@ export const CApiReply = async (
     };
 
     if (cfg.toolConfig.toolSwitch === "1") {
-      createParams["tools"] = cfg.toolConfig.cApiToolList;
+      createParams["tools"] = getTurnTools();
       createParams["tool_choice"] = "auto";
     }
     const deepThoughtReasoning = getDeepThoughtReasoning(cfg);
@@ -670,7 +684,7 @@ export const CApiReply = async (
             messages: messages,
           };
           if (cfg.toolConfig.toolSwitch === "1") {
-            params.tools = cfg.toolConfig.cApiToolList;
+            params.tools = getTurnTools();
             params.tool_choice = "auto";
           }
           Object.assign(params, getDeepThoughtReasoning(cfg));
@@ -720,11 +734,10 @@ export const CApiReply = async (
 
         // 先处理对话
         if (toolRound >= 10 && toolRound % 10 === 0) {
-          await sendOutputText(
-            message,
-            `AI正在连续调用工具，第 ${toolRound} 轮处理中，请稍等`,
-            e.IsMaster === true,
-          );
+          const statusText = `AI正在连续调用工具，第 ${toolRound} 轮处理中，请稍等`;
+          if (!(await progress.append(statusText, "status"))) {
+            await sendOutputText(message, statusText, e.IsMaster === true);
+          }
         }
         messages.push(responseMessage);
 
@@ -734,19 +747,22 @@ export const CApiReply = async (
           const useToolsMessage = responseMessage.tool_calls.map((toolCall) => {
             return `工具调用: ${toolCall.function.name}(${cfg.toolConfig.toolPromptArgsSwitch === "1" ? toolCall.function.arguments : ""})`;
           });
-          const msgId = await sendOutputText(
-            message,
-            useToolsMessage.join("\n"),
-            e.IsMaster === true,
-          );
-          if (cfg.toolConfig.toolPromptRevokeSwitch === "1") {
-            // 10秒后撤回工具调用提示
-            setTimeout(() => {
-              const messageId = msgId?.[0]?.data?.message_id;
-              if (messageId && typeof message?.delete === "function") {
-                message.delete({ messageId });
-              }
-            }, 10000);
+          const toolPrompt = useToolsMessage.join("\n");
+          if (!(await progress.append(toolPrompt, "tool"))) {
+            const msgId = await sendOutputText(
+              message,
+              toolPrompt,
+              e.IsMaster === true,
+            );
+            if (cfg.toolConfig.toolPromptRevokeSwitch === "1") {
+              // 10秒后撤回工具调用提示
+              setTimeout(() => {
+                const messageId = msgId?.[0]?.data?.message_id;
+                if (messageId && typeof message?.delete === "function") {
+                  message.delete({ messageId });
+                }
+              }, 10000);
+            }
           }
         }
 
@@ -840,10 +856,56 @@ export const CApiReply = async (
             ) => executeAlemonCommand(e, command, { sendToUser });
           }
 
+          if (
+            functionName === "XianyuGame" &&
+            functionArgs &&
+            typeof functionArgs === "object"
+          ) {
+            functionArgs.progressReporter = async (update: {
+              summary?: string;
+              image?: string | Buffer | ArrayBuffer | NodeJS.ArrayBufferView;
+              final?: boolean;
+            }) => {
+              const summary = String(update?.summary ?? "").trim();
+              if (!summary) return false;
+              if (update.final) {
+                await message.send(
+                  update.image
+                    ? format(Text(summary), Image(update.image))
+                    : format(Text(summary)),
+                );
+                return true;
+              }
+              if (
+                update.image &&
+                (await progress.appendImage(summary, update.image))
+              ) {
+                return true;
+              }
+              if (!update.image && (await progress.append(summary, "result"))) {
+                return true;
+              }
+              await message.send(
+                update.image
+                  ? format(Text(summary), Image(update.image))
+                  : format(Text(summary)),
+              );
+              return true;
+            };
+          }
+
           const functionToCall = availableTools[functionName];
           let functionResult: any;
 
-          if (!functionToCall) {
+          if (
+            internalAllowedToolNames &&
+            !internalAllowedToolNames.has(functionName)
+          ) {
+            functionResult = {
+              ok: false,
+              error: `当前系统任务不允许调用工具：${functionName}`,
+            };
+          } else if (!functionToCall) {
             console.error(`未找到函数：${functionName}`);
             functionResult = {
               ok: false,

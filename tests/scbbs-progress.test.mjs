@@ -1,6 +1,51 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createScbbsProgress } from "../lib/response/zreply/scbbs-progress.js";
+import {
+  createActiveProgressAPI,
+  createScbbsProgress,
+} from "../lib/response/zreply/scbbs-progress.js";
+
+test("通过当前事件绑定的活动平台客户端调用进度 API", async () => {
+  const event = { Platform: "scbbs", UserId: "12" };
+  const calls = [];
+  const runtime = {
+    ResultCode: { Ok: 200 },
+    useClient(actualEvent) {
+      assert.equal(actualEvent, event);
+      return [
+        new Proxy(
+          {},
+          {
+            get(_target, action) {
+              return async (options) => {
+                calls.push({ action, options });
+                return [
+                  { code: 200, data: { scope: "private", messageId: 56 } },
+                ];
+              };
+            },
+          },
+        ),
+      ];
+    },
+  };
+  const api = createActiveProgressAPI(event, runtime);
+
+  assert.deepEqual(
+    await api.startAIProgressMessage({
+      scope: "private",
+      targetId: "12",
+      steps: [],
+    }),
+    { scope: "private", messageId: 56 },
+  );
+  assert.deepEqual(calls, [
+    {
+      action: "startAIProgressMessage",
+      options: { scope: "private", targetId: "12", steps: [] },
+    },
+  ]);
+});
 
 for (const scope of ["private", "group"]) {
   test(`${scope}: 多轮共用消息并正确结束`, async () => {
@@ -21,7 +66,7 @@ for (const scope of ["private", "group"]) {
       }),
     );
     assert.equal(await progress.append("正在检查文件"), true);
-    assert.equal(await progress.append("准备执行检查"), true);
+    assert.equal(await progress.append("准备执行检查", "tool"), true);
     await progress.finish("completed");
     assert.deepEqual(calls, [
       {
@@ -32,7 +77,7 @@ for (const scope of ["private", "group"]) {
       {
         scope,
         messageId: 56,
-        appendStep: { type: "thought_summary", summary: "准备执行检查" },
+        appendStep: { type: "tool", summary: "准备执行检查" },
       },
       { scope, messageId: 56, status: "completed" },
     ]);
@@ -49,13 +94,52 @@ test("其他平台与空内容不加载适配器", async () => {
   await empty.finish("completed");
 });
 
+test("扫雷过程图片追加到同一条进度消息", async () => {
+  const calls = [];
+  const image = Buffer.from("image");
+  const progress = createScbbsProgress(
+    {
+      Platform: "scbbs",
+      name: "private.message.create",
+      UserId: "12",
+    },
+    async () => ({
+      startAIProgressMessage: async (options) => {
+        calls.push(options);
+        return { scope: "private", messageId: 56 };
+      },
+      updateAIProgressMessage: async (options) => calls.push(options),
+    }),
+  );
+
+  assert.equal(await progress.append("开始分析"), true);
+  assert.equal(await progress.appendImage("新增翻开 6 格", image), true);
+  assert.deepEqual(calls, [
+    {
+      scope: "private",
+      targetId: "12",
+      steps: [{ type: "thought_summary", summary: "开始分析" }],
+    },
+    {
+      scope: "private",
+      messageId: 56,
+      appendStep: { type: "result", summary: "新增翻开 6 格" },
+      stepImage: image,
+    },
+  ]);
+});
+
 for (const status of ["failed", "interrupted"]) {
   test(`保留 ${status} 终态`, async () => {
     const progress = createScbbsProgress(
       { Platform: "scbbs", name: "private.message.create", UserId: "12" },
       async () => ({
-        startAIProgressMessage: async () => ({ scope: "private", messageId: 56 }),
-        updateAIProgressMessage: async (options) => assert.equal(options.status, status),
+        startAIProgressMessage: async () => ({
+          scope: "private",
+          messageId: 56,
+        }),
+        updateAIProgressMessage: async (options) =>
+          assert.equal(options.status, status),
       }),
     );
     await progress.append("正在检查");
