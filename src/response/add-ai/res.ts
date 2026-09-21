@@ -3,6 +3,7 @@ import { Text } from "alemonjs";
 import { useMessage } from "@src/utils/command-message";
 import { getOpenAIProxyFetch } from "@src/api/openaiProxy";
 import { getAiChatConfigValue } from "@src/config/app";
+import { getLockedAIMessage } from "@src/api/ai-lock";
 
 const selects = onSelects(["message.create", "private.message.create"]);
 
@@ -269,6 +270,12 @@ export const handleAddAIMessage = async (e: any): Promise<boolean> => {
       await message.send(format(Text("模型名称不能为空，请重新填写。")));
       return true;
     }
+    const identifier = `other/${text}`;
+    if (e.IsMaster !== true && (await redisClient.isAILocked(identifier))) {
+      await redisClient.redis.del(sessionKey);
+      await message.send(format(Text(getLockedAIMessage(identifier))));
+      return true;
+    }
     await redisClient.addAI(
       e.guid,
       text,
@@ -300,6 +307,12 @@ export const handleAddAIMessage = async (e: any): Promise<boolean> => {
           ),
         ),
       );
+      return true;
+    }
+    const identifier = `${session.provider}/${model}`;
+    if (e.IsMaster !== true && (await redisClient.isAILocked(identifier))) {
+      await redisClient.redis.del(sessionKey);
+      await message.send(format(Text(getLockedAIMessage(identifier))));
       return true;
     }
     const config = PROVIDERS[session.provider];

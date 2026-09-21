@@ -81,6 +81,12 @@ export const commandChildren = [
     handler: lazy(() => import("../response/config/res")),
   },
 
+  // lock AI
+  {
+    regular: /^(#|\/)(?:锁定ai列表|(?:锁定|解锁)ai(?:\s+[\s\S]+)?)$/i,
+    handler: lazy(() => import("../response/ai-lock/res")),
+  },
+
   // switch AI
   {
     regular: /^(#|\/)切换(?:ai|配置)(?:\s+.+)?$/i,

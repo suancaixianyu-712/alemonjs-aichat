@@ -10,6 +10,10 @@ export default onMiddleware(selects, async (event, next) => {
   event["msg"] = event.MessageText;
   event["guid"] = event.ChannelId ?? event.UserId;
 
+  const isAILockCommand =
+    /^(#|\/)(?:锁定ai列表|(?:锁定|解锁)ai)(?:\s|$)/i.test(event.msg);
+  if (isAILockCommand) return next();
+
   const isSwitchCommand = /^(#|\/)切换(?:ai|配置)(?:\s|$)/i.test(event.msg);
   const handled = isSwitchCommand
     ? await handleSwitchAIMessage(event)

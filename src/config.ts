@@ -52,6 +52,7 @@ type ArchivedChatSearchResult = {
 
 const TOOL_LOOP_TTL_SECONDS = 3600;
 const TOOL_LOOP_STALE_MS = TOOL_LOOP_TTL_SECONDS * 1000;
+export const AI_LOCKED_CONFIGS_KEY = "ai:locked:configs";
 export const NEXT_USER_MESSAGE_SUBSCRIPTION_TTL_SECONDS = 600;
 export const DEFAULT_CAPI_CONTEXT_LIMIT = 512000;
 const ARCHIVED_CHAT_SUMMARY_MAX_LENGTH = 240;
@@ -1011,6 +1012,34 @@ class db {
     return [...new Set(providerNames)].sort((a, b) => a.localeCompare(b));
   }
 
+  /** 获取被主人锁定、仅主人和网页端可使用的 AI 配置。 */
+  async getLockedAIList(): Promise<string[]> {
+    return (await this.redis.smembers(AI_LOCKED_CONFIGS_KEY)).sort((a, b) =>
+      a.localeCompare(b),
+    );
+  }
+
+  /** 判断 AI 配置是否已被主人锁定。 */
+  async isAILocked(name: string): Promise<boolean> {
+    return (await this.redis.sismember(AI_LOCKED_CONFIGS_KEY, name)) === 1;
+  }
+
+  /** 批量锁定 AI 配置。 */
+  async lockAI(names: string[]): Promise<void> {
+    const uniqueNames = [...new Set(names.map((name) => name.trim()).filter(Boolean))];
+    if (uniqueNames.length > 0) {
+      await this.redis.sadd(AI_LOCKED_CONFIGS_KEY, ...uniqueNames);
+    }
+  }
+
+  /** 批量解除 AI 配置锁定。 */
+  async unlockAI(names: string[]): Promise<void> {
+    const uniqueNames = [...new Set(names.map((name) => name.trim()).filter(Boolean))];
+    if (uniqueNames.length > 0) {
+      await this.redis.srem(AI_LOCKED_CONFIGS_KEY, ...uniqueNames);
+    }
+  }
+
   /** 获取带厂商 ID 的 AI 模型配置。 */
   async getAIListConfig(name: string): Promise<AIConfig | null> {
     await this.migrateLegacyAIModels();
@@ -1097,7 +1126,18 @@ class db {
       console.log("删除失败, 无此模型");
       return false;
     }
+    const matchedAIIdentifiers = matchedProviderKeys.flatMap((key) => {
+      const provider = key.split(":")[2];
+      const encodedName = key.split(":").slice(3).join(":");
+      if (!provider || !encodedName) return [];
+      try {
+        return [`${provider}/${decodeURIComponent(encodedName)}`];
+      } catch {
+        return [];
+      }
+    });
     await this.redis.del(...matchedProviderKeys);
+    await this.unlockAI(matchedAIIdentifiers);
     return true;
   }
 

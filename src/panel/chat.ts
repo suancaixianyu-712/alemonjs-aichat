@@ -431,6 +431,7 @@ const createPanelEvent = (
   img: [],
   originalMsg: message,
   regexTriggered: true,
+  __allowLockedAI: true,
 });
 
 export const sendPanelChatMessage = async (

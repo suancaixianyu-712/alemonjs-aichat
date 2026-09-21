@@ -40,6 +40,7 @@ import { requestRapiCompletion } from "./rapi";
 import { getProviderBuiltinToolParams } from "./provider-tools";
 import { createScbbsProgress } from "./scbbs-progress";
 import { buildXianyuGameSession } from "@src/api/xianyu-game";
+import { getLockedAIMessage } from "@src/api/ai-lock";
 
 export const selects = onSelects(["message.create", "private.message.create"]);
 let currentModel = "派蒙-默认"; // 默认音色
@@ -410,6 +411,15 @@ export const CApiReply = async (
   outputMessage?: any,
 ) => {
   console.log("e.UserId", e.UserId, e.bot);
+
+  if (e.IsMaster !== true && (e as any).__allowLockedAI !== true) {
+    const currentAI = await redisClient.getCurrentAI(e.guid);
+    if (currentAI && (await redisClient.isAILocked(currentAI))) {
+      const [message] = outputMessage ? [outputMessage] : useMessage(e);
+      await message.send(format(Text(getLockedAIMessage(currentAI))));
+      return { next: false };
+    }
+  }
 
   const cfg = await getChatConfig(e);
   const internalAllowedToolNames = Array.isArray((e as any).__allowedToolNames)

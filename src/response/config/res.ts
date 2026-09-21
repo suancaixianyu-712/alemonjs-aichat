@@ -1,4 +1,5 @@
 import redisClient from "@src/config";
+import { formatAIListWithLocks } from "@src/api/ai-lock";
 import { toolSessionController } from "@src/api/tool-session-controller";
 import { loadSkills } from "@src/api/loadSkill";
 import AiConfig from "@src/image/conponent/AiConfig";
@@ -311,9 +312,12 @@ export default onResponse(selects, async (e, next) => {
 
   // 查看AI列表
   if (/^(\/|#)ai列表$/i.test(e.msg)) {
-    const ailist = await redisClient.getAIList();
-    const numberedAIList = ailist.map((name, index) => `${index + 1}. ${name}`);
-    message.send(
+    const [ailist, lockedAI] = await Promise.all([
+      redisClient.getAIList(),
+      redisClient.getLockedAIList(),
+    ]);
+    const numberedAIList = formatAIListWithLocks(ailist, lockedAI);
+    await message.send(
       format(
         Text("当前AI列表：\n"),
         Text(numberedAIList.length ? numberedAIList.join("\n") : "暂无AI配置"),
