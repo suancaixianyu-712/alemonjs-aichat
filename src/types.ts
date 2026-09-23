@@ -31,6 +31,8 @@ export interface AIChatConfig {
 export interface AIConfig {
   provider?: "deepseek" | "openai" | "grok" | "other";
   apiMode?: "capi" | "rapi";
+  /** 该 AI 配置是否走 aichat.httpProxy。未配置时默认直连。 */
+  useProxy?: boolean;
   builtinTools?: {
     /** 未配置时按 true 处理，以兼容旧配置。 */
     enabled?: boolean;

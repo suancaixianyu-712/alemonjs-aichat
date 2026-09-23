@@ -16,7 +16,7 @@ export const createOpenAIProxyFetch = (proxyUrl?: string) => {
 
 /**
  * 为 OpenAI 兼容客户端复用同一代理构造入口。
- * 调用方负责传入 Redis 中的全局持久化开关状态。
+ * enabled 来自单个 AI 配置的 useProxy，未开启时直连。
  */
 export const getOpenAIProxyFetch = (proxyUrl?: string, enabled = false) => {
   if (!enabled) return undefined;

@@ -2694,7 +2694,7 @@ const reviewProjectCommandWithAI = async ({
       timeout: 30000,
       fetch: getOpenAIProxyFetch(
         value.httpProxy,
-        (await redisClient.getHttpProxySwitch()) === "1",
+        redisClient.isAIProxyEnabled(aiConfig.config),
       ),
     });
     const response = await openai.chat.completions.create({
@@ -2785,7 +2785,7 @@ const reviewServerCommandWithAI = async ({
       timeout: 30000,
       fetch: getOpenAIProxyFetch(
         value.httpProxy,
-        (await redisClient.getHttpProxySwitch()) === "1",
+        redisClient.isAIProxyEnabled(aiConfig.config),
       ),
     });
     const response = await openai.chat.completions.create({
@@ -3624,7 +3624,7 @@ export const availableTools = {
         timeout: 120000,
         fetch: getOpenAIProxyFetch(
           value.httpProxy,
-          (await redisClient.getHttpProxySwitch()) === "1",
+          redisClient.isAIProxyEnabled(ocrConfig),
         ),
       });
 
@@ -3828,7 +3828,7 @@ export const availableTools = {
       const requestFetch =
         getOpenAIProxyFetch(
           value.httpProxy,
-          (await redisClient.getHttpProxySwitch()) === "1",
+          redisClient.isAIProxyEnabled(aiConfig),
         ) || fetch;
       const res = await requestFetch(
         aiConfig.host.replace(/\/+$/, "") +
@@ -3884,7 +3884,7 @@ export const availableTools = {
         timeout: 120000,
         fetch: getOpenAIProxyFetch(
           value.httpProxy,
-          (await redisClient.getHttpProxySwitch()) === "1",
+          redisClient.isAIProxyEnabled(aiConfig),
         ),
       });
 
@@ -4041,7 +4041,7 @@ export const availableTools = {
       const requestFetch =
         getOpenAIProxyFetch(
           value.httpProxy,
-          (await redisClient.getHttpProxySwitch()) === "1",
+          redisClient.isAIProxyEnabled(aiConfig),
         ) || fetch;
       const res = await requestFetch(aiConfig.host + "/videos/generations", {
         method: "POST",
@@ -4080,7 +4080,7 @@ export const availableTools = {
       const requestFetch =
         getOpenAIProxyFetch(
           value.httpProxy,
-          (await redisClient.getHttpProxySwitch()) === "1",
+          redisClient.isAIProxyEnabled(aiConfig),
         ) || fetch;
       const res = await requestFetch(aiConfig.host + `/videos/${request_id}`, {
         method: "GET",

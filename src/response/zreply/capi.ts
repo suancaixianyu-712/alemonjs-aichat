@@ -464,7 +464,7 @@ export const CApiReply = async (
       timeout: 300000,
       fetch: getOpenAIProxyFetch(
         getAiChatConfigValue().httpProxy,
-        (await redisClient.getHttpProxySwitch()) === "1",
+        redisClient.isAIProxyEnabled(cfg.config),
       ),
     });
     const shouldStreamToOutput =

@@ -401,7 +401,7 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
       timeout: 300000,
       fetch: getOpenAIProxyFetch(
         value.httpProxy,
-        (await redisClient.getHttpProxySwitch()) === "1",
+        redisClient.isAIProxyEnabled(config),
       ),
     });
 

@@ -582,6 +582,7 @@ class db {
 
   static defaultAIConfig: AIConfig = {
     apiMode: "capi",
+    useProxy: false,
     builtinTools: {
       enabled: true,
       overrides: {},
@@ -861,17 +862,52 @@ class db {
   async setImageBedSwitch(enable: boolean): Promise<void> {
     await this.redis.set("ai:image_bed:switch:global", enable ? "1" : "0");
   }
-
-  /** 获取全局 HTTP 代理开关状态，默认关闭 */
-  async getHttpProxySwitch(): Promise<string> {
-    return (await this.redis.get("ai:http_proxy:switch:global")) || "0";
+  /** 读取单个 AI 配置是否开启代理，默认关闭。 */
+  isAIProxyEnabled(config?: Pick<AIConfig, "useProxy"> | null): boolean {
+    return config?.useProxy === true;
   }
 
-  /** 设置全局 HTTP 代理开关状态 */
-  async setHttpProxySwitch(enable: boolean): Promise<void> {
-    await this.redis.set("ai:http_proxy:switch:global", enable ? "1" : "0");
-  }
+  /**
+   * 修改当前会话 AI 的代理开关，并同步回该 AI 的持久化配置。
+   * 这样切到别的配置再切回来，仍保留各自的开关。
+   */
+  async setCurrentAIProxy(
+    guid: string,
+    enable: boolean,
+  ): Promise<AIConfig | null> {
+    const currentConfig = await this.getAIConfig(guid);
+    if (!currentConfig.host || !currentConfig.key || !currentConfig.model) {
+      return null;
+    }
 
+    const currentAI = await this.getCurrentAI(guid);
+    const separatorIndex = currentAI.indexOf("/");
+    if (separatorIndex > 0) {
+      const provider = currentAI.slice(0, separatorIndex) as NonNullable<
+        AIConfig["provider"]
+      >;
+      const name = currentAI.slice(separatorIndex + 1);
+      const providers: NonNullable<AIConfig["provider"]>[] = [
+        "deepseek",
+        "openai",
+        "grok",
+        "other",
+      ];
+      if (providers.includes(provider) && name) {
+        const savedConfig = await this.getAIListConfig(currentAI);
+        if (savedConfig) {
+          await this.setProviderAIModel(provider, name, {
+            ...savedConfig,
+            useProxy: enable,
+          });
+        }
+      }
+    }
+
+    const nextConfig = { ...currentConfig, useProxy: enable };
+    await this.setAIConfig(guid, nextConfig);
+    return nextConfig;
+  }
   /** 获取AI配置 */
   async getAIConfig(guid?: string): Promise<AIConfig> {
     const id = guid ?? "global";

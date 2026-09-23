@@ -229,11 +229,14 @@ export const getImageBuffer = async (
       url = url.replace("https://imgen.x.ai", value.xaiImgProxy);
     }
 
+    const grokConfig = isXAIImage
+      ? await redisClient.getProviderAIConfig("grok")
+      : null;
     const requestFetch =
       isXAIImage && !value.xaiImgProxy
         ? getOpenAIProxyFetch(
             value.httpProxy,
-            (await redisClient.getHttpProxySwitch()) === "1",
+            redisClient.isAIProxyEnabled(grokConfig),
           ) || fetch
         : fetch;
     let response = await requestFetch(url);

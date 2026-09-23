@@ -224,7 +224,7 @@ export default onResponse(selects, async (e) => {
           timeout: 300000,
           fetch: getOpenAIProxyFetch(
             configValue.httpProxy,
-            (await redisClient.getHttpProxySwitch()) === "1",
+            redisClient.isAIProxyEnabled(aiConfig),
           ),
         });
 

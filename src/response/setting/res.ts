@@ -299,10 +299,10 @@ export default onResponse(selects, async (e, next) => {
     return;
   }
 
-  // 设置全局 HTTP 代理开关
+  // 设置当前 AI 配置的 HTTP 代理开关
   if (/^(\/|#)(开启|关闭)代理$/i.test(e.msg)) {
     if (!e.IsMaster) {
-      message.send(format(Text("仅管理员可设置全局代理开关。")));
+      message.send(format(Text("仅管理员可设置当前 AI 的代理开关。")));
       return;
     }
     const match = e.msg.match(/^(\/|#)(开启|关闭)代理$/i);
@@ -318,8 +318,19 @@ export default onResponse(selects, async (e, next) => {
       );
       return;
     }
-    await redisClient.setHttpProxySwitch(enable);
-    message.send(format(Text(`已${enable ? "开启" : "关闭"}全局代理。`)));
+    const updated = await redisClient.setCurrentAIProxy(e.guid, enable);
+    if (!updated) {
+      message.send(format(Text("当前没有可用的 AI 配置，无法设置代理。")));
+      return;
+    }
+    const currentAI = (await redisClient.getCurrentAI(e.guid)) || "当前AI";
+    message.send(
+      format(
+        Text(
+          `已为 ${currentAI} ${enable ? "开启" : "关闭"}代理。请求该配置时${enable ? "走代理" : "直连"}。`,
+        ),
+      ),
+    );
     return;
   }
 

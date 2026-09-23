@@ -113,7 +113,7 @@ const fetchModels = async (
     const requestFetch =
       getOpenAIProxyFetch(
         getAiChatConfigValue().httpProxy,
-        (await redisClient.getHttpProxySwitch()) === "1",
+        false,
       ) || fetch;
     const response = await requestFetch(`${config.host}${config.modelsPath}`, {
       headers: { Authorization: `Bearer ${key}` },

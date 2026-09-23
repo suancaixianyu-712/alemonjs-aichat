@@ -38,7 +38,7 @@ const archiveCurrentConversation = async (
         timeout: 300000,
         fetch: getOpenAIProxyFetch(
           getAiChatConfigValue().httpProxy,
-          (await redisClient.getHttpProxySwitch()) === "1",
+          redisClient.isAIProxyEnabled(aiConfig),
         ),
       });
       const summaryPrompt =
@@ -93,9 +93,16 @@ const formatContextLimit = (tokens: number) => {
   return `${tokens}`;
 };
 
-const formatHttpProxyStatus = (enabled: boolean, configured: boolean) => {
-  if (!enabled) return `代理: 已关闭（${configured ? "已配置" : "未配置"}）`;
-  return configured ? "代理: 已开启" : "代理: 已开启（未配置，当前不生效）";
+const formatHttpProxyStatus = (
+  enabled: boolean,
+  configured: boolean,
+  aiName: string,
+) => {
+  const target = aiName ? `当前AI ${aiName}` : "当前AI";
+  if (!enabled) return `代理: ${target} 直连（${configured ? "已配置" : "未配置"}）`;
+  return configured
+    ? `代理: ${target} 已开启`
+    : `代理: ${target} 已开启（未配置，当前不生效）`;
 };
 
 const formatAIContextStatus = (
@@ -153,16 +160,17 @@ export default onResponse(selects, async (e, next) => {
   // 查看AI状态
   if (/^(\/|#)ai状态$/i.test(e.msg)) {
     const toolStatus = await toolSessionController.getStatus(e.guid);
-    const httpProxyEnabled = (await redisClient.getHttpProxySwitch()) === "1";
+    const currentAI = await redisClient.getCurrentAI(e.guid);
+    const httpProxyEnabled = redisClient.isAIProxyEnabled(config);
     const httpProxyConfigured = Boolean(
       String(getAiChatConfigValue().httpProxy || "").trim(),
     );
     const httpProxyStatus = formatHttpProxyStatus(
       httpProxyEnabled,
       httpProxyConfigured,
+      currentAI,
     );
     if (toolStatus.tool !== "default") {
-      const currentAI = await redisClient.getCurrentAI(e.guid);
       message.send(
         format(
           Text(
