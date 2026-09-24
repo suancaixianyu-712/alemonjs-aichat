@@ -30,6 +30,7 @@ import {
 } from "./gptImage";
 import { getOpenAIProxyFetch } from "./openaiProxy";
 import { useXianyuGameTool } from "./xianyu-game";
+import { convertToImageUrlContent } from "./image-url-tool";
 
 const value = getAiChatConfigValue();
 
@@ -57,6 +58,25 @@ const getPrompt = async (text: string): Promise<string> => {
 };
 
 export const tools: ChatCompletionTool[] = [
+  {
+    type: "function",
+    function: {
+      name: "ConvertToImageUrl",
+      description:
+        "将图片直链或 alémonjs 主工程内的相对图片路径转换为可供 AI 直接查看的 image_url 内容。远程 HTTP/HTTPS 图片链接会原样返回；本地相对路径会转换为 Base64 Data URL。",
+      parameters: {
+        type: "object",
+        properties: {
+          address: {
+            type: "string",
+            description:
+              "图片 HTTP/HTTPS 直链，或相对于 alémonjs 主工程根目录的图片路径",
+          },
+        },
+        required: ["address"],
+      },
+    },
+  },
   {
     type: "function",
     function: {
@@ -3294,6 +3314,9 @@ const performServerCommandReview = async ({
 };
 
 export const availableTools = {
+  ConvertToImageUrl: async ({ address }: { address: string }) =>
+    convertToImageUrlContent(address),
+
   XianyuGame: async ({
     action,
     guid,
@@ -3851,7 +3874,11 @@ export const availableTools = {
         return err;
       }
       const image = await res.json();
-      console.log("画好了", image);
+      console.log("Grok 画图完成", {
+        created: image?.created,
+        imageCount: Array.isArray(image?.data) ? image.data.length : 0,
+        hasBase64: Boolean(image?.data?.some?.((item) => item?.b64_json)),
+      });
 
       return normalizeGrokImageData(image.data);
     } catch (error) {

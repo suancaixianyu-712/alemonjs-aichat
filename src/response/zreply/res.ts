@@ -12,6 +12,7 @@ import {
 } from "alemonjs";
 import { log } from "console";
 import OpenAi from "openai";
+import { isImageUrlToolContent } from "@src/api/image-url-tool";
 import { getOpenAIProxyFetch } from "../../api/openaiProxy";
 import { TTSClient } from "@src/api/tts";
 import { getAiChatConfigValue } from "@src/config/app";
@@ -664,13 +665,15 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
           }
         }
 
-        const toolContent = JSON.stringify(
-          annotatePermissionBoundary(
-            typeof functionResult === "undefined"
-              ? { ok: true, result: null }
-              : functionResult,
-          ),
-        );
+        const toolContent = isImageUrlToolContent(functionResult)
+          ? "图片已转换，图片内容见下一条输入。"
+          : JSON.stringify(
+              annotatePermissionBoundary(
+                typeof functionResult === "undefined"
+                  ? { ok: true, result: null }
+                  : functionResult,
+              ),
+            );
 
         // 把工具执行结果作为 tool role 消息加回对话（仅保留合法字段）
         const toolMessage = {
@@ -681,6 +684,14 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
         };
         messages.push(toolMessage);
         toolMessages.push(toolMessage);
+        if (isImageUrlToolContent(functionResult)) {
+          const imageMessage = {
+            role: "user" as const,
+            content: functionResult,
+          };
+          messages.push(imageMessage);
+          toolMessages.push(imageMessage);
+        }
       }
 
       await redisClient.addAIChatHistoryBatch(e.guid, [

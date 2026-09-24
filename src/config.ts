@@ -2,6 +2,19 @@ import { randomUUID } from "node:crypto";
 import { getConfigValue } from "alemonjs";
 import { AIConfig } from "./types";
 import { redis } from "./redis";
+import {
+  parseOwnedAIToolLoopState,
+  type AIToolLoopState,
+} from "./api/tool-loop-state";
+import {
+  buildRestartRecoveryTask,
+  canConsumeRestartRecoveryTask,
+  parseRestartRecoveryTask,
+  RESTART_RECOVERY_TTL_SECONDS,
+  type RestartRecoveryTask,
+} from "./api/restart-recovery";
+import { PM2_PROCESS_ID, PROCESS_INSTANCE_ID } from "./api/runtime-instance";
+export type { RestartRecoveryTask } from "./api/restart-recovery";
 
 export type ScheduledAITask = {
   id: string;
@@ -62,13 +75,6 @@ const ARCHIVED_CHAT_TRANSCRIPT_MAX_LENGTH = 12000;
 const ARCHIVED_CHAT_HISTORY_PREVIEW_LIMIT = 12;
 const ARCHIVED_CHAT_RECORD_MAX_STORE_BYTES = 128 * 1024;
 const ARCHIVED_CHAT_RECORD_MAX_PARSE_BYTES = 1024 * 1024;
-
-type AIToolLoopState = {
-  processing: true;
-  userID: string;
-  startedAt: number;
-  updatedAt: number;
-};
 
 export type AIContextStatsInput = {
   mode: "capi" | "rapi";
@@ -1718,6 +1724,7 @@ class db {
     const now = Date.now();
     const state: AIToolLoopState = {
       processing: true,
+      ownerId: PROCESS_INSTANCE_ID,
       userID,
       startedAt: now,
       updatedAt: now,
@@ -1773,6 +1780,7 @@ class db {
       const now = Date.now();
       const state: AIToolLoopState = {
         processing: true,
+        ownerId: PROCESS_INSTANCE_ID,
         userID,
         startedAt: now,
         updatedAt: now,
@@ -1804,35 +1812,18 @@ class db {
     }
     if (!processing) return null;
 
-    if (processing === "1") {
-      return {
-        processing: true,
-        userID: "",
-        startedAt: Date.now(),
-        updatedAt: Date.now(),
-      };
-    }
-
-    try {
-      const parsed = JSON.parse(processing);
-      if (parsed?.processing !== true) return null;
-      const updatedAt = Number(parsed.updatedAt || parsed.startedAt || 0);
-      if (!updatedAt || Date.now() - updatedAt > TOOL_LOOP_STALE_MS) {
-        await this.clearAITransientState(guid);
-        return null;
-      }
-      const ttl = await this.redis.ttl(key);
-      if (ttl === -1) await this.redis.expire(key, TOOL_LOOP_TTL_SECONDS);
-      return {
-        processing: true,
-        userID: String(parsed.userID || ""),
-        startedAt: Number(parsed.startedAt || updatedAt),
-        updatedAt,
-      };
-    } catch {
+    const state = parseOwnedAIToolLoopState(
+      processing,
+      PROCESS_INSTANCE_ID,
+      TOOL_LOOP_STALE_MS,
+    );
+    if (!state) {
       await this.clearAITransientState(guid);
       return null;
     }
+    const ttl = await this.redis.ttl(key);
+    if (ttl === -1) await this.redis.expire(key, TOOL_LOOP_TTL_SECONDS);
+    return state;
   }
 
   async getAIToolLoopProcessing(
@@ -2484,6 +2475,66 @@ class db {
   /** 关闭当前会话心跳 */
   async clearHeartbeatTask(guid: string): Promise<void> {
     await this.redis.del(`ai:heartbeat:${guid}`);
+  }
+
+  /** 保存指令触发的当前进程重启恢复任务。 */
+  async createRestartRecoveryTask(
+    input: Omit<
+      RestartRecoveryTask,
+      "id" | "ownerId" | "createdAt" | "restartRecovery"
+    >,
+  ): Promise<RestartRecoveryTask> {
+    const task = buildRestartRecoveryTask(input);
+    await this.redis.set(
+      `ai:restart_recovery:${task.id}`,
+      JSON.stringify(task),
+      "EX",
+      RESTART_RECOVERY_TTL_SECONDS,
+    );
+    return task;
+  }
+
+  /** 原子消费全部待恢复任务，确保重启后至多续接一次。 */
+  async consumeRestartRecoveryTasks(): Promise<RestartRecoveryTask[]> {
+    const keys = await this.redis.keys("ai:restart_recovery:*");
+    const tasks: RestartRecoveryTask[] = [];
+    for (const key of keys) {
+      const raw = await this.redis.get(key);
+      if (!raw) continue;
+      const task = parseRestartRecoveryTask(raw);
+      if (
+        task &&
+        !canConsumeRestartRecoveryTask(
+          task,
+          PROCESS_INSTANCE_ID,
+          PM2_PROCESS_ID,
+        )
+      ) {
+        continue;
+      }
+
+      const consumed = await this.redis.eval(
+        `
+        local value = redis.call("GET", KEYS[1])
+        if value == ARGV[1] then
+          redis.call("DEL", KEYS[1])
+          return value
+        end
+        return nil
+        `,
+        1,
+        key,
+        raw,
+      );
+      if (typeof consumed !== "string") continue;
+      const consumedTask = parseRestartRecoveryTask(consumed);
+      if (consumedTask) tasks.push(consumedTask);
+    }
+    return tasks;
+  }
+
+  async deleteRestartRecoveryTask(taskID: string): Promise<void> {
+    await this.redis.del(`ai:restart_recovery:${taskID}`);
   }
 
   /** 获取所有工具状态 */

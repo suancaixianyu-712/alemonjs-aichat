@@ -10,6 +10,7 @@ import {
 } from "alemonjs";
 import { log } from "console";
 import OpenAi from "openai";
+import { isImageUrlToolContent } from "@src/api/image-url-tool";
 import { getOpenAIProxyFetch } from "../../api/openaiProxy";
 import { getAiChatConfigValue } from "@src/config/app";
 import { TTSClient } from "@src/api/tts";
@@ -264,6 +265,14 @@ const buildToolResultMessage = (
   functionName: string,
   functionResult: any,
 ) => {
+  if (isImageUrlToolContent(functionResult)) {
+    return {
+      role: "tool" as const,
+      tool_call_id: String(toolCall?.id || "").trim(),
+      name: functionName,
+      content: "图片已转换，图片内容见下一条输入。",
+    };
+  }
   const toolContent = JSON.stringify(
     annotatePermissionBoundary(
       typeof functionResult === "undefined"
@@ -996,6 +1005,14 @@ export const CApiReply = async (
           );
           messages.push(toolMessage);
           toolMessages.push(toolMessage);
+          if (isImageUrlToolContent(functionResult)) {
+            const imageMessage = {
+              role: "user" as const,
+              content: functionResult,
+            };
+            messages.push(imageMessage);
+            toolMessages.push(imageMessage);
+          }
         }
 
         await redisClient.addAIChatHistoryBatch(e.guid, [

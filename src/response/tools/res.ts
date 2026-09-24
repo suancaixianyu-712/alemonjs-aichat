@@ -129,7 +129,9 @@ export default onResponse(selects, async (e) => {
         console.error("Grok画图结果上传R2失败，改用原始链接:", error);
       }
 
-      const imageMessage = ImageURL(imgUrl);
+      const imageMessage = /^https?:\/\//i.test(imgUrl)
+        ? ImageURL(imgUrl)
+        : ImageFile(imgUrl);
 
       const R18Switch = await redisClient.getR18Switch(e.guid);
       if (R18Switch === "1") {

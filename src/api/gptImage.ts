@@ -30,7 +30,7 @@ export const saveBase64Image = (
   return savePath;
 };
 
-/** 兼容 PS 接口的 URL 旧格式与 b64_json 新格式。 */
+/** 兼容 Grok 图片接口的 URL 旧格式与 b64_json 新格式。 */
 export const normalizeGrokImageData = (
   data: unknown,
   outputDir = "./public/image_out",
