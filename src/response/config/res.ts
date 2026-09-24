@@ -213,6 +213,10 @@ export default onResponse(selects, async (e, next) => {
     const imageBedSwitch = await redisClient.getImageBedSwitch(e.guid); // 全局图床开关
     const currentAI = await redisClient.getCurrentAI(e.guid); // 当前AI名称
     const aiList = await redisClient.getAIList();
+    const aiDisplayList = await redisClient.getAIDisplayNames(aiList);
+    const currentAIDisplay = currentAI
+      ? await redisClient.getAIDisplayName(currentAI)
+      : "";
     const skillList = loadSkills();
     const toolList = await redisClient.getAllToolStatus(e.guid);
     const toolPromptSwitch = await redisClient.getToolPromptSwitch(e.guid); // 工具提示开关
@@ -244,8 +248,8 @@ export default onResponse(selects, async (e, next) => {
           prompt: config.systemPrompt,
           atTrigger: atTriggerSwitch == "1",
           imageBedSwitch: imageBedSwitch == "1",
-          aiList: aiList,
-          currentAI: currentAI,
+          aiList: aiDisplayList,
+          currentAI: currentAIDisplay,
           skillList,
           toolList: toolList,
           toolPromptSwitch: toolPromptSwitch == "1",
@@ -280,7 +284,7 @@ export default onResponse(selects, async (e, next) => {
             Text(`全局图床开关: ${imageBedSwitch == "1" ? "开启" : "关闭"}\n`),
             Text(`模型: ${config.model || "未设置"}\n`),
             Text(`提示词: ${config.systemPrompt || "未设置"}\n`),
-            Text(`当前AI: ${currentAI || "未设置"}\n`),
+            Text(`当前AI: ${currentAIDisplay || "未设置"}\n`),
             Text(`AI数量: ${aiList.length ? aiList.length : "暂无AI配置"}`),
           ),
         );
@@ -303,7 +307,7 @@ export default onResponse(selects, async (e, next) => {
           Text(`全局图床开关: ${imageBedSwitch == "1" ? "开启" : "关闭"}\n`),
           Text(`模型: ${config.model || "未设置"}\n`),
           Text(`提示词: ${config.systemPrompt || "未设置"}\n`),
-          Text(`当前AI: ${currentAI || "未设置"}\n`),
+          Text(`当前AI: ${currentAIDisplay || "未设置"}\n`),
           Text(`AI数量: ${aiList.length ? aiList.length : "暂无AI配置"}`),
         ),
       );
@@ -316,7 +320,12 @@ export default onResponse(selects, async (e, next) => {
       redisClient.getAIList(),
       redisClient.getLockedAIList(),
     ]);
-    const numberedAIList = formatAIListWithLocks(ailist, lockedAI);
+    const displayNames = await redisClient.getAIDisplayNames(ailist);
+    const numberedAIList = formatAIListWithLocks(
+      ailist,
+      lockedAI,
+      displayNames,
+    );
     await message.send(
       format(
         Text("当前AI列表：\n"),

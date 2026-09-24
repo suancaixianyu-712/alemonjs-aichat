@@ -14,8 +14,12 @@ import {
 } from "@src/panel/groupConfig";
 
 type PanelPage = "config" | "chat";
-type AIConfigDraft = Pick<AIConfig, "provider" | "host" | "key" | "model"> & {
+type AIConfigDraft = Pick<
+  AIConfig,
+  "provider" | "host" | "key" | "model" | "alias"
+> & {
   name: string;
+  displayName: string;
 };
 
 type PromptOption = {
@@ -290,7 +294,7 @@ const ChatConfigPanel = ({
                             key={`${idPrefix}-group-ai-${item.name}`}
                             value={item.name}
                           >
-                            {item.name}
+                            {item.displayName}
                           </option>
                         ))
                       ) : (
@@ -1999,7 +2003,7 @@ const ConfigPage = ({
                           key={`new-group-${item.name}`}
                           value={item.name}
                         >
-                          {item.name}
+                          {item.displayName}
                         </option>
                       ))}
                     </select>
@@ -2072,7 +2076,7 @@ const ConfigPage = ({
                                     key={`${group.guid}-${item.name}`}
                                     value={item.name}
                                   >
-                                    {item.name}
+                                    {item.displayName}
                                   </option>
                                 ))}
                               </select>
@@ -2154,7 +2158,7 @@ const ConfigPage = ({
                   {aiConfigs.length ? (
                     aiConfigs.map((item) => (
                       <option key={item.name} value={item.name}>
-                        {item.name}
+                        {item.displayName}
                       </option>
                     ))
                   ) : (
@@ -2216,7 +2220,9 @@ const ConfigPage = ({
                     >
                       <summary className="ai-row-summary">
                         <div className="summary-title">
-                          <span className="summary-main">{item.name}</span>
+                          <span className="summary-main">
+                            {item.displayName}
+                          </span>
                           <span className="summary-meta">
                             {item.model || "未设置模型"} /{" "}
                             {item.host || "未设置host"}

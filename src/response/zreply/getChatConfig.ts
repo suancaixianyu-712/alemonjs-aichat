@@ -1,5 +1,7 @@
 import { getMessageTimeString } from "@src/api/format";
 import { loadSkills } from "@src/api/loadSkill";
+import { buildUserPermissionPrompt } from "@src/api/user-permission";
+import { toolSessionController } from "@src/api/tool-session-controller";
 import redisClient from "@src/config";
 import { Events } from "alemonjs";
 import { emojiMap } from "@src/emoji";
@@ -303,6 +305,20 @@ export const getChatConfig = async (
   ${relevantMemoryContext}
   `
     : "";
+  const agentEnabled = (await redisClient.getAgentSwitch(e.guid)) === "1";
+  const opencodePermission = await toolSessionController.getPermission(e.guid);
+  const opencodeActive =
+    (await toolSessionController.getCurrentTool(e.guid)) === "opencode";
+  const userPermissionPrompt = buildUserPermissionPrompt({
+    isMaster: e.IsMaster === true,
+    isAdmin: (e as { isAdmin?: boolean }).isAdmin === true,
+    isPrivate:
+      e.name === "private.message.create" ||
+      (e as { Name?: string }).Name === "private.message.create",
+    agentEnabled,
+    opencodeActive,
+    opencodePermission,
+  });
   const heartbeatPrompt = (e as any).heartbeat
     ? `
   ## AI 心跳
@@ -339,11 +355,13 @@ export const getChatConfig = async (
   }
   ${heartbeatPrompt}
   - 读取会话现有项目：Agentxxxxx...（只读操作无需开启agent）；创建/修改/删除/执行等写操作需主人先 #开启agent
-  - 公共知识库位于 public/knowledge/，可跨会话只读访问；
-  - 当前用户为主人且已开启 agent 时，可用 Agent* 工具的 scope=root 读写服务器 /root；需要任意 Shell、安装部署或跨目录操作时用 RunServerCommand，并把 workingDirectory 设为目标目录
+  - 下方「当前用户权限」是本轮实际权限。没有列出的能力不要调用；审核或权限被拒绝后，不要改命令、换工具或拆步骤再试
+  - 公共知识库位于 public/knowledge/，可跨会话只读访问；能不能修改只看「当前用户权限」
+  - 仅当当前用户权限写明可以访问 root 时，才用 Agent* 的 scope=root。仅当写明可以执行任意 Shell 时，才用 RunServerCommand，并把 workingDirectory 设为目标目录
   - 用户提到本地仓库/知识库/参考项目时，先检查 public/{guid} 现有内容（优先 knowledge/），至少搜索/列目录一次后再下结论；不确定 guid 时先 AgentListWorkspaces
-  - 服务器运维命令用 RunServerCommand；普通用户会审核安全，主人开启 agent 后使用任意 Shell 时跳过命令与路径审核。reviewGuid 由系统绑定；服务器凭据/密钥属机密，禁止转述或写入非授权位置
-  - 查看/切换分支用 AgentGitOperation；其他 Git 操作需主人通过 AgentProjectCommand（每次一条命令）；普通用户仍受原有 Git 限制
+  - 仅当当前用户权限写明可以执行服务器命令时才用 RunServerCommand。reviewGuid 由系统绑定；服务器凭据/密钥属机密，禁止转述或写入未授权位置
+  - 查看/切换分支用 AgentGitOperation。完整 Git 只在当前用户权限写明可以时，才用 AgentProjectCommand，每次一条命令
+  ${userPermissionPrompt}
   ## AlemonJS 框架指令（高优先级）
   用户要求查看/修改配置、切换模型、开关功能等需要帮忙时，必须调用 ExecuteAlemonCommand 工具来操作
   ## 下一条发言订阅（高优先级）
@@ -438,6 +456,8 @@ export const getChatConfig = async (
     botName,
     /** 系统提示词 */
     systemPrompt,
+    /** 当前用户权限。拼在性格约束之后，避免人设把权限说明盖掉 */
+    userPermissionPrompt,
     /** 技能列表 */
     skills,
     /** 历史消息 */

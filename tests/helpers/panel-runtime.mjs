@@ -26,6 +26,7 @@ export const client = new Proxy(
     },
     getAIList: async () => ["Test AI"],
     getAIListConfig: async (name) => (name === "Test AI" ? { ...ai } : null),
+    getAIDisplayName: async (name) => name,
     getAIConfig: async (guid) => configs.get(guid) || { ...ai },
     setAIConfig: async (guid, config) => {
       configs.set(guid, config);

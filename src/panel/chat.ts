@@ -34,7 +34,7 @@ const PANEL_CHAT_HISTORY_LIMIT = 80;
 const PANEL_IMAGE_TOOL_NAMES = new Set([
   "StableDiffusionGenerateImage",
   "GPTGenerateImage",
-  "Photoshop",
+  "GrokGenerateImage",
   "AgentUploadFileToR2",
 ]);
 

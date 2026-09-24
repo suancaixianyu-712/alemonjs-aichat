@@ -10,10 +10,11 @@ const selects = onSelects(["message.create", "private.message.create"]);
 type Provider = "deepseek" | "openai" | "grok" | "other";
 
 type AddAISession = {
-  stage: "provider" | "key" | "host" | "manual-model" | "model";
+  stage: "provider" | "key" | "host" | "manual-model" | "model" | "alias";
   provider?: Provider;
   key?: string;
   host?: string;
+  model?: string;
   models?: string[];
 };
 
@@ -270,23 +271,15 @@ export const handleAddAIMessage = async (e: any): Promise<boolean> => {
       await message.send(format(Text("模型名称不能为空，请重新填写。")));
       return true;
     }
-    const identifier = `other/${text}`;
-    if (e.IsMaster !== true && (await redisClient.isAILocked(identifier))) {
-      await redisClient.redis.del(sessionKey);
-      await message.send(format(Text(getLockedAIMessage(identifier))));
-      return true;
-    }
-    await redisClient.addAI(
-      e.guid,
-      text,
-      session.host,
-      session.key,
-      text,
-      "other",
-    );
-    await redisClient.redis.del(sessionKey);
+    await writeSession(sessionKey, {
+      stage: "alias",
+      provider: "other",
+      key: session.key,
+      host: session.host,
+      model: text,
+    });
     await message.send(
-      format(Text(`AI other/${text} 添加成功，已切换到该模型。`)),
+      format(Text("请输入这个 AI 配置的别名，例如：中转站A。")),
     );
     return true;
   }
@@ -309,25 +302,63 @@ export const handleAddAIMessage = async (e: any): Promise<boolean> => {
       );
       return true;
     }
-    const identifier = `${session.provider}/${model}`;
+    await writeSession(sessionKey, {
+      stage: "alias",
+      provider: session.provider,
+      key: session.key,
+      host: PROVIDERS[session.provider].host,
+      model,
+    });
+    await message.send(
+      format(Text("请输入这个 AI 配置的别名，例如：官方接口。")),
+    );
+    return true;
+  }
+
+  if (
+    session.stage === "alias" &&
+    session.provider &&
+    session.key &&
+    session.host !== undefined &&
+    session.model
+  ) {
+    const alias = text.trim();
+    if (!alias || alias.includes("/")) {
+      await writeSession(sessionKey, session);
+      await message.send(
+        format(Text("别名不能为空且不能包含 /，请重新填写。")),
+      );
+      return true;
+    }
+    const identifier = `${session.provider}/${alias}`;
+    if ((await redisClient.getAIList()).includes(identifier)) {
+      await writeSession(sessionKey, session);
+      await message.send(
+        format(Text(`别名「${alias}」已存在，请换一个别名。`)),
+      );
+      return true;
+    }
     if (e.IsMaster !== true && (await redisClient.isAILocked(identifier))) {
       await redisClient.redis.del(sessionKey);
       await message.send(format(Text(getLockedAIMessage(identifier))));
       return true;
     }
-    const config = PROVIDERS[session.provider];
     await redisClient.addAI(
       e.guid,
-      model,
-      config.host,
+      alias,
+      session.host,
       session.key,
-      model,
+      session.model,
       session.provider,
+      "capi",
+      alias,
     );
     await redisClient.redis.del(sessionKey);
     await message.send(
       format(
-        Text(`AI ${session.provider}/${model} 添加成功，已切换到该模型。`),
+        Text(
+          `AI ${identifier}（${session.model}）添加成功，已切换到该模型。`,
+        ),
       ),
     );
     return true;

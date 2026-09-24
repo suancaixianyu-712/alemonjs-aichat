@@ -28,7 +28,8 @@ export default onResponse(selects, async (event) => {
   const lockedAI = await redisClient.getLockedAIList();
 
   if (/^(#|\/)锁定ai列表$/i.test(text)) {
-    const formatted = formatAIListWithLocks(aiList, lockedAI);
+    const displayNames = await redisClient.getAIDisplayNames(aiList);
+    const formatted = formatAIListWithLocks(aiList, lockedAI, displayNames);
     await message.send(
       format(
         Text("当前 AI 锁定状态：\n"),

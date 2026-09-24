@@ -41,6 +41,7 @@ import { getProviderBuiltinToolParams } from "./provider-tools";
 import { createScbbsProgress } from "./scbbs-progress";
 import { buildXianyuGameSession } from "@src/api/xianyu-game";
 import { getLockedAIMessage } from "@src/api/ai-lock";
+import { annotatePermissionBoundary } from "@src/api/user-permission";
 
 export const selects = onSelects(["message.create", "private.message.create"]);
 let currentModel = "派蒙-默认"; // 默认音色
@@ -264,9 +265,11 @@ const buildToolResultMessage = (
   functionResult: any,
 ) => {
   const toolContent = JSON.stringify(
-    typeof functionResult === "undefined"
-      ? { ok: true, result: null }
-      : functionResult,
+    annotatePermissionBoundary(
+      typeof functionResult === "undefined"
+        ? { ok: true, result: null }
+        : functionResult,
+    ),
   );
 
   return {
@@ -602,7 +605,7 @@ export const CApiReply = async (
 
     const systemMessage = {
       role: "system",
-      content: cfg.systemPrompt + `\n性格约束:${cfg.config.systemPrompt}`,
+      content: `${cfg.systemPrompt}\n性格约束:${cfg.config.systemPrompt}\n\n${cfg.userPermissionPrompt}`,
     };
 
     let messages = redisClient.sanitizeChatMessages([

@@ -1,3 +1,7 @@
+import fs from "node:fs";
+import path from "node:path";
+import { randomUUID } from "node:crypto";
+
 export type GPTImageRequestMode = "image" | "responses";
 
 type GPTImageResponsesRequestOptions = {
@@ -7,6 +11,49 @@ type GPTImageResponsesRequestOptions = {
   sourceImageUrl?: string;
   size: string;
   quality: string;
+};
+
+type Base64ImageFormat = "png" | "jpg";
+
+/** 将图片接口返回的无前缀 Base64 保存到统一的图片输出目录。 */
+export const saveBase64Image = (
+  base64: string,
+  format: Base64ImageFormat = "png",
+  outputDir = "./public/image_out",
+) => {
+  fs.mkdirSync(outputDir, { recursive: true });
+  const savePath = path.join(
+    outputDir,
+    `${Date.now()}-${randomUUID()}.${format}`,
+  );
+  fs.writeFileSync(savePath, Buffer.from(base64, "base64"));
+  return savePath;
+};
+
+/** 兼容 PS 接口的 URL 旧格式与 b64_json 新格式。 */
+export const normalizeGrokImageData = (
+  data: unknown,
+  outputDir = "./public/image_out",
+) => {
+  if (!Array.isArray(data)) return data;
+
+  return data.map((item) => {
+    if (
+      !item ||
+      typeof item !== "object" ||
+      typeof item.b64_json !== "string" ||
+      !item.b64_json.trim()
+    ) {
+      return item;
+    }
+
+    const { b64_json, ...rest } = item;
+    return {
+      ...rest,
+      type: "image",
+      url: saveBase64Image(b64_json, "jpg", outputDir),
+    };
+  });
 };
 
 /** 构造 Responses API 的内置画图工具请求。 */

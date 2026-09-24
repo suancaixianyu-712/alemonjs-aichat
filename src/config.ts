@@ -995,9 +995,52 @@ class db {
     await this.redis.set(migrationKey, "1");
   }
 
+  /** 为旧 AI 配置补充别名，默认使用其实际模型名。 */
+  private async migrateAIModelAliases(): Promise<void> {
+    const migrationKey = "ai:migration:model-aliases:v1";
+    if (await this.redis.exists(migrationKey)) return;
+
+    const modelKeys = await this.redis.keys("ai:model:*");
+    for (const modelKey of modelKeys) {
+      const configStr = await this.redis.get(modelKey);
+      if (!configStr) continue;
+      try {
+        const config = JSON.parse(configStr) as AIConfig;
+        if (!config.alias?.trim() && config.model?.trim()) {
+          await this.redis.set(
+            modelKey,
+            JSON.stringify({ ...config, alias: config.model.trim() }),
+          );
+        }
+      } catch {
+        continue;
+      }
+    }
+
+    const currentConfigKeys = await this.redis.keys("ai:config:*");
+    for (const currentConfigKey of currentConfigKeys) {
+      const configStr = await this.redis.get(currentConfigKey);
+      if (!configStr) continue;
+      try {
+        const config = JSON.parse(configStr) as AIConfig;
+        if (!config.alias?.trim() && config.model?.trim()) {
+          await this.redis.set(
+            currentConfigKey,
+            JSON.stringify({ ...config, alias: config.model.trim() }),
+          );
+        }
+      } catch {
+        continue;
+      }
+    }
+
+    await this.redis.set(migrationKey, "1");
+  }
+
   /** 获取AI列表 */
   async getAIList(): Promise<string[]> {
     await this.migrateLegacyAIModels();
+    await this.migrateAIModelAliases();
     const providerKeys = await this.redis.keys("ai:model:*");
     const providerNames = providerKeys.flatMap((key) => {
       const provider = key.split(":")[2];
@@ -1043,6 +1086,7 @@ class db {
   /** 获取带厂商 ID 的 AI 模型配置。 */
   async getAIListConfig(name: string): Promise<AIConfig | null> {
     await this.migrateLegacyAIModels();
+    await this.migrateAIModelAliases();
     const providerKeys = await this.redis.keys("ai:model:*");
     const providerKey = providerKeys.find((key) => {
       const provider = key.split(":")[2];
@@ -1064,6 +1108,31 @@ class db {
     return null;
   }
 
+  /** 获取 AI 标识对应的展示名称，优先使用别名。 */
+  async getAIDisplayName(
+    name: string,
+    includeProvider = true,
+  ): Promise<string> {
+    const separatorIndex = name.indexOf("/");
+    const provider = separatorIndex > 0 ? name.slice(0, separatorIndex) : "";
+    const storedName = separatorIndex > 0 ? name.slice(separatorIndex + 1) : name;
+    const config = await this.getAIListConfig(name);
+    const alias = config?.alias?.trim() || config?.model?.trim() || storedName;
+    const model = config?.model?.trim();
+    const label = model && model !== alias ? `${alias}（${model}）` : alias;
+    return includeProvider && provider ? `${provider}/${label}` : label;
+  }
+
+  /** 批量获取 AI 列表的展示名称，顺序和内部标识保持一致。 */
+  async getAIDisplayNames(
+    names: string[],
+    includeProvider = true,
+  ): Promise<string[]> {
+    return Promise.all(
+      names.map((name) => this.getAIDisplayName(name, includeProvider)),
+    );
+  }
+
   /** 按厂商保存模型；键和值中都保留厂商 ID。 */
   async setProviderAIModel(
     provider: NonNullable<AIConfig["provider"]>,
@@ -1071,7 +1140,14 @@ class db {
     config: AIConfig,
   ): Promise<void> {
     const storageKey = `ai:model:${provider}:${encodeURIComponent(name)}`;
-    await this.redis.set(storageKey, JSON.stringify({ ...config, provider }));
+    await this.redis.set(
+      storageKey,
+      JSON.stringify({
+        ...config,
+        alias: config.alias?.trim() || config.model?.trim() || name.trim(),
+        provider,
+      }),
+    );
   }
 
   /** 获取某个厂商保存的首个模型配置，供厂商专属能力复用凭据。 */
@@ -1094,6 +1170,7 @@ class db {
     model: string,
     provider: NonNullable<AIConfig["provider"]> = "other",
     apiMode: NonNullable<AIConfig["apiMode"]> = "capi",
+    alias = name,
   ): Promise<void> {
     const defaultConfig = await this.getAIConfig();
     const aiConfig = {
@@ -1101,6 +1178,7 @@ class db {
       host,
       key,
       model,
+      alias: alias.trim() || model.trim() || name.trim(),
       provider,
       apiMode,
     };

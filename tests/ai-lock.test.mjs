@@ -53,3 +53,14 @@ test("AI列表标记锁定项并生成普通用户拒绝提示", () => {
   ]);
   assert.match(getLockedAIMessage("openai/gpt-5"), /普通用户无法使用/);
 });
+
+test("AI列表显示别名但仍按内部名称判断锁定状态", () => {
+  assert.deepEqual(
+    formatAIListWithLocks(
+      ["other/relay-a", "other/relay-b"],
+      ["other/relay-b"],
+      ["other/中转站A（gpt-5）", "other/中转站B（gpt-5）"],
+    ),
+    ["1. other/中转站A（gpt-5）", "2. 🔒 other/中转站B（gpt-5）"],
+  );
+});

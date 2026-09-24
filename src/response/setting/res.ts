@@ -464,16 +464,16 @@ export default onResponse(selects, async (e, next) => {
     }
     aiInfo.model = modelName.trim();
     if (aiInfo.provider) {
-      await redisClient.deleteAI(aiName.trim());
-      await redisClient.addAI(
-        e.guid,
-        modelName.trim(),
-        aiInfo.host,
-        aiInfo.key,
-        modelName.trim(),
+      const identifier = aiName.trim();
+      const separatorIndex = identifier.indexOf("/");
+      const storedName =
+        separatorIndex >= 0 ? identifier.slice(separatorIndex + 1) : identifier;
+      await redisClient.setProviderAIModel(
         aiInfo.provider,
-        aiInfo.apiMode ?? "capi",
+        storedName,
+        aiInfo,
       );
+      await redisClient.switchAI(e.guid, identifier);
     } else {
       await redisClient.addAI(
         e.guid,
@@ -483,6 +483,7 @@ export default onResponse(selects, async (e, next) => {
         modelName.trim(),
         "other",
         aiInfo.apiMode ?? "capi",
+        aiInfo.alias || aiName.trim(),
       );
     }
 

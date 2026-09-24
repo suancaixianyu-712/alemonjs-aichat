@@ -58,10 +58,12 @@ export const resolveAISelection = (
 export const formatAIListWithLocks = (
   aiList: string[],
   lockedAI: Iterable<string>,
+  displayNames: string[] = aiList,
 ) => {
   const locked = new Set(lockedAI);
   return aiList.map(
-    (name, index) => `${index + 1}. ${locked.has(name) ? "🔒 " : ""}${name}`,
+    (name, index) =>
+      `${index + 1}. ${locked.has(name) ? "🔒 " : ""}${displayNames[index] || name}`,
   );
 };
 
