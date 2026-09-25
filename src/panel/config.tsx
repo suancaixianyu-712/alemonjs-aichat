@@ -25,8 +25,12 @@ const runtimeRoot = join(panelDir, "..");
 const panelPort = Number(process.env.JSXP_PORT || process.env.PORT || 8080);
 
 type PanelPage = "config" | "chat";
-type PanelAIConfig = Pick<AIConfig, "provider" | "host" | "key" | "model"> & {
+type PanelAIConfig = Pick<
+  AIConfig,
+  "provider" | "host" | "key" | "model" | "alias"
+> & {
   name: string;
+  displayName: string;
 };
 
 type PanelPromptOption = {
@@ -113,7 +117,9 @@ const loadPanelAIConfigs = async () => {
         if (!config) return null;
         return {
           name,
+          displayName: await redisClient.getAIDisplayName(name),
           provider: config.provider,
+          alias: config.alias,
           host: config.host || "",
           key: config.key || "",
           model: config.model || "",

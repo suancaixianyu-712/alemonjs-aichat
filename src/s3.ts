@@ -5,6 +5,7 @@ import mime from "mime-types";
 import sharp from "sharp"; // 需要安装: npm install sharp
 import { getAiChatConfigValue } from "./config/app";
 import { getOpenAIProxyFetch } from "./api/openaiProxy";
+import { isLikelyLocalImagePath } from "./api/image-source";
 import redisClient from "./config";
 const value = getAiChatConfigValue();
 
@@ -219,6 +220,7 @@ export const getImageBuffer = async (
   let buffer: Buffer;
   let contentType: string;
   let fileName: string;
+  const looksLikeLocalPath = isLikelyLocalImagePath(source);
 
   if (source.startsWith("http://") || source.startsWith("https://")) {
     // 远程 URL
@@ -266,12 +268,7 @@ export const getImageBuffer = async (
     contentType = matches[1];
     buffer = Buffer.from(matches[2], "base64");
     fileName = `image-${Date.now()}.${mime.extension(contentType) || "jpg"}`;
-  } else if (
-    path.isAbsolute(source) ||
-    source.startsWith("./") ||
-    source.startsWith("../") ||
-    source.includes("\\")
-  ) {
+  } else if (looksLikeLocalPath) {
     // 本地路径
     buffer = await fs.readFile(source);
     contentType = mime.lookup(source) || "image/jpeg";

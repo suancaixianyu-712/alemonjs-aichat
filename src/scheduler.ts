@@ -1,39 +1,62 @@
 import { MessageDirect, Text, format } from "alemonjs";
 import redisClient from "./config";
-import type { HeartbeatTask, ScheduledAITask } from "./config";
+import type {
+  HeartbeatTask,
+  RestartRecoveryTask,
+  ScheduledAITask,
+} from "./config";
 import { CApiReply } from "./response/zreply/capi";
+import { formatRestartDuration } from "./api/restart-recovery";
 
 const SCHEDULER_INTERVAL_MS = 30_000;
 const runningTasks = new Set<string>();
 
-type TriggerTask = ScheduledAITask | (HeartbeatTask & { heartbeat: true });
+type TriggerTask =
+  | ScheduledAITask
+  | (HeartbeatTask & { heartbeat: true })
+  | RestartRecoveryTask;
 
-const createSyntheticEvent = (task: TriggerTask) => ({
-  name: task.isPrivate ? "private.message.create" : "message.create",
-  guid: task.guid,
-  UserId: task.userID,
-  UserName: task.userID,
-  Platform: task.platform,
-  SpaceId: task.spaceId,
-  GroupName: task.isPrivate ? "" : task.spaceId,
-  IsMaster: false,
-  IsPrivate: task.isPrivate,
-  at: false,
-  atBot: false,
-  regexTriggered: true,
-  heartbeat: "heartbeat" in task && task.heartbeat,
-  msg: `定时任务：${"prompt" in task ? task.prompt : "心跳"}`,
-  MessageText: `定时任务：${"prompt" in task ? task.prompt : "心跳"}`,
-  raw_message: "prompt" in task ? task.prompt : "心跳触发",
-  value: {
-    raw_message: "prompt" in task ? task.prompt : "心跳触发",
-    message: [],
-  },
-  bot: {
-    nickname: "小咸鱼",
-    user_id: "__scheduled_task__",
-  },
-});
+const getSyntheticPrompt = (task: TriggerTask) =>
+  "heartbeat" in task && task.heartbeat
+    ? "心跳"
+    : "prompt" in task
+      ? task.prompt
+      : "";
+
+const createSyntheticEvent = (task: TriggerTask) => {
+  const prompt = getSyntheticPrompt(task);
+  const messageText =
+    "restartRecovery" in task && task.restartRecovery
+      ? prompt
+      : `定时任务：${prompt}`;
+  return {
+    name: task.isPrivate ? "private.message.create" : "message.create",
+    guid: task.guid,
+    UserId: task.userID,
+    UserName: task.userID,
+    Platform: task.platform,
+    SpaceId: task.spaceId,
+    GroupName: task.isPrivate ? "" : task.spaceId,
+    IsMaster: "isMaster" in task ? task.isMaster : false,
+    IsPrivate: task.isPrivate,
+    at: false,
+    atBot: false,
+    regexTriggered: true,
+    heartbeat: "heartbeat" in task && task.heartbeat,
+    restartRecovery: "restartRecovery" in task && task.restartRecovery,
+    msg: messageText,
+    MessageText: messageText,
+    raw_message: prompt,
+    value: {
+      raw_message: prompt,
+      message: [],
+    },
+    bot: {
+      nickname: "小咸鱼",
+      user_id: "__scheduled_task__",
+    },
+  };
+};
 
 const createDirectOutput = (task: TriggerTask) => {
   const direct = MessageDirect.create();
@@ -111,11 +134,35 @@ const runScheduledAITasks = async () => {
   }
 };
 
+/** 当前 PM2 线程重启后发送回执，并按需续接被 AI 中断的任务。 */
+const resumeRestartRecoveryTasks = async () => {
+  const tasks = await redisClient.consumeRestartRecoveryTasks();
+  for (const task of tasks) {
+    await redisClient.clearAITransientState(task.guid);
+    const output = createDirectOutput(task);
+    const elapsed = formatRestartDuration(Date.now() - task.createdAt);
+    await output.sendText(
+      task.resumeAI
+        ? `当前线程重启成功，耗时 ${elapsed}。AI 正在继续刚才的任务...`
+        : `当前线程重启成功，耗时 ${elapsed}。`,
+    );
+    if (task.resumeAI) {
+      void triggerTask(task, `restart-recovery:${task.id}`);
+    }
+  }
+};
+
 export const startScheduledAITaskScheduler = () => {
   const timer = setInterval(() => {
     runScheduledAITasks().catch((error) => {
       logger.error({
         message: "定时 AI 任务轮询失败",
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+    resumeRestartRecoveryTasks().catch((error) => {
+      logger.error({
+        message: "重启后的任务恢复轮询失败",
         error: error instanceof Error ? error.message : String(error),
       });
     });
@@ -127,5 +174,14 @@ export const startScheduledAITaskScheduler = () => {
       error: error instanceof Error ? error.message : String(error),
     });
   });
+  const recoveryTimer = setTimeout(() => {
+    resumeRestartRecoveryTasks().catch((error) => {
+      logger.error({
+        message: "重启后的 AI 任务恢复失败",
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+  }, 2500);
+  recoveryTimer.unref?.();
   return timer;
 };

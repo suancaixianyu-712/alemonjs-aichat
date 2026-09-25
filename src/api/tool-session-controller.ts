@@ -10,6 +10,7 @@ import {
   hasToolMessageAttachments,
 } from "@src/api/tool-message-content";
 import { requestRapiCompletion } from "@src/response/zreply/rapi";
+import { buildUserPermissionPrompt } from "@src/api/user-permission";
 import {
   createOpencodeSession,
   ensureInheritedOpencodeServer,
@@ -210,6 +211,7 @@ const extractReviewJSON = (content: string) => {
 const reviewPermissionWithCurrentAI = async (
   guid: string,
   request: OpencodePermissionRequest,
+  permissionPrompt: string,
 ): Promise<OpencodePermissionReply> => {
   try {
     const config = await redisClient.getAIConfig(guid);
@@ -233,12 +235,13 @@ const reviewPermissionWithCurrentAI = async (
         {
           role: "system",
           content:
-            '你是 OpenCode 操作安全审核器。根据操作类型、完整参数和当前工作目录判断是否允许本次操作。只有目标明确且风险可控时允许。涉及凭据窃取、破坏系统、持久化后门、越权外传或不相关目录时拒绝。只输出 JSON：{"allowed":boolean,"reason":"简短原因"}。',
+            '你是 OpenCode 操作安全审核器。根据操作类型、完整参数、当前工作目录和当前用户权限判断是否允许本次操作。只有目标明确、风险可控，且没有超出当前用户权限时允许。涉及凭据窃取、破坏系统、持久化后门、越权外传或不相关目录时拒绝。拒绝是最终结果，调用方不能改写操作后再试。只输出 JSON：{"allowed":boolean,"reason":"简短原因"}。',
         },
         {
           role: "user",
           content: JSON.stringify({
             directory: resolveCurrentSessionDirectory(guid),
+            permission: permissionPrompt,
             request: request.raw,
           }),
         },
@@ -761,11 +764,24 @@ export class ToolSessionController {
       const runtime = await ensureInheritedOpencodeServer(event.guid, config);
       const directory = resolveCurrentSessionDirectory(event.guid);
       const mode = await this.getPermission(event.guid);
+      const permissionPrompt = buildUserPermissionPrompt({
+        isMaster: event.IsMaster === true,
+        isAdmin: event.isAdmin === true,
+        isPrivate:
+          event.name === "private.message.create" ||
+          event.Name === "private.message.create",
+        agentEnabled: (await redisClient.getAgentSwitch(event.guid)) === "1",
+        opencodeActive: true,
+        opencodePermission: mode,
+      });
+      const userText = String(content.text || "").trim();
       const result = await sendOpencodeSessionMessage({
         url: runtime.url,
         directory,
         sessionId,
-        prompt: content.text,
+        prompt: userText
+          ? `${permissionPrompt}\n\n用户消息:\n${userText}`
+          : permissionPrompt,
         files: content.files,
         model: (await this.getCurrentModel(event.guid)) || runtime.model,
         guid: event.guid,
@@ -774,7 +790,11 @@ export class ToolSessionController {
           if (mode === "full") return "always";
           if (mode === "readonly") return "reject";
           if (mode === "auto") {
-            return await reviewPermissionWithCurrentAI(event.guid, request);
+            return await reviewPermissionWithCurrentAI(
+              event.guid,
+              request,
+              permissionPrompt,
+            );
           }
           return await waitForManualApproval(event.guid, request, send);
         },

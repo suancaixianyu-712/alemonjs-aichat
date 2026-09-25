@@ -3,6 +3,7 @@ import type { AIConfig } from "@src/types";
 import { Text } from "alemonjs";
 import { useMessage } from "@src/utils/command-message";
 import { toolSessionController } from "@src/api/tool-session-controller";
+import { getLockedAIMessage } from "@src/api/ai-lock";
 
 const selects = onSelects(["message.create", "private.message.create"]);
 
@@ -11,6 +12,7 @@ type SwitchAISession = {
   stage: "provider" | "model";
   provider?: Provider;
   models?: string[];
+  displayModels?: string[];
 };
 
 const SESSION_TTL_SECONDS = 10 * 60;
@@ -74,10 +76,18 @@ const getProviderModels = async (provider: Provider) => {
     .sort((a, b) => a.localeCompare(b));
 };
 
-const formatModelMenu = (provider: Provider, models: string[]) =>
+const formatModelMenu = (
+  provider: Provider,
+  models: string[],
+  displayModels: string[] = models,
+  lockedAI: Set<string> = new Set(),
+) =>
   [
     `${PROVIDER_LABELS[provider]} 模型列表：`,
-    ...models.map((model, index) => `${index + 1}. ${model}`),
+    ...models.map(
+      (model, index) =>
+        `${index + 1}. ${lockedAI.has(`${provider}/${model}`) ? "🔒 " : ""}${displayModels[index] || model}`,
+    ),
     "",
     "请回复模型前的序号，发送“取消”可终止切换。",
   ].join("\n");
@@ -96,12 +106,28 @@ const showProviderModels = async (
     );
     return;
   }
-  await writeSession(sessionKey, { stage: "model", provider, models });
-  await message.send(format(Text(formatModelMenu(provider, models))));
+  const lockedAI = new Set(await redisClient.getLockedAIList());
+  const displayModels = await redisClient.getAIDisplayNames(
+    models.map((model) => `${provider}/${model}`),
+    false,
+  );
+  await writeSession(sessionKey, {
+    stage: "model",
+    provider,
+    models,
+    displayModels,
+  });
+  await message.send(
+    format(Text(formatModelMenu(provider, models, displayModels, lockedAI))),
+  );
 };
 
 const switchToModel = async (e: any, identifier: string) => {
   const [message] = useMessage(e);
+  if (e.IsMaster !== true && (await redisClient.isAILocked(identifier))) {
+    await message.send(format(Text(getLockedAIMessage(identifier))));
+    return false;
+  }
   const ai = await redisClient.switchAI(e.guid, identifier);
   if (!ai) {
     await message.send(format(Text(`切换失败，未找到 AI ${identifier}。`)));
@@ -185,10 +211,11 @@ export const handleSwitchAIMessage = async (e: any): Promise<boolean> => {
     const model = session.models[Number(text) - 1];
     if (!model) {
       await writeSession(sessionKey, session);
+      const lockedAI = new Set(await redisClient.getLockedAIList());
       await message.send(
         format(
           Text(
-            `序号无效，请重新选择。\n\n${formatModelMenu(session.provider, session.models)}`,
+            `序号无效，请重新选择。\n\n${formatModelMenu(session.provider, session.models, session.displayModels, lockedAI)}`,
           ),
         ),
       );

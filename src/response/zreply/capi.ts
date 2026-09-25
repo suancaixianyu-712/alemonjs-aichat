@@ -10,6 +10,7 @@ import {
 } from "alemonjs";
 import { log } from "console";
 import OpenAi from "openai";
+import { isImageUrlToolContent } from "@src/api/image-url-tool";
 import { getOpenAIProxyFetch } from "../../api/openaiProxy";
 import { getAiChatConfigValue } from "@src/config/app";
 import { TTSClient } from "@src/api/tts";
@@ -40,6 +41,8 @@ import { requestRapiCompletion } from "./rapi";
 import { getProviderBuiltinToolParams } from "./provider-tools";
 import { createScbbsProgress } from "./scbbs-progress";
 import { buildXianyuGameSession } from "@src/api/xianyu-game";
+import { getLockedAIMessage } from "@src/api/ai-lock";
+import { annotatePermissionBoundary } from "@src/api/user-permission";
 
 export const selects = onSelects(["message.create", "private.message.create"]);
 let currentModel = "派蒙-默认"; // 默认音色
@@ -262,10 +265,20 @@ const buildToolResultMessage = (
   functionName: string,
   functionResult: any,
 ) => {
+  if (isImageUrlToolContent(functionResult)) {
+    return {
+      role: "tool" as const,
+      tool_call_id: String(toolCall?.id || "").trim(),
+      name: functionName,
+      content: "图片已转换，图片内容见下一条输入。",
+    };
+  }
   const toolContent = JSON.stringify(
-    typeof functionResult === "undefined"
-      ? { ok: true, result: null }
-      : functionResult,
+    annotatePermissionBoundary(
+      typeof functionResult === "undefined"
+        ? { ok: true, result: null }
+        : functionResult,
+    ),
   );
 
   return {
@@ -410,6 +423,15 @@ export const CApiReply = async (
   outputMessage?: any,
 ) => {
   console.log("e.UserId", e.UserId, e.bot);
+
+  if (e.IsMaster !== true && (e as any).__allowLockedAI !== true) {
+    const currentAI = await redisClient.getCurrentAI(e.guid);
+    if (currentAI && (await redisClient.isAILocked(currentAI))) {
+      const [message] = outputMessage ? [outputMessage] : useMessage(e);
+      await message.send(format(Text(getLockedAIMessage(currentAI))));
+      return { next: false };
+    }
+  }
 
   const cfg = await getChatConfig(e);
   const internalAllowedToolNames = Array.isArray((e as any).__allowedToolNames)
@@ -592,7 +614,7 @@ export const CApiReply = async (
 
     const systemMessage = {
       role: "system",
-      content: cfg.systemPrompt + `\n性格约束:${cfg.config.systemPrompt}`,
+      content: `${cfg.systemPrompt}\n性格约束:${cfg.config.systemPrompt}\n\n${cfg.userPermissionPrompt}`,
     };
 
     let messages = redisClient.sanitizeChatMessages([
@@ -983,6 +1005,14 @@ export const CApiReply = async (
           );
           messages.push(toolMessage);
           toolMessages.push(toolMessage);
+          if (isImageUrlToolContent(functionResult)) {
+            const imageMessage = {
+              role: "user" as const,
+              content: functionResult,
+            };
+            messages.push(imageMessage);
+            toolMessages.push(imageMessage);
+          }
         }
 
         await redisClient.addAIChatHistoryBatch(e.guid, [

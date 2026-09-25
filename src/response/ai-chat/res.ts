@@ -6,6 +6,7 @@ import {
   getChatConfig,
 } from "@src/response/zreply/getChatConfig";
 import { toolSessionController } from "@src/api/tool-session-controller";
+import { getLockedAIMessage } from "@src/api/ai-lock";
 
 const selects = onSelects(["message.create", "private.message.create"]);
 
@@ -196,6 +197,15 @@ export default onResponse(selects, async (event, next) => {
   );
   const currentUserID = String(event.UserId || "");
   const shouldReply = await canPassReplyTriggerGate(event);
+  if (shouldReply && event.IsMaster !== true) {
+    const currentAI = await redisClient.getCurrentAI(event.guid);
+    if (currentAI && (await redisClient.isAILocked(currentAI))) {
+      const [message] = useMessage(event);
+      await message.send(format(Text(getLockedAIMessage(currentAI))));
+      event["Xianyu"] = false;
+      return next();
+    }
+  }
   const queueKey = getAITurnQueueKey(event);
   const hasQueuedTurns = queuedAITurnChains.has(queueKey);
 

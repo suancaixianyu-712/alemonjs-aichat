@@ -3,6 +3,7 @@ import { Text } from "alemonjs";
 import { useMessage } from "@src/utils/command-message";
 import { log } from "console";
 import { getAiChatConfigValue } from "@src/config/app";
+import { getLockedAIMessage } from "@src/api/ai-lock";
 const value = getAiChatConfigValue();
 
 const selects = onSelects(["message.create", "private.message.create"]);
@@ -179,6 +180,10 @@ export default onResponse(selects, async (e, next) => {
       return;
     }
     const [, , name] = match;
+    if (e.IsMaster !== true && (await redisClient.isAILocked(name.trim()))) {
+      message.send(format(Text(getLockedAIMessage(name.trim()))));
+      return;
+    }
     const success = await redisClient.deleteAI(name.trim());
     if (!success) {
       message.send(format(Text(`删除失败，未找到 AI ${name} !`)));
@@ -228,6 +233,15 @@ export default onResponse(selects, async (e, next) => {
       }
 
       const aiInfo = await redisClient.getAIConfig(e.guid);
+      const currentAI = await redisClient.getCurrentAI(e.guid);
+      if (
+        e.IsMaster !== true &&
+        currentAI &&
+        (await redisClient.isAILocked(currentAI))
+      ) {
+        message.send(format(Text(getLockedAIMessage(currentAI))));
+        return;
+      }
       if (aiInfo.model) {
         message.send(
           format(Text(`聊天功能已开启，当前AI为 ${aiInfo.model} !`)),
@@ -235,8 +249,17 @@ export default onResponse(selects, async (e, next) => {
         return;
       }
 
-      await redisClient.switchAI(e.guid, aiList[0]);
-      message.send(format(Text(`已开启聊天功能，当前AI为 ${aiList[0]} !`)));
+      const lockedAI = new Set(await redisClient.getLockedAIList());
+      const availableAI =
+        e.IsMaster === true
+          ? aiList
+          : aiList.filter((name) => !lockedAI.has(name));
+      if (availableAI.length === 0) {
+        message.send(format(Text("没有普通用户可用的 AI 配置。")));
+        return;
+      }
+      await redisClient.switchAI(e.guid, availableAI[0]);
+      message.send(format(Text(`已开启聊天功能，当前AI为 ${availableAI[0]} !`)));
     } else {
       if (isAll) {
         if (!e.IsMaster) {
@@ -426,6 +449,13 @@ export default onResponse(selects, async (e, next) => {
       message.send(format(Text(`未找到 AI ${aiName.trim()} !`)));
       return;
     }
+    if (
+      e.IsMaster !== true &&
+      (await redisClient.isAILocked(aiName.trim()))
+    ) {
+      message.send(format(Text(getLockedAIMessage(aiName.trim()))));
+      return;
+    }
     await redisClient.switchAI(e.guid, aiName.trim());
     const aiInfo = await redisClient.getAIConfig(e.guid);
     if (!aiInfo.model) {
@@ -434,16 +464,16 @@ export default onResponse(selects, async (e, next) => {
     }
     aiInfo.model = modelName.trim();
     if (aiInfo.provider) {
-      await redisClient.deleteAI(aiName.trim());
-      await redisClient.addAI(
-        e.guid,
-        modelName.trim(),
-        aiInfo.host,
-        aiInfo.key,
-        modelName.trim(),
+      const identifier = aiName.trim();
+      const separatorIndex = identifier.indexOf("/");
+      const storedName =
+        separatorIndex >= 0 ? identifier.slice(separatorIndex + 1) : identifier;
+      await redisClient.setProviderAIModel(
         aiInfo.provider,
-        aiInfo.apiMode ?? "capi",
+        storedName,
+        aiInfo,
       );
+      await redisClient.switchAI(e.guid, identifier);
     } else {
       await redisClient.addAI(
         e.guid,
@@ -453,6 +483,7 @@ export default onResponse(selects, async (e, next) => {
         modelName.trim(),
         "other",
         aiInfo.apiMode ?? "capi",
+        aiInfo.alias || aiName.trim(),
       );
     }
 

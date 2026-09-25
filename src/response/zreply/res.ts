@@ -12,6 +12,7 @@ import {
 } from "alemonjs";
 import { log } from "console";
 import OpenAi from "openai";
+import { isImageUrlToolContent } from "@src/api/image-url-tool";
 import { getOpenAIProxyFetch } from "../../api/openaiProxy";
 import { TTSClient } from "@src/api/tts";
 import { getAiChatConfigValue } from "@src/config/app";
@@ -35,6 +36,11 @@ import errorimg from "@src/assets/error.png";
 import { imageReview } from "@src/api/review";
 import { buildXianyuGameSession } from "@src/api/xianyu-game";
 import { isNonVisionModel } from "./getChatConfig";
+import {
+  annotatePermissionBoundary,
+  buildUserPermissionPrompt,
+} from "@src/api/user-permission";
+import { toolSessionController } from "@src/api/tool-session-controller";
 
 const value = getAiChatConfigValue();
 
@@ -99,6 +105,17 @@ export default onResponse(selects, async (e, next) => {
         )
       : [];
   const botName = e.bot.nickname || "小咸鱼";
+  const userPermissionPrompt = buildUserPermissionPrompt({
+    isMaster: e.IsMaster === true,
+    isAdmin: (e as { isAdmin?: boolean }).isAdmin === true,
+    isPrivate:
+      e.name === "private.message.create" ||
+      (e as { Name?: string }).Name === "private.message.create",
+    agentEnabled: (await redisClient.getAgentSwitch(e.guid)) === "1",
+    opencodeActive:
+      (await toolSessionController.getCurrentTool(e.guid)) === "opencode",
+    opencodePermission: await toolSessionController.getPermission(e.guid),
+  });
   const systemPrompt = `
 # AI助手回复规范
 请严格按照以下规范进行回复, 不要添加任何不必要的内容, 也不要删除或修改规范中的任何内容, 以确保回复能够被正确解析和处理
@@ -109,6 +126,7 @@ export default onResponse(selects, async (e, next) => {
 如果用户在继续之前的话题、问你记不记得、提到上次/刚才/之前聊过的内容，先参考系统自动检索到的相关记忆；如果还不够，再调用 MemoryOperation，优先使用 chatHistory 的 search:关键词 或 guid:id 补充历史上下文
 
 调用执行脚本类型的工具时, 务必确保脚本安全, 不得执行对服务器有伤害的脚本
+${userPermissionPrompt}
 ---
 技能列表:
 ${skills.map((skill) => `- ${skill.name}: ${skill.description}`).join("\n")}
@@ -408,7 +426,7 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
     let messages = redisClient.sanitizeChatMessages([
       {
         role: "system",
-        content: systemPrompt + `\n性格约束:${config.systemPrompt}`,
+        content: `${systemPrompt}\n性格约束:${config.systemPrompt}\n\n${userPermissionPrompt}`,
       },
       ...historyMessages,
       { ...usermessage },
@@ -647,11 +665,15 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
           }
         }
 
-        const toolContent = JSON.stringify(
-          typeof functionResult === "undefined"
-            ? { ok: true, result: null }
-            : functionResult,
-        );
+        const toolContent = isImageUrlToolContent(functionResult)
+          ? "图片已转换，图片内容见下一条输入。"
+          : JSON.stringify(
+              annotatePermissionBoundary(
+                typeof functionResult === "undefined"
+                  ? { ok: true, result: null }
+                  : functionResult,
+              ),
+            );
 
         // 把工具执行结果作为 tool role 消息加回对话（仅保留合法字段）
         const toolMessage = {
@@ -662,6 +684,14 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
         };
         messages.push(toolMessage);
         toolMessages.push(toolMessage);
+        if (isImageUrlToolContent(functionResult)) {
+          const imageMessage = {
+            role: "user" as const,
+            content: functionResult,
+          };
+          messages.push(imageMessage);
+          toolMessages.push(imageMessage);
+        }
       }
 
       await redisClient.addAIChatHistoryBatch(e.guid, [

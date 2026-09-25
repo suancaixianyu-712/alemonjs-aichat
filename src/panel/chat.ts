@@ -34,7 +34,7 @@ const PANEL_CHAT_HISTORY_LIMIT = 80;
 const PANEL_IMAGE_TOOL_NAMES = new Set([
   "StableDiffusionGenerateImage",
   "GPTGenerateImage",
-  "Photoshop",
+  "GrokGenerateImage",
   "AgentUploadFileToR2",
 ]);
 
@@ -431,6 +431,7 @@ const createPanelEvent = (
   img: [],
   originalMsg: message,
   regexTriggered: true,
+  __allowLockedAI: true,
 });
 
 export const sendPanelChatMessage = async (

@@ -23,11 +23,14 @@ import {
   buildGPTImageResponsesRequest,
   extractGPTImageResponseBase64,
   formatGPTImageError,
+  normalizeGrokImageData,
+  saveBase64Image,
   shouldFallbackGPTImageMode,
   type GPTImageRequestMode,
 } from "./gptImage";
 import { getOpenAIProxyFetch } from "./openaiProxy";
 import { useXianyuGameTool } from "./xianyu-game";
+import { convertToImageUrlContent } from "./image-url-tool";
 
 const value = getAiChatConfigValue();
 
@@ -55,6 +58,25 @@ const getPrompt = async (text: string): Promise<string> => {
 };
 
 export const tools: ChatCompletionTool[] = [
+  {
+    type: "function",
+    function: {
+      name: "ConvertToImageUrl",
+      description:
+        "将图片直链或 alémonjs 主工程内的相对图片路径转换为可供 AI 直接查看的 image_url 内容。远程 HTTP/HTTPS 图片链接会原样返回；本地相对路径会转换为 Base64 Data URL。",
+      parameters: {
+        type: "object",
+        properties: {
+          address: {
+            type: "string",
+            description:
+              "图片 HTTP/HTTPS 直链，或相对于 alémonjs 主工程根目录的图片路径",
+          },
+        },
+        required: ["address"],
+      },
+    },
+  },
   {
     type: "function",
     function: {
@@ -163,9 +185,9 @@ export const tools: ChatCompletionTool[] = [
   {
     type: "function",
     function: {
-      name: "Photoshop",
+      name: "GrokGenerateImage",
       description:
-        "AI图片工具。不传 image_url 时按 instruction 直接生成图片；传入 image_url 时按 instruction 编辑图片。",
+        "使用 Grok 图像模型生成或编辑图片。不传 image_url 时按 instruction 直接生成图片；传入 image_url 时按 instruction 编辑图片。",
       parameters: {
         type: "object",
         properties: {
@@ -3292,6 +3314,9 @@ const performServerCommandReview = async ({
 };
 
 export const availableTools = {
+  ConvertToImageUrl: async ({ address }: { address: string }) =>
+    convertToImageUrlContent(address),
+
   XianyuGame: async ({
     action,
     guid,
@@ -3316,7 +3341,8 @@ export const availableTools = {
   getAlemonjsConfig: async ({ key, value }) => {
     if (key == "ailist") {
       // 获取当前配置
-      return await redisClient.getAIList();
+      const aiList = await redisClient.getAIList();
+      return await redisClient.getAIDisplayNames(aiList);
     }
   },
 
@@ -3767,7 +3793,7 @@ export const availableTools = {
     }
   },
 
-  Photoshop: async ({ image_url, instruction }) => {
+  GrokGenerateImage: async ({ image_url, instruction }) => {
     const grokImageConfig = await redisClient.getGrokImageConfig();
     if (!grokImageConfig) {
       return "未配置 Grok 画图接口，请使用命令：\n#grok画图配置 <AI配置编号> <画图模型>";
@@ -3848,9 +3874,13 @@ export const availableTools = {
         return err;
       }
       const image = await res.json();
-      console.log("画好了", image);
+      console.log("Grok 画图完成", {
+        created: image?.created,
+        imageCount: Array.isArray(image?.data) ? image.data.length : 0,
+        hasBase64: Boolean(image?.data?.some?.((item) => item?.b64_json)),
+      });
 
-      return image.data;
+      return normalizeGrokImageData(image.data);
     } catch (error) {
       console.error("Error calling AIPS:", error);
       return "调用接口失败" + error;
@@ -3964,15 +3994,8 @@ export const availableTools = {
         return "生成图片失败：未获取到图片数据";
       }
 
-      // 将图片保存到本地,然后返回本地路径
-      const dir = "./public/image_out";
-      if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
-      }
-      const savePath = `${dir}/${Date.now()}-${randomUUID()}.png`;
       const base64Data = imageData.replace(/^data:image\/\w+;base64,/, "");
-      const buffer = Buffer.from(base64Data, "base64");
-      fs.writeFileSync(savePath, buffer);
+      const savePath = saveBase64Image(base64Data);
 
       return [{ type: "image", url: savePath }];
     } catch (error: any) {

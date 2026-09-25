@@ -61,14 +61,18 @@ export const convertCapiMessagesToRapiInput = (messages: any[]) => {
     if (role === "tool") {
       const callId = String(message.tool_call_id || "").trim();
       if (!callId) continue;
+      const convertedContent = convertMessageContent(message.content);
       input.push({
         type: "function_call_output",
         call_id: callId,
         output:
           typeof message.content === "string"
             ? message.content
-            : JSON.stringify(message.content ?? null),
+            : "图片已转换，图片内容见下一条输入。",
       });
+      if (Array.isArray(convertedContent) && convertedContent.length > 0) {
+        input.push({ type: "message", role: "user", content: convertedContent });
+      }
       continue;
     }
 

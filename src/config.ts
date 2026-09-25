@@ -2,6 +2,19 @@ import { randomUUID } from "node:crypto";
 import { getConfigValue } from "alemonjs";
 import { AIConfig } from "./types";
 import { redis } from "./redis";
+import {
+  parseOwnedAIToolLoopState,
+  type AIToolLoopState,
+} from "./api/tool-loop-state";
+import {
+  buildRestartRecoveryTask,
+  canConsumeRestartRecoveryTask,
+  parseRestartRecoveryTask,
+  RESTART_RECOVERY_TTL_SECONDS,
+  type RestartRecoveryTask,
+} from "./api/restart-recovery";
+import { PM2_PROCESS_ID, PROCESS_INSTANCE_ID } from "./api/runtime-instance";
+export type { RestartRecoveryTask } from "./api/restart-recovery";
 
 export type ScheduledAITask = {
   id: string;
@@ -52,6 +65,7 @@ type ArchivedChatSearchResult = {
 
 const TOOL_LOOP_TTL_SECONDS = 3600;
 const TOOL_LOOP_STALE_MS = TOOL_LOOP_TTL_SECONDS * 1000;
+export const AI_LOCKED_CONFIGS_KEY = "ai:locked:configs";
 export const NEXT_USER_MESSAGE_SUBSCRIPTION_TTL_SECONDS = 600;
 export const DEFAULT_CAPI_CONTEXT_LIMIT = 512000;
 const ARCHIVED_CHAT_SUMMARY_MAX_LENGTH = 240;
@@ -61,13 +75,6 @@ const ARCHIVED_CHAT_TRANSCRIPT_MAX_LENGTH = 12000;
 const ARCHIVED_CHAT_HISTORY_PREVIEW_LIMIT = 12;
 const ARCHIVED_CHAT_RECORD_MAX_STORE_BYTES = 128 * 1024;
 const ARCHIVED_CHAT_RECORD_MAX_PARSE_BYTES = 1024 * 1024;
-
-type AIToolLoopState = {
-  processing: true;
-  userID: string;
-  startedAt: number;
-  updatedAt: number;
-};
 
 export type AIContextStatsInput = {
   mode: "capi" | "rapi";
@@ -994,9 +1001,52 @@ class db {
     await this.redis.set(migrationKey, "1");
   }
 
+  /** 为旧 AI 配置补充别名，默认使用其实际模型名。 */
+  private async migrateAIModelAliases(): Promise<void> {
+    const migrationKey = "ai:migration:model-aliases:v1";
+    if (await this.redis.exists(migrationKey)) return;
+
+    const modelKeys = await this.redis.keys("ai:model:*");
+    for (const modelKey of modelKeys) {
+      const configStr = await this.redis.get(modelKey);
+      if (!configStr) continue;
+      try {
+        const config = JSON.parse(configStr) as AIConfig;
+        if (!config.alias?.trim() && config.model?.trim()) {
+          await this.redis.set(
+            modelKey,
+            JSON.stringify({ ...config, alias: config.model.trim() }),
+          );
+        }
+      } catch {
+        continue;
+      }
+    }
+
+    const currentConfigKeys = await this.redis.keys("ai:config:*");
+    for (const currentConfigKey of currentConfigKeys) {
+      const configStr = await this.redis.get(currentConfigKey);
+      if (!configStr) continue;
+      try {
+        const config = JSON.parse(configStr) as AIConfig;
+        if (!config.alias?.trim() && config.model?.trim()) {
+          await this.redis.set(
+            currentConfigKey,
+            JSON.stringify({ ...config, alias: config.model.trim() }),
+          );
+        }
+      } catch {
+        continue;
+      }
+    }
+
+    await this.redis.set(migrationKey, "1");
+  }
+
   /** 获取AI列表 */
   async getAIList(): Promise<string[]> {
     await this.migrateLegacyAIModels();
+    await this.migrateAIModelAliases();
     const providerKeys = await this.redis.keys("ai:model:*");
     const providerNames = providerKeys.flatMap((key) => {
       const provider = key.split(":")[2];
@@ -1011,9 +1061,38 @@ class db {
     return [...new Set(providerNames)].sort((a, b) => a.localeCompare(b));
   }
 
+  /** 获取被主人锁定、仅主人和网页端可使用的 AI 配置。 */
+  async getLockedAIList(): Promise<string[]> {
+    return (await this.redis.smembers(AI_LOCKED_CONFIGS_KEY)).sort((a, b) =>
+      a.localeCompare(b),
+    );
+  }
+
+  /** 判断 AI 配置是否已被主人锁定。 */
+  async isAILocked(name: string): Promise<boolean> {
+    return (await this.redis.sismember(AI_LOCKED_CONFIGS_KEY, name)) === 1;
+  }
+
+  /** 批量锁定 AI 配置。 */
+  async lockAI(names: string[]): Promise<void> {
+    const uniqueNames = [...new Set(names.map((name) => name.trim()).filter(Boolean))];
+    if (uniqueNames.length > 0) {
+      await this.redis.sadd(AI_LOCKED_CONFIGS_KEY, ...uniqueNames);
+    }
+  }
+
+  /** 批量解除 AI 配置锁定。 */
+  async unlockAI(names: string[]): Promise<void> {
+    const uniqueNames = [...new Set(names.map((name) => name.trim()).filter(Boolean))];
+    if (uniqueNames.length > 0) {
+      await this.redis.srem(AI_LOCKED_CONFIGS_KEY, ...uniqueNames);
+    }
+  }
+
   /** 获取带厂商 ID 的 AI 模型配置。 */
   async getAIListConfig(name: string): Promise<AIConfig | null> {
     await this.migrateLegacyAIModels();
+    await this.migrateAIModelAliases();
     const providerKeys = await this.redis.keys("ai:model:*");
     const providerKey = providerKeys.find((key) => {
       const provider = key.split(":")[2];
@@ -1035,6 +1114,31 @@ class db {
     return null;
   }
 
+  /** 获取 AI 标识对应的展示名称，优先使用别名。 */
+  async getAIDisplayName(
+    name: string,
+    includeProvider = true,
+  ): Promise<string> {
+    const separatorIndex = name.indexOf("/");
+    const provider = separatorIndex > 0 ? name.slice(0, separatorIndex) : "";
+    const storedName = separatorIndex > 0 ? name.slice(separatorIndex + 1) : name;
+    const config = await this.getAIListConfig(name);
+    const alias = config?.alias?.trim() || config?.model?.trim() || storedName;
+    const model = config?.model?.trim();
+    const label = model && model !== alias ? `${alias}（${model}）` : alias;
+    return includeProvider && provider ? `${provider}/${label}` : label;
+  }
+
+  /** 批量获取 AI 列表的展示名称，顺序和内部标识保持一致。 */
+  async getAIDisplayNames(
+    names: string[],
+    includeProvider = true,
+  ): Promise<string[]> {
+    return Promise.all(
+      names.map((name) => this.getAIDisplayName(name, includeProvider)),
+    );
+  }
+
   /** 按厂商保存模型；键和值中都保留厂商 ID。 */
   async setProviderAIModel(
     provider: NonNullable<AIConfig["provider"]>,
@@ -1042,7 +1146,14 @@ class db {
     config: AIConfig,
   ): Promise<void> {
     const storageKey = `ai:model:${provider}:${encodeURIComponent(name)}`;
-    await this.redis.set(storageKey, JSON.stringify({ ...config, provider }));
+    await this.redis.set(
+      storageKey,
+      JSON.stringify({
+        ...config,
+        alias: config.alias?.trim() || config.model?.trim() || name.trim(),
+        provider,
+      }),
+    );
   }
 
   /** 获取某个厂商保存的首个模型配置，供厂商专属能力复用凭据。 */
@@ -1065,6 +1176,7 @@ class db {
     model: string,
     provider: NonNullable<AIConfig["provider"]> = "other",
     apiMode: NonNullable<AIConfig["apiMode"]> = "capi",
+    alias = name,
   ): Promise<void> {
     const defaultConfig = await this.getAIConfig();
     const aiConfig = {
@@ -1072,6 +1184,7 @@ class db {
       host,
       key,
       model,
+      alias: alias.trim() || model.trim() || name.trim(),
       provider,
       apiMode,
     };
@@ -1097,7 +1210,18 @@ class db {
       console.log("删除失败, 无此模型");
       return false;
     }
+    const matchedAIIdentifiers = matchedProviderKeys.flatMap((key) => {
+      const provider = key.split(":")[2];
+      const encodedName = key.split(":").slice(3).join(":");
+      if (!provider || !encodedName) return [];
+      try {
+        return [`${provider}/${decodeURIComponent(encodedName)}`];
+      } catch {
+        return [];
+      }
+    });
     await this.redis.del(...matchedProviderKeys);
+    await this.unlockAI(matchedAIIdentifiers);
     return true;
   }
 
@@ -1600,6 +1724,7 @@ class db {
     const now = Date.now();
     const state: AIToolLoopState = {
       processing: true,
+      ownerId: PROCESS_INSTANCE_ID,
       userID,
       startedAt: now,
       updatedAt: now,
@@ -1655,6 +1780,7 @@ class db {
       const now = Date.now();
       const state: AIToolLoopState = {
         processing: true,
+        ownerId: PROCESS_INSTANCE_ID,
         userID,
         startedAt: now,
         updatedAt: now,
@@ -1686,35 +1812,18 @@ class db {
     }
     if (!processing) return null;
 
-    if (processing === "1") {
-      return {
-        processing: true,
-        userID: "",
-        startedAt: Date.now(),
-        updatedAt: Date.now(),
-      };
-    }
-
-    try {
-      const parsed = JSON.parse(processing);
-      if (parsed?.processing !== true) return null;
-      const updatedAt = Number(parsed.updatedAt || parsed.startedAt || 0);
-      if (!updatedAt || Date.now() - updatedAt > TOOL_LOOP_STALE_MS) {
-        await this.clearAITransientState(guid);
-        return null;
-      }
-      const ttl = await this.redis.ttl(key);
-      if (ttl === -1) await this.redis.expire(key, TOOL_LOOP_TTL_SECONDS);
-      return {
-        processing: true,
-        userID: String(parsed.userID || ""),
-        startedAt: Number(parsed.startedAt || updatedAt),
-        updatedAt,
-      };
-    } catch {
+    const state = parseOwnedAIToolLoopState(
+      processing,
+      PROCESS_INSTANCE_ID,
+      TOOL_LOOP_STALE_MS,
+    );
+    if (!state) {
       await this.clearAITransientState(guid);
       return null;
     }
+    const ttl = await this.redis.ttl(key);
+    if (ttl === -1) await this.redis.expire(key, TOOL_LOOP_TTL_SECONDS);
+    return state;
   }
 
   async getAIToolLoopProcessing(
@@ -2366,6 +2475,66 @@ class db {
   /** 关闭当前会话心跳 */
   async clearHeartbeatTask(guid: string): Promise<void> {
     await this.redis.del(`ai:heartbeat:${guid}`);
+  }
+
+  /** 保存指令触发的当前进程重启恢复任务。 */
+  async createRestartRecoveryTask(
+    input: Omit<
+      RestartRecoveryTask,
+      "id" | "ownerId" | "createdAt" | "restartRecovery"
+    >,
+  ): Promise<RestartRecoveryTask> {
+    const task = buildRestartRecoveryTask(input);
+    await this.redis.set(
+      `ai:restart_recovery:${task.id}`,
+      JSON.stringify(task),
+      "EX",
+      RESTART_RECOVERY_TTL_SECONDS,
+    );
+    return task;
+  }
+
+  /** 原子消费全部待恢复任务，确保重启后至多续接一次。 */
+  async consumeRestartRecoveryTasks(): Promise<RestartRecoveryTask[]> {
+    const keys = await this.redis.keys("ai:restart_recovery:*");
+    const tasks: RestartRecoveryTask[] = [];
+    for (const key of keys) {
+      const raw = await this.redis.get(key);
+      if (!raw) continue;
+      const task = parseRestartRecoveryTask(raw);
+      if (
+        task &&
+        !canConsumeRestartRecoveryTask(
+          task,
+          PROCESS_INSTANCE_ID,
+          PM2_PROCESS_ID,
+        )
+      ) {
+        continue;
+      }
+
+      const consumed = await this.redis.eval(
+        `
+        local value = redis.call("GET", KEYS[1])
+        if value == ARGV[1] then
+          redis.call("DEL", KEYS[1])
+          return value
+        end
+        return nil
+        `,
+        1,
+        key,
+        raw,
+      );
+      if (typeof consumed !== "string") continue;
+      const consumedTask = parseRestartRecoveryTask(consumed);
+      if (consumedTask) tasks.push(consumedTask);
+    }
+    return tasks;
+  }
+
+  async deleteRestartRecoveryTask(taskID: string): Promise<void> {
+    await this.redis.del(`ai:restart_recovery:${taskID}`);
   }
 
   /** 获取所有工具状态 */

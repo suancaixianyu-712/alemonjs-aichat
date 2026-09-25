@@ -32,8 +32,9 @@ export default onResponse(selects, async (e) => {
       /^(\/|#)grok画图配置\s+(\d+)\s+(\S+)\s*$/i,
     );
     const aiList = await redisClient.getAIList();
+    const aiDisplayList = await redisClient.getAIDisplayNames(aiList);
     const aiMenu = aiList.length
-      ? aiList.map((name, index) => `${index + 1}. ${name}`).join("\n")
+      ? aiDisplayList.map((name, index) => `${index + 1}. ${name}`).join("\n")
       : "暂无 AI 配置，请先使用 #添加ai 添加。";
     if (!match) {
       message.send(
@@ -106,7 +107,7 @@ export default onResponse(selects, async (e) => {
 
     message.send(format(Text("开始用 Grok 画图喵~")));
 
-    const res = await availableTools.Photoshop({
+    const res = await availableTools.GrokGenerateImage({
       image_url: await Promise.all(uploadedImgUrls),
       instruction: content,
     });
@@ -128,7 +129,9 @@ export default onResponse(selects, async (e) => {
         console.error("Grok画图结果上传R2失败，改用原始链接:", error);
       }
 
-      const imageMessage = ImageURL(imgUrl);
+      const imageMessage = /^https?:\/\//i.test(imgUrl)
+        ? ImageURL(imgUrl)
+        : ImageFile(imgUrl);
 
       const R18Switch = await redisClient.getR18Switch(e.guid);
       if (R18Switch === "1") {
@@ -264,8 +267,9 @@ export default onResponse(selects, async (e) => {
     const aiList = (await redisClient.getAIList()).sort((a, b) =>
       a.localeCompare(b),
     );
+    const aiDisplayList = await redisClient.getAIDisplayNames(aiList);
     const aiMenu = aiList.length
-      ? aiList.map((name, index) => `${index + 1}. ${name}`).join("\n")
+      ? aiDisplayList.map((name, index) => `${index + 1}. ${name}`).join("\n")
       : "暂无 AI 配置，请先使用 #添加ai 添加。";
     if (!match) {
       message.send(

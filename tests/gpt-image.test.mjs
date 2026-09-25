@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 
 import {
   buildGPTImageResponsesRequest,
   extractGPTImageResponseBase64,
   formatGPTImageError,
+  normalizeGrokImageData,
   shouldFallbackGPTImageMode,
 } from "../lib/api/gptImage.js";
 import {
@@ -71,6 +75,26 @@ test("提取 Responses API 返回的图片 Base64", () => {
     }),
     "aW1hZ2U=",
   );
+});
+
+test("Grok 图片响应保留 URL 旧格式", () => {
+  const data = [{ url: "https://example.com/image.jpg" }];
+  assert.deepEqual(normalizeGrokImageData(data), data);
+});
+
+test("Grok 图片响应将无前缀 JPG Base64 保存为本地图片", (t) => {
+  const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "aichat-image-"));
+  t.after(() => fs.rmSync(outputDir, { recursive: true, force: true }));
+
+  const [image] = normalizeGrokImageData(
+    [{ b64_json: "aW1hZ2U=" }],
+    outputDir,
+  );
+  const savePath = image.url;
+  assert.equal(image.type, "image");
+  assert.equal("b64_json" in image, false);
+  assert.equal(path.extname(savePath), ".jpg");
+  assert.equal(fs.readFileSync(savePath).toString(), "image");
 });
 
 test("只对协议端点错误回退，不对模型和组织权限错误重试", () => {
