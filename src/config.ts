@@ -1078,7 +1078,21 @@ class db {
     const uniqueNames = [...new Set(names.map((name) => name.trim()).filter(Boolean))];
     if (uniqueNames.length > 0) {
       await this.redis.sadd(AI_LOCKED_CONFIGS_KEY, ...uniqueNames);
+      // 锁定后移除此前选用这些配置的会话；主人重新切换后才能授权该群使用。
+      const selectedKeys = await this.redis.keys("ai:currentAI:*");
+      for (const key of selectedKeys) {
+        if (uniqueNames.includes((await this.redis.get(key)) || "")) {
+          await this.redis.del(key);
+          await this.setAIConfig(key.slice("ai:currentAI:".length), db.defaultAIConfig);
+        }
+      }
     }
+  }
+
+  /** 群内当前由主人选用的锁定 AI 对全群开放；私聊仍只允许主人。 */
+  async canUseLockedAI(guid: string, isGroup: boolean, name: string): Promise<boolean> {
+    return !await this.isAILocked(name) ||
+      (isGroup && (await this.getCurrentAI(guid)) === name);
   }
 
   /** 批量解除 AI 配置锁定。 */

@@ -199,7 +199,7 @@ export default onResponse(selects, async (event, next) => {
   const shouldReply = await canPassReplyTriggerGate(event);
   if (shouldReply && event.IsMaster !== true) {
     const currentAI = await redisClient.getCurrentAI(event.guid);
-    if (currentAI && (await redisClient.isAILocked(currentAI))) {
+    if (currentAI && (!await redisClient.canUseLockedAI(event.guid, event.name !== "private.message.create", currentAI))) {
       const [message] = useMessage(event);
       await message.send(format(Text(getLockedAIMessage(currentAI))));
       event["Xianyu"] = false;

@@ -237,7 +237,7 @@ export default onResponse(selects, async (e, next) => {
       if (
         e.IsMaster !== true &&
         currentAI &&
-        (await redisClient.isAILocked(currentAI))
+        (!await redisClient.canUseLockedAI(e.guid, e.name !== "private.message.create", currentAI))
       ) {
         message.send(format(Text(getLockedAIMessage(currentAI))));
         return;

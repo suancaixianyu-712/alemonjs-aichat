@@ -426,7 +426,7 @@ export const CApiReply = async (
 
   if (e.IsMaster !== true && (e as any).__allowLockedAI !== true) {
     const currentAI = await redisClient.getCurrentAI(e.guid);
-    if (currentAI && (await redisClient.isAILocked(currentAI))) {
+    if (currentAI && (!await redisClient.canUseLockedAI(e.guid, e.name !== "private.message.create", currentAI))) {
       const [message] = outputMessage ? [outputMessage] : useMessage(e);
       await message.send(format(Text(getLockedAIMessage(currentAI))));
       return { next: false };
