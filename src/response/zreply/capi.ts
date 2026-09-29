@@ -794,7 +794,14 @@ export const CApiReply = async (
         for (const toolCall of responseMessage.tool_calls) {
           throwIfAITurnAborted(aiTurn.signal);
           const functionName = toolCall.function.name;
-          let functionArgs: any = {};
+          await redisClient.pushAIToolLoopTool(
+            e.guid,
+            functionName,
+            e.Platform,
+            turnUserID,
+          );
+          try {
+            let functionArgs: any = {};
 
           try {
             functionArgs = toolCall.function.arguments
@@ -1012,6 +1019,14 @@ export const CApiReply = async (
             };
             messages.push(imageMessage);
             toolMessages.push(imageMessage);
+          }
+          } finally {
+            await redisClient.popAIToolLoopTool(
+              e.guid,
+              e.Platform,
+              turnUserID,
+              functionName,
+            );
           }
         }
 

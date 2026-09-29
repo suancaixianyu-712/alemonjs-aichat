@@ -162,6 +162,15 @@ export default onResponse(selects, async (e, next) => {
   if (/^(\/|#)ai状态$/i.test(e.msg)) {
     const toolStatus = await toolSessionController.getStatus(e.guid);
     const currentAI = await redisClient.getCurrentAI(e.guid);
+    const loopState = await redisClient.getAIToolLoopState(
+      e.guid,
+      e.Platform,
+    );
+    const currentTool = redisClient.getAIToolLoopCurrentTool(loopState);
+    const runtimeLine = currentTool
+      ? `运行状态: 调用中: ${currentTool}`
+      : "运行状态: 空闲";
+    const configLine = `当前配置: ${currentAI || "未设置"}`;
     const httpProxyEnabled = redisClient.isAIProxyEnabled(config);
     const httpProxyConfigured = Boolean(
       String(getAiChatConfigValue().httpProxy || "").trim(),
@@ -171,31 +180,30 @@ export default onResponse(selects, async (e, next) => {
       httpProxyConfigured,
       currentAI,
     );
+
     if (toolStatus.tool !== "default") {
+      const note = `后端: ${toolStatus.toolLabel}${
+        toolStatus.model ? ` / ${toolStatus.model}` : ""
+      }`;
       message.send(
         format(
-          Text(
-            [
-              "当前AI状态：",
-              `当前工具: ${toolStatus.toolLabel}`,
-              `当前AI: ${currentAI || "未设置"}`,
-              `模型: ${toolStatus.model || "未设置"}`,
-              httpProxyStatus,
-              `权限: ${toolStatus.permissionLabel}`,
-              `当前会话: ${toolStatus.title || "未创建"}`,
-              `会话ID: ${toolStatus.sessionId || "未创建"}`,
-            ].join("\n"),
-          ),
+          Text([runtimeLine, configLine, note].filter(Boolean).join("\n")),
         ),
       );
       return;
     }
+
     const stats = await redisClient.getAIContextStats(e.guid);
     const capiContextLimit = await redisClient.getCAPIContextLimit(e.guid);
     message.send(
       format(
         Text(
-          `当前工具: ${toolStatus.toolLabel}\n${httpProxyStatus}\n${formatAIContextStatus(stats, capiContextLimit)}`,
+          [
+            runtimeLine,
+            configLine,
+            httpProxyStatus,
+            formatAIContextStatus(stats, capiContextLimit),
+          ].join("\n"),
         ),
       ),
     );

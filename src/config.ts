@@ -3,6 +3,7 @@ import { getConfigValue } from "alemonjs";
 import { AIConfig } from "./types";
 import { redis } from "./redis";
 import {
+  getAIToolLoopCurrentTool as readAIToolLoopCurrentTool,
   parseOwnedAIToolLoopState,
   type AIToolLoopState,
 } from "./api/tool-loop-state";
@@ -1742,6 +1743,7 @@ class db {
       userID,
       startedAt: now,
       updatedAt: now,
+      toolStack: [],
     };
     const result = await this.redis.set(
       this.getToolLoopStateKey(guid, platform),
@@ -1798,6 +1800,7 @@ class db {
         userID,
         startedAt: now,
         updatedAt: now,
+        toolStack: [],
       };
       await this.redis.set(
         this.getToolLoopStateKey(guid, platform),
@@ -1845,6 +1848,81 @@ class db {
     platform?: string,
   ): Promise<string> {
     return (await this.getAIToolLoopState(guid, platform)) ? "1" : "0";
+  }
+
+  /** Push a tool name onto the active tool-loop stack (innermost = last). */
+  async pushAIToolLoopTool(
+    guid: string,
+    toolName: string,
+    platform?: string,
+    userID = "",
+  ): Promise<void> {
+    const name = String(toolName || "").trim();
+    if (!name) return;
+    await this.mutateAIToolLoopState(guid, platform, userID, (state) => {
+      state.toolStack = [...(state.toolStack || []), name];
+    });
+  }
+
+  /**
+   * Pop the innermost tool from the tool-loop stack.
+   * If expectedTool is provided, only pops when it matches the top.
+   */
+  async popAIToolLoopTool(
+    guid: string,
+    platform?: string,
+    userID = "",
+    expectedTool?: string,
+  ): Promise<void> {
+    await this.mutateAIToolLoopState(guid, platform, userID, (state) => {
+      const stack = [...(state.toolStack || [])];
+      if (stack.length === 0) {
+        state.toolStack = [];
+        return;
+      }
+      const expected = String(expectedTool || "").trim();
+      if (expected && stack[stack.length - 1] !== expected) {
+        return;
+      }
+      stack.pop();
+      state.toolStack = stack;
+    });
+  }
+
+  getAIToolLoopCurrentTool(state: AIToolLoopState | null | undefined): string {
+    return readAIToolLoopCurrentTool(state);
+  }
+
+  private async mutateAIToolLoopState(
+    guid: string,
+    platform: string | undefined,
+    userID: string,
+    mutator: (state: AIToolLoopState) => void,
+  ): Promise<boolean> {
+    const key = this.getToolLoopStateKey(guid, platform);
+    const raw = await this.redis.get(key);
+    if (!raw) return false;
+    const current = parseOwnedAIToolLoopState(
+      raw,
+      PROCESS_INSTANCE_ID,
+      TOOL_LOOP_STALE_MS,
+    );
+    if (!current) return false;
+    if (userID && current.userID && current.userID !== userID) return false;
+    const now = Date.now();
+    const state: AIToolLoopState = {
+      ...current,
+      updatedAt: now,
+      toolStack: [...(current.toolStack || [])],
+    };
+    mutator(state);
+    await this.redis.set(
+      key,
+      JSON.stringify(state),
+      "EX",
+      TOOL_LOOP_TTL_SECONDS,
+    );
+    return true;
   }
 
   /** 获取工具调用期间追加的引导消息 */
