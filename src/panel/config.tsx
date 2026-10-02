@@ -323,7 +323,6 @@ export default defineConfig({
           tools={true}
           complex={true}
           affection={true}
-          tts={true}
           deep={false}
           model="gpt-4"
           prompt="你是一个友好的AI助手"

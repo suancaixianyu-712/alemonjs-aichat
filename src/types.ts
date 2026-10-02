@@ -22,10 +22,6 @@ export interface AIChatConfig {
   codexTool?: {
     binary?: string;
   };
-  ttsServer: {
-    host: string;
-    defaultModel: string;
-  };
 }
 
 export interface AIConfig {

@@ -214,7 +214,6 @@ export default onResponse(selects, async (e, next) => {
   if (/^(\/|#)(ai配置|当前提示词|查看提示词)$/i.test(e.msg)) {
     const complexResponse = (await redisClient.getComplexOutput(e.guid)) || "1"; // 复杂输出
     const affectionIsOpen = await redisClient.getAffectionSwitch(e.guid); // 好感度开关
-    const isOpenTTSReply = await redisClient.getTTSResponseSwitch(e.guid); // TTS回复开关
     const toolsIsOpen = await redisClient.getToolSwitch(e.guid); // 工具开关
     const deepThinkingIsOpen = await redisClient.getDeepThoughtSwitch(e.guid); // 深度思考开关
     const atTriggerSwitch = await redisClient.getAtTriggerSwitch(e.guid); // 仅艾特触发
@@ -250,7 +249,6 @@ export default onResponse(selects, async (e, next) => {
           tools: toolsIsOpen == "1",
           complex: complexResponse == "1",
           affection: affectionIsOpen == "1",
-          tts: isOpenTTSReply == "1",
           deep: deepThinkingIsOpen == "1",
           model: config.model,
           prompt: config.systemPrompt,
@@ -286,7 +284,6 @@ export default onResponse(selects, async (e, next) => {
             Text(`CAPI上下文长度: ${formatContextLimit(capiContextLimit)}\n`),
             Text(`复杂输出: ${complexResponse == "1" ? "开启" : "关闭"}\n`),
             Text(`好感度开关: ${affectionIsOpen == "1" ? "开启" : "关闭"}\n`),
-            Text(`TTS回复开关: ${isOpenTTSReply == "1" ? "开启" : "关闭"}\n`),
             Text(`深度思考: ${deepThinkingIsOpen == "1" ? "默认" : "关闭"}\n`),
             Text(`仅艾特触发: ${atTriggerSwitch == "1" ? "开启" : "关闭"}\n`),
             Text(`全局图床开关: ${imageBedSwitch == "1" ? "开启" : "关闭"}\n`),
@@ -309,7 +306,6 @@ export default onResponse(selects, async (e, next) => {
           Text(`CAPI上下文长度: ${formatContextLimit(capiContextLimit)}\n`),
           Text(`复杂输出: ${complexResponse == "1" ? "开启" : "关闭"}\n`),
           Text(`好感度开关: ${affectionIsOpen == "1" ? "开启" : "关闭"}\n`),
-          Text(`TTS回复开关: ${isOpenTTSReply == "1" ? "开启" : "关闭"}\n`),
           Text(`深度思考: ${deepThinkingIsOpen == "1" ? "默认" : "关闭"}\n`),
           Text(`仅艾特触发: ${atTriggerSwitch == "1" ? "开启" : "关闭"}\n`),
           Text(`全局图床开关: ${imageBedSwitch == "1" ? "开启" : "关闭"}\n`),

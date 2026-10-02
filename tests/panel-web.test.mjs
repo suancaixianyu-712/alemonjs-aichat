@@ -35,6 +35,7 @@ for (const base of [
       assert.equal(response.status, 200);
       assert.match(response.headers.get("content-type"), /text\/html/);
       const html = await response.text();
+      assert.doesNotMatch(html, /ttsResponseSwitch|语音回复/);
       const relativeBase = base ? ".." : "";
       assert.ok(html.includes(`href="${relativeBase}/panel/config"`));
       assert.ok(html.includes(`href="${relativeBase}/panel/chat`));

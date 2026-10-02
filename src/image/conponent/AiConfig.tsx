@@ -91,7 +91,6 @@ export default function App(data: {
   tools: boolean;
   complex: boolean;
   affection: boolean;
-  tts: boolean;
   deep: boolean;
   model: string;
   prompt: string;
@@ -182,7 +181,6 @@ export default function App(data: {
               <StatusItem label="总开关" value={data.switch} />
               <StatusItem label="复杂输出" value={data.complex} />
               <StatusItem label="好感度开关" value={data.affection} />
-              <StatusItem label="语音回复开关" value={data.tts} />
               <StatusItem label="深度思考" value={data.deep} isDeep />
               <StatusItem label="仅艾特触发" value={data.atTrigger} />
               <StatusItem label="全局图床开关" value={data.imageBedSwitch} />

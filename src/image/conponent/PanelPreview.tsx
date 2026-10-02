@@ -72,7 +72,6 @@ features:
   onlyAt: false
   toolCallContent: false
   affection: true
-  tts: false
 `;
 
 const countEnabledGroupSwitches = (group: PanelGroupConfigDraft) =>

@@ -242,8 +242,6 @@ export const getChatConfig = async (
   const complexOutputIsOpen = await redisClient.getComplexOutput(e.guid);
   /** 好感度开关 */
   const affectionIsOpen = await redisClient.getAffectionSwitch(e.guid);
-  /** TTS回复开关 */
-  const isOpenTTSReply = await redisClient.getTTSResponseSwitch(e.guid);
   /** R18开关 */
   const isOpenR18 = await redisClient.getR18Switch(e.guid);
   /** 主动搭话开关 */
@@ -399,14 +397,6 @@ export const getChatConfig = async (
   #### 撤回消息
   ${botName}:<revoke=消息id>
   ${
-    complexOutputIsOpen === "1" && isOpenTTSReply === "1"
-      ? `#### 语音
-  ${botName}:<tts=你好这是一个语音消息>
-  #### 切换音色
-  ${botName}:<音色=派蒙-默认><tts=这是派蒙的默认声音哦>`
-      : "#### 语音回复: 当前不可用"
-  }
-  ${
     isOpenR18 === "1"
       ? "#### NSFW内容: 不限制"
       : `
@@ -442,8 +432,6 @@ export const getChatConfig = async (
     complexOutputIsOpen,
     /** 好感度开关 */
     affectionIsOpen,
-    /** TTS回复开关 */
-    isOpenTTSReply,
     /** R18开关 */
     isOpenR18,
     /** 主动搭话开关 */

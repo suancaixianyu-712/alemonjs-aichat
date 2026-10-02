@@ -10,6 +10,7 @@
     "dev": "npx lvy dev",
     "build": "npx lvy build",
     "test:panel-web": "npm run build && node --experimental-test-module-mocks --test tests/panel-web.test.mjs",
+    "test:speech": "npm run build && node --experimental-test-module-mocks --test tests/speech.test.mjs tests/speech-config.test.mjs",
     "test:xianyu-game": "npm run build && node tests/xianyu-game-tool.test.mjs",
     "review": "npx alemonc start",
     "view": "npx lvy dev --view",
@@ -94,20 +95,6 @@
         "name": "httpProxy",
         "required": false,
         "type": "string"
-      },
-      {
-        "description": "TTS 语音服务, 部署服务 https://www.bilibili.com/video/BV1rYUFYcEip",
-        "name": "ttsServer",
-        "required": false,
-        "type": "object",
-        "config": [
-          {
-            "description": "TTS 服务地址",
-            "name": "host",
-            "required": false,
-            "type": "string"
-          }
-        ]
       },
       {
         "description": "百度内容审核",

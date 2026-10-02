@@ -1,20 +1,17 @@
-import { API } from "@alemonjs/onebot";
 import { emojiMap } from "@src/emoji";
 import { uploadImageToR2 } from "@src/s3";
 import {
-  Events,
   ImageFile,
   ImageURL,
   Mention,
   Text,
-  useClient,
   useMessage,
 } from "alemonjs";
 import { log } from "console";
 import OpenAi from "openai";
 import { isImageUrlToolContent } from "@src/api/image-url-tool";
+import { sendSpeechToolResult } from "@src/api/speech";
 import { getOpenAIProxyFetch } from "../../api/openaiProxy";
-import { TTSClient } from "@src/api/tts";
 import { getAiChatConfigValue } from "@src/config/app";
 import { getGroupTimeString, getMessageTimeString } from "@src/api/format";
 import {
@@ -33,7 +30,6 @@ import {
   type FileMediaItem,
 } from "@src/api/fileMessage";
 import errorimg from "@src/assets/error.png";
-import { imageReview } from "@src/api/review";
 import { buildXianyuGameSession } from "@src/api/xianyu-game";
 import { isNonVisionModel } from "./getChatConfig";
 import {
@@ -45,9 +41,6 @@ import { toolSessionController } from "@src/api/tool-session-controller";
 const value = getAiChatConfigValue();
 
 export const selects = onSelects(["message.create", "private.message.create"]);
-let ttsClient: TTSClient;
-
-let currentModel = "派蒙-默认"; // 默认音色
 
 export default onResponse(selects, async (e, next) => {
   console.log("e.UserId", e.UserId, e.bot);
@@ -64,7 +57,6 @@ export default onResponse(selects, async (e, next) => {
   const config = await redisClient.getAIConfig(e.guid);
   const complexOutputIsOpen = await redisClient.getComplexOutput(e.guid); // 复杂输出
   const affectionIsOpen = await redisClient.getAffectionSwitch(e.guid); // 好感度开关
-  const isOpenTTSReply = await redisClient.getTTSResponseSwitch(e.guid); // TTS回复开关
   const isOpenR18 = await redisClient.getR18Switch(e.guid); // R18开关
   const proactiveSwitch = await redisClient.getProactiveSwitch(e.guid); // 主动搭话开关
   const deepThoughtSwitch = await redisClient.getDeepThoughtSwitch(e.guid); // 深度思考开关
@@ -172,26 +164,6 @@ ${
 }
 
 ${
-  complexOutputIsOpen === "1" && isOpenTTSReply === "1"
-    ? `\n语音回复:
-此能力只能在onebot平台使用, 其他平台请勿使用, 否则会回复失败
-你可以使用语音回复来让你的回复更生动, 例如:
-${botName}:你好呀~<tts=你好呀~>
-可以通过调用GetTTSModels工具函数获取音色列表, 可使用<tts=内容,音色=派蒙-情感>的格式来指定音色,设置一次后, 后面的回复将使用相同的音色, 例如:
-${botName}:这是派蒙的声音哦~<音色=派蒙-默认><tts=这是派蒙的默认声音哦>
-${botName}:现在还是派蒙的声音哦~<tts=现在还是派蒙的声音哦>
-注意: 语音回复会增加回复时间, 请合理使用
-注意: 不可使用列表中不存在的音色, 否则会回复失败
-注意: 在设置音色时只需要指定模的角色名字和情感, 例如模型是"星穹铁道-中文-花火", 则音色应该设置为"花火-情感", 而不是"星穹铁道-中文-花火-情感"
-注意: 使用语音必须用${botName}:开头, 否则不会处理, 例如:
-<tts=你好> 这是错误的格式, 不会被处理
-${botName}:<tts=你好> 这是正确的格式, 会被处理
-
-`
-    : "语音回复: 当前不可用"
-}
-
-${
   isOpenR18 === "1"
     ? ""
     : `
@@ -199,7 +171,6 @@ R18内容:
 当用户发送的消息中包含敏感词时, 提醒用户注意言辞, 并且不回答用户的问题, 务必遵守国家法律法规
 `
 }
-
 
 ${
   affectionIsOpen === "1" && complexOutputIsOpen === "1"
@@ -665,6 +636,10 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
           }
         }
 
+        if (functionName === "GenerateSpeech") {
+          await sendSpeechToolResult(message, functionResult);
+        }
+
         const toolContent = isImageUrlToolContent(functionResult)
           ? "图片已转换，图片内容见下一条输入。"
           : JSON.stringify(
@@ -731,7 +706,6 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
     const replyMessages = reply.split(new RegExp(`${botName}:`, "g")).slice(1);
 
     const replymessages: { text: string; images: string[] }[] = [];
-    const ttsMessages: { text: string; model: string }[] = [];
 
     for (const replyMessage of replyMessages) {
       // 从消息中提取图片
@@ -754,25 +728,9 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
         }
       }
 
-      // 处理语音回复
-      const ttsRegex = /<(tts|音色)=([^>]+)>/gi;
-      let ttsMatch: RegExpExecArray | null;
-
-      while ((ttsMatch = ttsRegex.exec(replyMessage)) !== null) {
-        console.log("检测到语音回复");
-
-        const isTTS = ttsMatch[1].toLowerCase() === "tts";
-        const content = ttsMatch[2].trim();
-        if (isTTS) {
-          ttsMessages.push({ text: content, model: currentModel });
-        } else {
-          currentModel = content;
-        }
-      }
-
       // 组合消息,添加到replymessages数组中
       replymessages.push({
-        text: replyMessage.replace(imageRegex, "").replace(ttsRegex, "").trim(),
+        text: replyMessage.replace(imageRegex, "").trim(),
         images: imgUrls,
       });
     }
@@ -781,17 +739,6 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
       ...res.choices?.[0].message,
       content: reply,
     });
-
-    // 发送消息
-    if (isOpenTTSReply === "1") {
-      // 提前发送语音消息避免等待时间过长
-      ttsClient = new TTSClient();
-      console.log("发送语音", ttsMessages);
-
-      for (const ttsMessage of ttsMessages) {
-        sendTTSMessage(ttsMessage.text, e, ttsClient, ttsMessage.model);
-      }
-    }
 
     // 处理消息
     for (let i = 0; i < replymessages.length; i++) {
@@ -852,43 +799,3 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
     next();
   }
 });
-
-export async function sendTTSMessage(
-  message: any,
-  e: Events["message.create"] | Events["private.message.create"],
-
-  ttsClient: TTSClient,
-  modelAndEmotion: string,
-) {
-  const [model, emotion] = modelAndEmotion.split("-");
-  console.log("message", message, "model", model, "emotion", emotion);
-
-  await ttsClient.setModel(model || "派蒙", emotion || "默认");
-  // 发送TTS语音
-  ttsClient.getAudio(message).then(async (audio) => {
-    console.log("audio", audio);
-
-    if (audio) {
-      try {
-        if (e.Platform == "onebot") {
-          const [client] = useClient(e, API);
-
-          await client.sendMessage({
-            message_type: e.value.message_type,
-            group_id: e.value.group_id ?? undefined,
-            message: [
-              {
-                type: "record",
-                data: {
-                  file: audio.audio_url,
-                },
-              },
-            ],
-          });
-        }
-      } catch (error) {
-        console.log(error);
-      }
-    }
-  });
-}

@@ -1,5 +1,6 @@
 import redisClient from "@src/config";
 import { CApiReply } from "@src/response/zreply/capi";
+import { isSpeechToolResult } from "@src/api/speech";
 
 export const PANEL_BOT_ID = "aichatbot";
 export const PANEL_DEFAULT_USER_ID = "webuser";
@@ -357,16 +358,12 @@ const createPanelOutput = (
           at: item.at || [],
         });
       }
-
-      for (const item of aireply?.ttsMessages || []) {
-        await pushOutputMessage({
-          from: "bot",
-          name: PANEL_BOT_ID,
-          text: `[语音] ${item.text}`,
-        });
-      }
     },
     sendToolResult: async (functionName: string, payload: any) => {
+      if (functionName === "GenerateSpeech" && isSpeechToolResult(payload)) {
+        await pushOutputMessage({ from: "bot", name: PANEL_BOT_ID, text: `AI 合成语音：${payload.url}` });
+        return;
+      }
       if (!shouldCollectToolImages(functionName, payload)) return;
       const label =
         functionName === "StableDiffusionGenerateImage" ||

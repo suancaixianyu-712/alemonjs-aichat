@@ -5,18 +5,14 @@
   ImageURL,
   Video,
   Mention,
-  Audio,
 } from "alemonjs";
 import { useMessage } from "@src/utils/command-message";
 import OpenAi from "openai";
 import { getOpenAIProxyFetch } from "../../api/openaiProxy";
-import { sendTTSMessage } from "../zreply/res";
 import { availableTools } from "@src/api/aitools";
-import { TTSClient } from "@src/api/tts";
 import redisClient from "@src/config";
 import { imageReview } from "@src/api/review";
 import { uploadImageToR2 } from "@src/s3";
-import { createTTSMessage } from "../zreply/tts";
 import { getAiChatConfigValue } from "@src/config/app";
 
 export const selects = onSelects(["message.create", "private.message.create"]);
@@ -524,56 +520,6 @@ export default onResponse(selects, async (e) => {
       action === "开启" ? "1" : "0",
     );
     message.send(format(Text(`已${action}画图提示词优化喵~`)));
-  }
-
-  // 文字合成语音
-  if (/^(\/|#)(.+)说([\s\S]*)$/i.test(e.msg)) {
-    const match = e.msg.match(/^(\/|#)(.+)说([\s\S]*)$/i);
-    const [, , speaker, content] = match;
-    console.log("speaker", speaker);
-    console.log("content", content);
-
-    if (!content.trim()) {
-      message.send(format(Text("请提供要说的话，例如：\n#纳西妲说 你好")));
-      return;
-    }
-    // message.send(format(Text("正在合成语音喵~")));
-
-    if (!speaker.trim()) {
-      message.send(format(Text("请提供说话人，例如：\n#纳西妲说 你好")));
-      return;
-    }
-    const ttsclient = new TTSClient();
-    const audioUrl = await createTTSMessage(
-      content,
-      ttsclient,
-      `${speaker}-默认`,
-    );
-    if (audioUrl !== "") {
-      await message.send(format(Audio(audioUrl)));
-    }
-  }
-
-  // 安装语音模型
-  if (/^(\/|#)安装语音(模型)?(.+)$/i.test(e.msg)) {
-    const match = e.msg.match(/^(\/|#)安装语音(模型)?(.+)$/i);
-    const [, , , model] = match;
-    console.log("model", model);
-    if (!model.trim()) {
-      message.send(
-        format(Text("请提供要安装的语音模型，例如：\n#安装语音模型 霓裳")),
-      );
-      return;
-    }
-    const ttsclient = new TTSClient();
-    const res = await ttsclient.installModel(model);
-    if (res.success) {
-      message.send(format(Text(`语音模型${model}安装成功喵~`)));
-    } else {
-      message.send(
-        format(Text(`语音模型${model}安装失败了喵~\n原因：${res.message}`)),
-      );
-    }
   }
 
   // 转图片

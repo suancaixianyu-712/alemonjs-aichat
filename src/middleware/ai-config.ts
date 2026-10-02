@@ -1,5 +1,7 @@
 import { handleAddAIMessage } from "@src/response/add-ai/res";
 import { handleSwitchAIMessage } from "@src/response/switch-ai/res";
+import { handleSpeechMessage, isSpeechConfigCommand, getSpeechSessionKey } from "@src/response/speech/res";
+import redisClient from "@src/config";
 
 const selects = onSelects(["message.create", "private.message.create"]);
 
@@ -9,6 +11,17 @@ const selects = onSelects(["message.create", "private.message.create"]);
 export default onMiddleware(selects, async (event, next) => {
   event["msg"] = event.MessageText;
   event["guid"] = event.ChannelId ?? event.UserId;
+
+  const configSessionSuffix = `${event.Platform || "unknown"}:${event.guid}:${event.UserId || "unknown"}`;
+  if (isSpeechConfigCommand(event.msg)) {
+    await redisClient.redis.del(`ai:add:session:${configSessionSuffix}`, `ai:switch:session:${configSessionSuffix}`);
+  } else if (/^(#|\/)(?:添加ai|切换(?:ai|配置))(?:\s|$)/i.test(event.msg)) {
+    await redisClient.redis.del(getSpeechSessionKey(event));
+  }
+  if (await handleSpeechMessage(event)) {
+    event["Xianyu"] = false;
+    return;
+  }
 
   const isAILockCommand =
     /^(#|\/)(?:锁定ai列表|(?:锁定|解锁)ai)(?:\s|$)/i.test(event.msg);

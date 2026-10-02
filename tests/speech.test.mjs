@@ -1,0 +1,71 @@
+import assert from "node:assert/strict";
+import { createServer } from "node:http";
+import { once } from "node:events";
+import { after, test, mock } from "node:test";
+
+mock.module("alemonjs", { namedExports: {
+  Audio: (value) => ({ type: "Audio", value }),
+  Text: (value) => ({ type: "Text", value }),
+} });
+const { createSpeechAudio, getSpeechVoices, sendSpeechToolResult } = await import("../lib/api/speech.js");
+
+globalThis.format = (...items) => items;
+const requests = [];
+let emptyResponse = false;
+const server = createServer(async (req, res) => {
+  let raw = "";
+  for await (const chunk of req) raw += chunk;
+  requests.push({ path: req.url, method: req.method, auth: req.headers.authorization, body: JSON.parse(raw) });
+  res.writeHead(200, { "Content-Type": "audio/mpeg" });
+  res.end(emptyResponse ? Buffer.alloc(0) : Buffer.from("ID3test-audio"));
+});
+server.listen(0, "127.0.0.1");
+await once(server, "listening");
+after(() => { server.closeAllConnections(); server.close(); });
+const base = {
+  host: `http://127.0.0.1:${server.address().port}/v1`,
+  key: "test-speech-key", model: "gpt-4o-mini-tts", voice: "alloy", text: "你好",
+};
+
+test("真实 OpenAI SDK 使用语音端点、指定模型及音色，读取 MP3 二进制", async () => {
+  const audio = await createSpeechAudio({ ...base, voice: "nova", instructions: "温柔地朗读", useProxy: false, httpProxy: "http://127.0.0.1:1" });
+  assert.equal(audio.toString(), "ID3test-audio");
+  assert.deepEqual(requests.at(-1), {
+    path: "/v1/audio/speech", method: "POST", auth: "Bearer test-speech-key",
+    body: { input: "你好", model: "gpt-4o-mini-tts", voice: "nova", instructions: "温柔地朗读", response_format: "mp3" },
+  });
+});
+
+test("旧版 tts-1 不发送 instructions，日期版本 mini-tts 保留 instructions", async () => {
+  await createSpeechAudio({ ...base, model: "tts-1-hd", instructions: "欢快" });
+  assert.equal("instructions" in requests.at(-1).body, false);
+  await createSpeechAudio({ ...base, model: "gpt-4o-mini-tts-2025-12-15", instructions: "欢快" });
+  assert.equal(requests.at(-1).body.instructions, "欢快");
+});
+
+test("空文本、超长文本和当前模型不支持的音色在请求前拒绝", async () => {
+  const count = requests.length;
+  await assert.rejects(createSpeechAudio({ ...base, text: "  " }), /不能为空/);
+  await assert.rejects(createSpeechAudio({ ...base, text: "中".repeat(4097) }), /4096/);
+  await assert.rejects(createSpeechAudio({ ...base, model: "tts-1", voice: "marin" }), /不支持音色/);
+  assert.equal(requests.length, count);
+  assert.ok(getSpeechVoices("gpt-4o-mini-tts").includes("marin"));
+  assert.ok(getSpeechVoices("tts-1").includes("nova"));
+});
+
+test("成功工具结果发送带 AI 标识的音频，失败结果不发送", async () => {
+  const sent = [];
+  const message = { send: async (payload) => sent.push(payload) };
+  await sendSpeechToolResult(message, { ok: true, type: "audio", url: "https://example.invalid/voice.mp3", model: base.model, voice: "alloy" });
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].find((item) => item.type === "Audio").value, "https://example.invalid/voice.mp3");
+  assert.match(sent[0].find((item) => item.type === "Text").value, /AI 合成语音/);
+  await sendSpeechToolResult(message, { ok: false, error: "失败" });
+  assert.equal(sent.length, 1);
+});
+
+test("空音频不会进入上传和发送流程", async () => {
+  emptyResponse = true;
+  try { await assert.rejects(createSpeechAudio(base), /空音频/); }
+  finally { emptyResponse = false; }
+});

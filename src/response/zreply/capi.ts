@@ -5,15 +5,14 @@ import {
   ImageURL,
   Mention,
   Text,
-  Audio,
   useMessage,
 } from "alemonjs";
 import { log } from "console";
 import OpenAi from "openai";
 import { isImageUrlToolContent } from "@src/api/image-url-tool";
+import { sendSpeechToolResult } from "@src/api/speech";
 import { getOpenAIProxyFetch } from "../../api/openaiProxy";
 import { getAiChatConfigValue } from "@src/config/app";
-import { TTSClient } from "@src/api/tts";
 import {
   awaitWithAITurnAbort,
   beginAITurn,
@@ -34,7 +33,6 @@ import {
   getDeepThoughtReasoning,
   shouldSkipAIReply,
 } from "./getChatConfig";
-import { createTTSMessage } from "./tts";
 import { executeAlemonCommand } from "@src/routes/commands";
 import { parseAIReply, removeThinkContent, sendAIReplyToOutput } from "./tools";
 import { requestRapiCompletion } from "./rapi";
@@ -45,7 +43,6 @@ import { getLockedAIMessage } from "@src/api/ai-lock";
 import { annotatePermissionBoundary } from "@src/api/user-permission";
 
 export const selects = onSelects(["message.create", "private.message.create"]);
-let currentModel = "派蒙-默认"; // 默认音色
 const CAPI_CONTEXT_COMPRESSION_RATIO = 0.9;
 const CAPI_CONTEXT_RETAIN_RATIO = 0.35;
 const AUTO_SUMMARY_DETAIL_MAX_LENGTH = 2000;
@@ -73,17 +70,6 @@ const sendAIReply = async (
 
   if (await sendAIReplyToOutput(message, aireply)) {
     return aireply;
-  }
-
-  if (aireply?.ttsMessages) {
-    for (const ttsMsg of aireply.ttsMessages) {
-      const ttsMessage = await createTTSMessage(
-        ttsMsg.text,
-        new TTSClient(),
-        ttsMsg.model ?? currentModel,
-      );
-      await message.send(format(Audio(ttsMessage)));
-    }
   }
 
   if (aireply?.replyMessages) {
@@ -1002,6 +988,8 @@ export const CApiReply = async (
           throwIfAITurnAborted(aiTurn.signal);
           if (typeof message?.sendToolResult === "function") {
             await message.sendToolResult(functionName, functionResult);
+          } else if (functionName === "GenerateSpeech") {
+            await sendSpeechToolResult(message, functionResult);
           }
 
           // 只保留 OpenAI 合法字段，避免把 reasoning_content 塞进 tool 消息

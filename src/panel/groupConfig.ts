@@ -7,7 +7,6 @@ export type PanelGroupSwitchKey =
   | "toolCallContentSwitch"
   | "complexOutput"
   | "affectionSwitch"
-  | "ttsResponseSwitch"
   | "deepThoughtSwitch"
   | "r18Switch"
   | "atTriggerSwitch"
@@ -45,7 +44,6 @@ export const panelGroupSwitchDefinitions: Array<{
   },
   { key: "complexOutput", label: "复杂输出", desc: "保留更完整的富文本结果" },
   { key: "affectionSwitch", label: "好感度系统", desc: "记录长期会话偏好" },
-  { key: "ttsResponseSwitch", label: "语音回复", desc: "允许启用 TTS 输出" },
   { key: "deepThoughtSwitch", label: "深度思考", desc: "允许模型使用深度思考" },
   { key: "r18Switch", label: "R18开关", desc: "允许当前群启用 R18 内容" },
   { key: "atTriggerSwitch", label: "仅艾特触发", desc: "群聊中只响应艾特消息" },
@@ -73,7 +71,6 @@ const panelGroupPrefixes = [
   "ai:tool_call_content:switch:",
   "ai:complex_output:",
   "ai:affection:switch:",
-  "ai:tts:response:",
   "ai:deep_thought:switch:",
   "ai:r18:switch:",
   "ai:at_trigger:switch:",
@@ -113,7 +110,6 @@ export const loadPanelGroupConfig = async (
     toolCallContentSwitch,
     complexOutput,
     affectionSwitch,
-    ttsResponseSwitch,
     deepThoughtSwitch,
     r18Switch,
     atTriggerSwitch,
@@ -130,7 +126,6 @@ export const loadPanelGroupConfig = async (
     redisClient.getToolCallContentSwitch(guid),
     redisClient.getComplexOutput(guid),
     redisClient.getAffectionSwitch(guid),
-    redisClient.getTTSResponseSwitch(guid),
     redisClient.getDeepThoughtSwitch(guid),
     redisClient.getR18Switch(guid),
     redisClient.getAtTriggerSwitch(guid),
@@ -152,7 +147,6 @@ export const loadPanelGroupConfig = async (
       toolCallContentSwitch: toBool(toolCallContentSwitch),
       complexOutput: toBool(complexOutput),
       affectionSwitch: toBool(affectionSwitch),
-      ttsResponseSwitch: toBool(ttsResponseSwitch),
       deepThoughtSwitch: toBool(deepThoughtSwitch),
       r18Switch: toBool(r18Switch),
       atTriggerSwitch: toBool(atTriggerSwitch),
@@ -250,7 +244,6 @@ export const updatePanelGroupConfig = async (input: {
     ),
     redisClient.setComplexOutput(guid, input.switches.complexOutput),
     redisClient.setAffectionSwitch(guid, input.switches.affectionSwitch),
-    redisClient.setTTSResponseSwitch(guid, input.switches.ttsResponseSwitch),
     redisClient.setDeepThoughtSwitch(guid, input.switches.deepThoughtSwitch),
     redisClient.setR18Switch(guid, input.switches.r18Switch),
     redisClient.setAtTriggerSwitch(guid, input.switches.atTriggerSwitch),

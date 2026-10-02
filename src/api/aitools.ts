@@ -1,7 +1,6 @@
 import { redis } from "../redis";
 import fs from "fs";
 import { uploadImageToR2, uploadMediaToR2 } from "../s3";
-import { TTSClient } from "./tts";
 import { ChatCompletionTool } from "openai/resources";
 import OpenAi, { toFile } from "openai";
 import { loadSkillDetail } from "./loadSkill";
@@ -31,6 +30,7 @@ import {
 import { getOpenAIProxyFetch } from "./openaiProxy";
 import { useXianyuGameTool } from "./xianyu-game";
 import { convertToImageUrlContent } from "./image-url-tool";
+import { generateSpeech } from "./speech-tool";
 
 const value = getAiChatConfigValue();
 
@@ -58,6 +58,22 @@ const getPrompt = async (text: string): Promise<string> => {
 };
 
 export const tools: ChatCompletionTool[] = [
+  {
+    type: "function",
+    function: {
+      name: "GenerateSpeech",
+      description: "将文本合成为 AI 语音并自动发送音频。使用全局已配置的语音模型和音色，不需要再输出音频标签或链接。文本最多 4096 个字符。",
+      parameters: {
+        type: "object",
+        properties: {
+          text: { type: "string", description: "要朗读的文本，不能为空，最多 4096 个字符" },
+          model: { type: "string", description: "可选，已添加的语音模型 ID；省略时使用全局当前模型" },
+          instructions: { type: "string", description: "可选，语气、情感或朗读风格要求；tts-1 和 tts-1-hd 不支持，调用时会忽略" },
+        },
+        required: ["text"],
+      },
+    },
+  },
   {
     type: "function",
     function: {
@@ -241,18 +257,6 @@ export const tools: ChatCompletionTool[] = [
           },
         },
         required: ["prompt"],
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "GetTTSModels",
-      description:
-        "获取可用的TTS模型列表, 可以用来选择不同的音色进行语音合成. 模型会不定期更新, 你可以定期调用这个工具来获取最新的模型列表. 当你想要使用TTS功能时, 可以先调用这个工具来获取可用的模型列表, 然后选择一个你喜欢的模型来进行语音合成. 例如, 你可以选择一个叫做'派蒙-默认'的模型来模仿派蒙的声音进行语音合成",
-      parameters: {
-        type: "object",
-        properties: {},
       },
     },
   },
@@ -3314,6 +3318,7 @@ const performServerCommandReview = async ({
 };
 
 export const availableTools = {
+  GenerateSpeech: generateSpeech,
   ConvertToImageUrl: async ({ address }: { address: string }) =>
     convertToImageUrlContent(address),
 
@@ -4125,16 +4130,6 @@ export const availableTools = {
       console.error("Error calling AIVideoResult:", error);
       return "调用接口失败" + error;
     }
-  },
-
-  /**
-   *  获取TTS模型列表
-   * @returns  TTS模型列表
-   */
-  GetTTSModels: async () => {
-    const ttsClient = new TTSClient();
-    const models = await ttsClient.getModels("v4");
-    return models;
   },
 
   AgentListWorkspaces: async ({

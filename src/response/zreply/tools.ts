@@ -1,7 +1,6 @@
 import {
   format,
   Text,
-  Audio,
   Mention,
   ImageFile,
   ImageURL,
@@ -9,13 +8,9 @@ import {
 
 import redisClient from "@src/config";
 
-import { TTSClient } from "@src/api/tts";
-import { createTTSMessage } from "./tts";
 import { uploadImageToR2 } from "@src/s3";
 import { imageReview } from "@src/api/review";
 import errorimg from "@src/assets/error.png";
-
-let currentModel = "派蒙-默认"; // 默认音色
 
 export const removeThinkContent = (text: string) => {
   return text
@@ -64,25 +59,9 @@ const handleRevoke = async (text: string, message: any) => {
   }
 };
 
-const extractTTS = (text: string, list: any[]) => {
-  const regex = /<(tts|音色)=([^>]+)>/gi;
-  let match;
-
-  while ((match = regex.exec(text)) !== null) {
-    const isTTS = match[1].toLowerCase() === "tts";
-    const content = match[2].trim();
-    if (isTTS) {
-      list.push({ text: content, model: currentModel });
-    } else {
-      currentModel = content;
-    }
-  }
-};
-
 const cleanMessage = (text: string) => {
   return text
     .replace(/<img=(.*?)>/g, "")
-    .replace(/<(tts|音色)=([^>]+)>/gi, "")
     .replace(/<command=(.*?)>/g, "")
     .replace(/<revoke=(.*?)>/g, "")
     .replace(/<at=(.*?)>/g, "")
@@ -125,20 +104,6 @@ const extractCommands = (text: string, list: string[]) => {
 
   while ((match = regex.exec(text)) !== null) {
     list.push(match[1].trim());
-  }
-};
-
-export const handleTTS = async (ttsMessages: any[], cfg: any, message: any) => {
-  if (cfg.isOpenTTSReply !== "1") return;
-
-  const ttsClient = new TTSClient();
-
-  for (const tts of ttsMessages) {
-    const audioUrl = await createTTSMessage(tts.text, ttsClient, tts.model);
-
-    if (audioUrl) {
-      await message.send(format(Audio(audioUrl)));
-    }
   }
 };
 
@@ -195,7 +160,6 @@ export const parseAIReply = async (
   const replyMessages = visibleText.split(new RegExp(`${cfg.botName}:`, "g"));
 
   const replyMessagesResult: any[] = [];
-  const ttsMessages: any[] = [];
   const nextCommands: string[] = [];
   const atTargets: string[] = [];
 
@@ -211,7 +175,6 @@ export const parseAIReply = async (
     await handleRevoke(replyMessage, message);
     extractAt(replyMessage, messageAtTargets);
     atTargets.push(...messageAtTargets);
-    extractTTS(replyMessage, ttsMessages);
 
     const cleanText = cleanMessage(replyMessage);
 
@@ -224,7 +187,6 @@ export const parseAIReply = async (
 
   return {
     replyMessages: replyMessagesResult,
-    ttsMessages,
     nextCommands,
     atTargets,
   };

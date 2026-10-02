@@ -2321,17 +2321,6 @@ class db {
     return switchStr;
   }
 
-  /** 设置语音回复开关 */
-  async setTTSResponseSwitch(guid: string, enable: boolean): Promise<void> {
-    await this.redis.set(`ai:tts:response:${guid}`, enable ? "1" : "0");
-  }
-
-  /** 获取语音回复开关 */
-  async getTTSResponseSwitch(guid: string): Promise<string> {
-    const switchStr = (await this.redis.get(`ai:tts:response:${guid}`)) || "0";
-    return switchStr;
-  }
-
   /** 添加图片URL */
   async addImgUrl(guid: string, url: string): Promise<void> {
     const id = guid ?? "global";
