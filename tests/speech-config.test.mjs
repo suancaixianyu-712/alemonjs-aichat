@@ -30,6 +30,9 @@ mock.module(new URL("../lib/config.js", import.meta.url).href, { defaultExport: 
   getAIDisplayNames: async (names) => names,
   getAIListConfig: async (name) => aiConfigs.get(name) ?? null,
   isAIProxyEnabled: (config) => config?.useProxy === true,
+  getToolProxySwitch: async () => values.get("ai:tool_proxy:switch") || "0",
+  isToolProxyEnabled: async (config) =>
+    config?.useProxy === true || (values.get("ai:tool_proxy:switch") || "0") === "1",
 } });
 mock.module(new URL("../lib/config/app.js", import.meta.url).href, { namedExports: {
   getAiChatConfigValue: () => ({ httpProxy: "http://127.0.0.1:7897" }),
@@ -114,6 +117,21 @@ test("调用时读取最新 AI 密钥与代理开关，来源删除时返回可�
   aiConfigs.set("openai/gpt-test", old);
 });
 
+test("工具代理开启后，语音配置即使所属 AI 直连也会走代理", async () => {
+  const target = aiConfigs.get("openai/gpt-test");
+  const original = target.useProxy;
+  target.useProxy = false;
+  values.set("ai:tool_proxy:switch", "1");
+  try {
+    const resolved = await config.resolveSpeechConfig();
+    assert.equal(resolved.useProxy, true);
+    assert.equal(resolved.httpProxy, "http://127.0.0.1:7897");
+  } finally {
+    target.useProxy = original;
+    values.delete("ai:tool_proxy:switch");
+  }
+});
+
 let status = 200;
 const server = createServer((req, res) => {
   req.resume();
@@ -163,4 +181,22 @@ test("中间件让语音配置与原有 AI 配置流程互斥，普通消息继�
   await middleware({ ...event, ChannelId: event.guid, MessageText: "#切换AI" }, () => { continued = true; });
   assert.equal(values.has(getSpeechSessionKey(event)), false);
   assert.equal(continued, true);
+});
+
+test("连接失败时返回可排查的原因，而不是裸的 Connection error.", async () => {
+    const target = aiConfigs.get("openai/gpt-test");
+    const originalHost = target.host;
+    Object.assign(target, { host: "http://127.0.0.1:1/v1", useProxy: false });
+    try {
+        const result = await generateSpeech({ text: "你好" });
+        assert.equal(result.ok, false);
+        assert.match(result.error, /连接失败或超时/);
+        assert.match(result.error, /原因：/);
+        assert.match(result.error, /ECONNREFUSED|fetch failed|connect/i);
+        assert.notEqual(result.error, "Connection error.");
+        assert.doesNotMatch(result.error, /^Connection error/);
+    }
+    finally {
+        Object.assign(target, { host: originalHost });
+    }
 });

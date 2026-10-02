@@ -1,4 +1,4 @@
-﻿import {
+import {
   Image,
   ImageFile,
   Text,
@@ -223,7 +223,7 @@ export default onResponse(selects, async (e) => {
           timeout: 300000,
           fetch: getOpenAIProxyFetch(
             configValue.httpProxy,
-            redisClient.isAIProxyEnabled(aiConfig),
+            await redisClient.isToolProxyEnabled(aiConfig),
           ),
         });
 

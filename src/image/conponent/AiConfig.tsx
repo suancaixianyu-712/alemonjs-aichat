@@ -8,6 +8,7 @@ const cmds = [
   { cmd: "#切换AI [厂商/模型]", desc: "按厂商选择或直接切换AI模型" },
   { cmd: "/切换模型 <模型名称>", desc: "切换当前使用的AI模型" },
   { cmd: "/<开启|关闭>代理", desc: "为当前AI配置单独开启代理或直连" },
+  { cmd: "#<开启|关闭>工具代理", desc: "工具请求单独走代理，不影响对话" },
   { cmd: "/<开启|关闭>仅艾特触发", desc: "开启或关闭仅艾特触发功能" },
   { cmd: "/<开启|关闭>工具", desc: "开启或关闭AI工具" },
   { cmd: "/<开启|关闭>图床", desc: "按管理员权限开启或关闭全局 WebUI 图片链接访问" },
@@ -104,6 +105,7 @@ export default function App(data: {
   toolPromptRevokeSwitch: boolean;
   toolPromptArgsSwitch: boolean;
   toolCallContentSwitch: boolean;
+  toolProxy: boolean;
   capiContextLimit: string;
 }) {
   return (
@@ -201,6 +203,7 @@ export default function App(data: {
                 label="工具调用内容"
                 value={data.toolCallContentSwitch}
               />
+              <StatusItem label="工具代理" value={data.toolProxy} />
               <div className="flex items-center justify-between py-2 px-2 rounded-lg bg-white/5">
                 <span className=" text-white/70">CAPI上下文长度</span>
                 <span className="px-3 py-0.5 rounded-full text-xs font-mono font-medium border bg-cyan-500/20 text-cyan-300 border-cyan-500/30">

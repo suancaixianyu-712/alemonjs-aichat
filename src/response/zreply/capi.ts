@@ -634,7 +634,6 @@ export const CApiReply = async (
     // log("请求AI，参数：", createParams);
     const stream = await requestChatCompletion(createParams, messages);
 
-    log("AI回复原始数据:\n", JSON.stringify(stream, null, 2));
     let fullContent = "";
     let toolCalls: any[] = [];
 
@@ -988,7 +987,10 @@ export const CApiReply = async (
           throwIfAITurnAborted(aiTurn.signal);
           if (typeof message?.sendToolResult === "function") {
             await message.sendToolResult(functionName, functionResult);
-          } else if (functionName === "GenerateSpeech") {
+          } else if (
+            functionName === "GenerateSpeech" ||
+            functionName === "MiniMaxVoice"
+          ) {
             await sendSpeechToolResult(message, functionResult);
           }
 

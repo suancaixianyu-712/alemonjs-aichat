@@ -238,7 +238,7 @@ export const getImageBuffer = async (
       isXAIImage && !value.xaiImgProxy
         ? getOpenAIProxyFetch(
             value.httpProxy,
-            redisClient.isAIProxyEnabled(grokConfig),
+            await redisClient.isToolProxyEnabled(grokConfig),
           ) || fetch
         : fetch;
     let response = await requestFetch(url);

@@ -74,7 +74,7 @@ export const resolveSpeechConfig = async (model?: string) => {
     ...config,
     host: ai.host.trim(),
     key: ai.key.trim(),
-    useProxy: redisClient.isAIProxyEnabled(ai),
+    useProxy: await redisClient.isToolProxyEnabled(ai),
     httpProxy: getAiChatConfigValue().httpProxy,
   };
 };

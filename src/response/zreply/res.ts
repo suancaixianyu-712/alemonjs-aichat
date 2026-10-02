@@ -636,7 +636,10 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
           }
         }
 
-        if (functionName === "GenerateSpeech") {
+        if (
+          functionName === "GenerateSpeech" ||
+          functionName === "MiniMaxVoice"
+        ) {
           await sendSpeechToolResult(message, functionResult);
         }
 

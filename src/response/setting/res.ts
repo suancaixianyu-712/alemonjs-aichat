@@ -1,4 +1,4 @@
-﻿import redisClient from "@src/config";
+import redisClient from "@src/config";
 import { Text } from "alemonjs";
 import { useMessage } from "@src/utils/command-message";
 import { log } from "console";
@@ -331,6 +331,38 @@ export default onResponse(selects, async (e, next) => {
       format(
         Text(
           `已为 ${currentAI} ${enable ? "开启" : "关闭"}代理。请求该配置时${enable ? "走代理" : "直连"}。`,
+        ),
+      ),
+    );
+    return;
+  }
+
+  // 工具调用专用代理。必须写在「开启工具 <名称>」之前，避免把「代理」当成工具名。
+  if (/^(\/|#)(开启|关闭)工具代理$/i.test(e.msg)) {
+    if (!e.IsMaster) {
+      message.send(format(Text("仅管理员可设置工具代理。")));
+      return;
+    }
+    const match = e.msg.match(/^(\/|#)(开启|关闭)工具代理$/i);
+    if (!match) return;
+    const enable = match[2] === "开启";
+    if (enable && !String(getAiChatConfigValue().httpProxy || "").trim()) {
+      message.send(
+        format(
+          Text(
+            "未配置代理地址，请先在 alemon.config.yaml 中填写 aichat.httpProxy。",
+          ),
+        ),
+      );
+      return;
+    }
+    await redisClient.setToolProxySwitch(enable);
+    message.send(
+      format(
+        Text(
+          enable
+            ? "已开启工具代理。语音、画图、识图等工具请求将走代理，对话本身仍按当前 AI 的代理开关。"
+            : "已关闭工具代理。工具请求改回按各自 AI 配置决定是否走代理。",
         ),
       ),
     );

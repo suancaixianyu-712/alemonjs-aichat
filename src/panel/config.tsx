@@ -338,6 +338,7 @@ export default defineConfig({
           toolPromptRevokeSwitch={false}
           toolPromptArgsSwitch={true}
           toolCallContentSwitch={false}
+          toolProxy={false}
           imageBedSwitch={true}
         />
       ),

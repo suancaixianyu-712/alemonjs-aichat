@@ -224,7 +224,7 @@ const reviewPermissionWithCurrentAI = async (
       timeout: 120000,
       fetch: getOpenAIProxyFetch(
         getAiChatConfigValue().httpProxy,
-        redisClient.isAIProxyEnabled(config),
+        await redisClient.isToolProxyEnabled(config),
       ),
     });
     const params = {

@@ -180,6 +180,12 @@ export default onResponse(selects, async (e, next) => {
       httpProxyConfigured,
       currentAI,
     );
+    const toolProxyOn = (await redisClient.getToolProxySwitch()) === "1";
+    const toolProxyStatus = !toolProxyOn
+      ? "工具代理: 关闭"
+      : httpProxyConfigured
+        ? "工具代理: 已开启（语音、画图等工具请求走代理）"
+        : "工具代理: 已开启（未配置 httpProxy，当前不生效）";
 
     if (toolStatus.tool !== "default") {
       const note = `后端: ${toolStatus.toolLabel}${
@@ -187,7 +193,11 @@ export default onResponse(selects, async (e, next) => {
       }`;
       message.send(
         format(
-          Text([runtimeLine, configLine, note].filter(Boolean).join("\n")),
+          Text(
+            [runtimeLine, configLine, httpProxyStatus, toolProxyStatus, note]
+              .filter(Boolean)
+              .join("\n"),
+          ),
         ),
       );
       return;
@@ -202,6 +212,7 @@ export default onResponse(selects, async (e, next) => {
             runtimeLine,
             configLine,
             httpProxyStatus,
+            toolProxyStatus,
             formatAIContextStatus(stats, capiContextLimit),
           ].join("\n"),
         ),
@@ -236,6 +247,7 @@ export default onResponse(selects, async (e, next) => {
     const toolCallContentSwitch = await redisClient.getToolCallContentSwitch(
       e.guid,
     ); // 工具调用内容发送开关
+    const toolProxySwitch = await redisClient.getToolProxySwitch(); // 工具代理
     const capiContextLimit = await redisClient.getCAPIContextLimit(e.guid);
 
     // 发送消息
@@ -262,6 +274,7 @@ export default onResponse(selects, async (e, next) => {
           toolPromptRevokeSwitch: toolPromptRevokeSwitch == "1",
           toolPromptArgsSwitch: toolPromptArgsSwitch == "1",
           toolCallContentSwitch: toolCallContentSwitch == "1",
+          toolProxy: toolProxySwitch == "1",
           capiContextLimit: formatContextLimit(capiContextLimit),
         },
         {
@@ -281,6 +294,7 @@ export default onResponse(selects, async (e, next) => {
             Text(
               `工具调用内容: ${toolCallContentSwitch == "1" ? "开启" : "关闭"}\n`,
             ),
+            Text(`工具代理: ${toolProxySwitch == "1" ? "开启" : "关闭"}\n`),
             Text(`CAPI上下文长度: ${formatContextLimit(capiContextLimit)}\n`),
             Text(`复杂输出: ${complexResponse == "1" ? "开启" : "关闭"}\n`),
             Text(`好感度开关: ${affectionIsOpen == "1" ? "开启" : "关闭"}\n`),
@@ -303,6 +317,7 @@ export default onResponse(selects, async (e, next) => {
           Text(
             `工具调用内容: ${toolCallContentSwitch == "1" ? "开启" : "关闭"}\n`,
           ),
+          Text(`工具代理: ${toolProxySwitch == "1" ? "开启" : "关闭"}\n`),
           Text(`CAPI上下文长度: ${formatContextLimit(capiContextLimit)}\n`),
           Text(`复杂输出: ${complexResponse == "1" ? "开启" : "关闭"}\n`),
           Text(`好感度开关: ${affectionIsOpen == "1" ? "开启" : "关闭"}\n`),

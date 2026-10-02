@@ -10,7 +10,9 @@ import { isNonVisionModel } from "../response/zreply/getChatConfig";
 import { isPrivateIP, validateURL } from "./security";
 import { spawn } from "child_process";
 import * as dns from "node:dns/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { isIP } from "node:net";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { getMessageTimeString } from "./format";
@@ -61,14 +63,68 @@ export const tools: ChatCompletionTool[] = [
   {
     type: "function",
     function: {
-      name: "GenerateSpeech",
-      description: "将文本合成为 AI 语音并自动发送音频。使用全局已配置的语音模型和音色，不需要再输出音频标签或链接。文本最多 4096 个字符。",
+      name: "MiniMaxVoice",
+      description:
+        "使用 MiniMax 合成语音并自动发送音频。默认音色 voice_neko_2。支持情绪语气、文本内语气词，以及拼音声调/自定义发音。合成后不要再输出音频标签或链接。",
       parameters: {
         type: "object",
         properties: {
-          text: { type: "string", description: "要朗读的文本，不能为空，最多 4096 个字符" },
-          model: { type: "string", description: "可选，已添加的语音模型 ID；省略时使用全局当前模型" },
-          instructions: { type: "string", description: "可选，语气、情感或朗读风格要求；tts-1 和 tts-1-hd 不支持，调用时会忽略" },
+          text: {
+            type: "string",
+            description:
+              "要合成的文本，少于 10000 字。普通括号旁白也会被朗读，不要写舞台说明。\n声调：把要改读音的字写成带声调数字的拼音，并用英文小括号包住，例如“这是(he2)平，不是(huo4)面”。1一声，2二声，3三声，4四声，5轻声。\n语气词：可插入 (laughs)笑声、(chuckle)轻笑、(coughs)咳嗽、(clear-throat)清嗓子、(groans)呻吟、(breath)换气、(pant)喘气、(inhale)吸气、(exhale)呼气、(gasps)倒吸气、(sniffs)吸鼻子、(sighs)叹气、(snorts)喷鼻息、(burps)打嗝、(lip-smacking)咂嘴、(humming)哼唱、(hissing)嘶声、(emm)嗯、(sneezes)喷嚏。\n停顿：在两段可发音文本之间插入 <#x#>，x 为秒，范围 0.01 到 99.99，不可连续使用。",
+          },
+          voice_id: {
+            type: "string",
+            description: "音色 ID。省略时使用 voice_neko_2",
+          },
+          emotion: {
+            type: "string",
+            enum: [
+              "happy",
+              "sad",
+              "angry",
+              "fearful",
+              "disgusted",
+              "surprised",
+              "calm",
+            ],
+            description:
+              "整段语气/情绪。happy高兴，sad悲伤，angry愤怒，fearful害怕，disgusted厌恶，surprised惊讶，calm中性。不填则按文本自动匹配。低语、笑声等局部语气用文本里的语气词标签，不要写进本参数。",
+          },
+          tone: {
+            type: "array",
+            items: { type: "string" },
+            description:
+              "自定义声调或发音规则，每项格式为“原文/替换内容”。替换内容可以是括号拼音、IPA 或普通文本。示例：[\"处理/(chu3)(li3)\", \"危险/dangerous\"]。中文声调：1一声，2二声，3三声，4四声，5轻声。",
+          },
+        },
+        required: ["text"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "GenerateSpeech",
+      description:
+        "将文本合成为 AI 语音并自动发送音频。使用全局已配置的语音模型和音色，不需要再输出音频标签或链接。文本最多 4096 个字符。",
+      parameters: {
+        type: "object",
+        properties: {
+          text: {
+            type: "string",
+            description: "要朗读的文本，不能为空，最多 4096 个字符",
+          },
+          model: {
+            type: "string",
+            description: "可选，已添加的语音模型 ID；省略时使用全局当前模型",
+          },
+          instructions: {
+            type: "string",
+            description:
+              "可选，语气、情感或朗读风格要求；tts-1 和 tts-1-hd 不支持，调用时会忽略",
+          },
         },
         required: ["text"],
       },
@@ -1286,16 +1342,18 @@ export const tools: ChatCompletionTool[] = [
           },
           x: {
             type: "number",
-            description: "五子棋横坐标 x，左到右为 1 到 17；仅 gobang_move 需要",
+            description:
+              "五子棋横坐标 x，左到右为 1 到 17；仅 gobang_move 需要",
           },
           y: {
             type: "number",
-            description: "五子棋纵坐标 y，上到下为 1 到 17；仅 gobang_move 需要",
+            description:
+              "五子棋纵坐标 y，上到下为 1 到 17；仅 gobang_move 需要",
           },
           cells: {
             type: "array",
             items: { type: "string" },
-            description: "扫雷坐标数组，例如 [\"A0\", \"B3\"]；仅扫雷操作需要",
+            description: '扫雷坐标数组，例如 ["A0", "B3"]；仅扫雷操作需要',
           },
           difficulty: {
             type: "string",
@@ -2720,7 +2778,7 @@ const reviewProjectCommandWithAI = async ({
       timeout: 30000,
       fetch: getOpenAIProxyFetch(
         value.httpProxy,
-        redisClient.isAIProxyEnabled(aiConfig.config),
+        await redisClient.isToolProxyEnabled(aiConfig.config),
       ),
     });
     const response = await openai.chat.completions.create({
@@ -2811,7 +2869,7 @@ const reviewServerCommandWithAI = async ({
       timeout: 30000,
       fetch: getOpenAIProxyFetch(
         value.httpProxy,
-        redisClient.isAIProxyEnabled(aiConfig.config),
+        await redisClient.isToolProxyEnabled(aiConfig.config),
       ),
     });
     const response = await openai.chat.completions.create({
@@ -3317,6 +3375,35 @@ const performServerCommandReview = async ({
   };
 };
 
+const MINIMAX_DEFAULT_VOICE_ID = "voice_neko_2";
+const MINIMAX_TTS_MODEL = "speech-2.8-hd";
+const MINIMAX_EMOTIONS = new Set([
+  "happy",
+  "sad",
+  "angry",
+  "fearful",
+  "disgusted",
+  "surprised",
+  "calm",
+]);
+
+/** 把模型传入的声调规则整理成 MiniMax pronunciation_dict.tone。 */
+const normalizeMiniMaxTone = (tone: unknown): string[] => {
+  const source = Array.isArray(tone)
+    ? tone
+    : typeof tone === "string"
+      ? tone.split(/\r?\n|[;；]/)
+      : [];
+  const rules: string[] = [];
+  for (const item of source) {
+    const rule = String(item ?? "").trim();
+    if (!rule || !rule.includes("/") || rule.length > 200) continue;
+    rules.push(rule);
+    if (rules.length >= 100) break;
+  }
+  return rules;
+};
+
 export const availableTools = {
   GenerateSpeech: generateSpeech,
   ConvertToImageUrl: async ({ address }: { address: string }) =>
@@ -3441,7 +3528,10 @@ export const availableTools = {
       return { success: false, error: "repeat 只能是 once 或 daily" };
     }
     if (!isPrivate && !spaceId) {
-      return { success: false, error: "群聊定时任务缺少 SpaceId，无法主动发送" };
+      return {
+        success: false,
+        error: "群聊定时任务缺少 SpaceId，无法主动发送",
+      };
     }
 
     const task = await redisClient.createScheduledAITask({
@@ -3655,7 +3745,7 @@ export const availableTools = {
         timeout: 120000,
         fetch: getOpenAIProxyFetch(
           value.httpProxy,
-          redisClient.isAIProxyEnabled(ocrConfig),
+          await redisClient.isToolProxyEnabled(ocrConfig),
         ),
       });
 
@@ -3859,7 +3949,7 @@ export const availableTools = {
       const requestFetch =
         getOpenAIProxyFetch(
           value.httpProxy,
-          redisClient.isAIProxyEnabled(aiConfig),
+          await redisClient.isToolProxyEnabled(aiConfig),
         ) || fetch;
       const res = await requestFetch(
         aiConfig.host.replace(/\/+$/, "") +
@@ -3919,7 +4009,7 @@ export const availableTools = {
         timeout: 120000,
         fetch: getOpenAIProxyFetch(
           value.httpProxy,
-          redisClient.isAIProxyEnabled(aiConfig),
+          await redisClient.isToolProxyEnabled(aiConfig),
         ),
       });
 
@@ -4069,7 +4159,7 @@ export const availableTools = {
       const requestFetch =
         getOpenAIProxyFetch(
           value.httpProxy,
-          redisClient.isAIProxyEnabled(aiConfig),
+          await redisClient.isToolProxyEnabled(aiConfig),
         ) || fetch;
       const res = await requestFetch(aiConfig.host + "/videos/generations", {
         method: "POST",
@@ -4108,7 +4198,7 @@ export const availableTools = {
       const requestFetch =
         getOpenAIProxyFetch(
           value.httpProxy,
-          redisClient.isAIProxyEnabled(aiConfig),
+          await redisClient.isToolProxyEnabled(aiConfig),
         ) || fetch;
       const res = await requestFetch(aiConfig.host + `/videos/${request_id}`, {
         method: "GET",
@@ -5009,9 +5099,11 @@ export const availableTools = {
         }
       })();
       const fileName =
-        (disposition.match(/filename\*?=(?:UTF-8'')?"?([^";]+)"?/i)?.[1] ||
+        (
+          disposition.match(/filename\*?=(?:UTF-8'')?"?([^";]+)"?/i)?.[1] ||
           urlFileName ||
-          `file-${Date.now()}`)
+          `file-${Date.now()}`
+        )
           .replace(/[\\/:*?"<>|]+/g, "_")
           .slice(0, 120) || `file-${Date.now()}`;
 
@@ -5270,6 +5362,110 @@ export const availableTools = {
       });
     } catch (error) {
       return toToolError(error);
+    }
+  },
+  MiniMaxVoice: async ({
+    text,
+    voice_id,
+    emotion,
+    tone,
+  }: {
+    text?: string;
+    voice_id?: string;
+    emotion?: string;
+    tone?: string[] | string;
+  } = {}) => {
+    const content = String(text ?? "").trim();
+    if (!content) return { ok: false, error: "合成文本不能为空" };
+    if (content.length > 10000) {
+      return { ok: false, error: "合成文本超过 10000 字" };
+    }
+
+    const voiceId = String(voice_id ?? "").trim() || MINIMAX_DEFAULT_VOICE_ID;
+    const emotionName = String(emotion ?? "").trim().toLowerCase();
+    if (emotionName && !MINIMAX_EMOTIONS.has(emotionName)) {
+      return {
+        ok: false,
+        error: `不支持的语气：${emotionName}。可选 happy、sad、angry、fearful、disgusted、surprised、calm。局部语气请写进文本，例如 (laughs)、(sighs)、(breath)。`,
+      };
+    }
+    const toneRules = normalizeMiniMaxTone(tone);
+
+    const key = String((await redis.get("minimax_api_key")) || "").trim();
+    if (!key) return { ok: false, error: "未配置 MiniMax API Key（minimax_api_key）" };
+
+    let directory = "";
+    try {
+      const res = await fetch("https://api.minimax.cn/v1/t2a_v2", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${key}`,
+        },
+        body: JSON.stringify({
+          model: MINIMAX_TTS_MODEL,
+          text: content,
+          stream: false,
+          output_format: "hex",
+          voice_setting: {
+            voice_id: voiceId,
+            speed: 1,
+            vol: 1,
+            pitch: 0,
+            ...(emotionName ? { emotion: emotionName } : {}),
+          },
+          ...(toneRules.length
+            ? { pronunciation_dict: { tone: toneRules } }
+            : {}),
+          audio_setting: {
+            sample_rate: 32000,
+            bitrate: 128000,
+            format: "mp3",
+            channel: 1,
+          },
+        }),
+        signal: AbortSignal.timeout(60000),
+      });
+      const payload = await res.json().catch(() => null);
+      const statusCode = Number(payload?.base_resp?.status_code ?? -1);
+      if (!res.ok || statusCode !== 0) {
+        const statusMsg = String(payload?.base_resp?.status_msg || "").trim();
+        return {
+          ok: false,
+          error: statusMsg
+            ? `MiniMax 语音合成失败：${statusMsg}`
+            : `MiniMax 语音合成失败（HTTP ${res.status}）`,
+        };
+      }
+
+      const hexAudio = String(payload?.data?.audio || "").trim();
+      if (!/^[0-9a-fA-F]+$/.test(hexAudio) || hexAudio.length % 2 !== 0) {
+        return { ok: false, error: "MiniMax 未返回有效音频" };
+      }
+      const audio = Buffer.from(hexAudio, "hex");
+      if (!audio.length) return { ok: false, error: "MiniMax 返回了空音频" };
+
+      directory = await mkdtemp(path.join(tmpdir(), "aichat-minimax-"));
+      const file = path.join(directory, "speech.mp3");
+      await writeFile(file, audio);
+      const url = await uploadMediaToR2(file);
+      return {
+        ok: true,
+        type: "audio",
+        url,
+        model: MINIMAX_TTS_MODEL,
+        voice: voiceId,
+      };
+    } catch (error: any) {
+      console.error("MiniMax 语音合成失败：", error);
+      return {
+        ok: false,
+        error: error?.message
+          ? `MiniMax 语音合成失败：${error.message}`
+          : "MiniMax 语音合成失败，请稍后重试",
+      };
+    } finally {
+      if (directory) await rm(directory, { recursive: true, force: true }).catch(() => undefined);
     }
   },
 };

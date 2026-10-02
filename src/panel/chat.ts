@@ -360,7 +360,10 @@ const createPanelOutput = (
       }
     },
     sendToolResult: async (functionName: string, payload: any) => {
-      if (functionName === "GenerateSpeech" && isSpeechToolResult(payload)) {
+      if (
+        (functionName === "GenerateSpeech" || functionName === "MiniMaxVoice") &&
+        isSpeechToolResult(payload)
+      ) {
         await pushOutputMessage({ from: "bot", name: PANEL_BOT_ID, text: `AI 合成语音：${payload.url}` });
         return;
       }

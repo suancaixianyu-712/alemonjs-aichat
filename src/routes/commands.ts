@@ -12,6 +12,10 @@ export const commandChildren = [
     handler: lazy(() => import("../response/speech/res")),
   },
   {
+    regular: /^(?:#|\/)\s*(?:设置|清空)?\s*minimax\s*(?:密钥|秘钥)(?:\s+\S+)?\s*$/i,
+    handler: lazy(() => import("../response/minimax/res")),
+  },
+  {
     regular: /^(\/|#)(开启网页(?:\s+.*)?|关闭网页|网页状态)$/,
     handler: lazy(() => import("../response/panel/res")),
   },
@@ -134,6 +138,7 @@ export const commandChildren = [
       /(\/|#)(开启|关闭)(全部)?聊天$/i,
       /(\/|#)(开启|关闭)图床$/i,
       /^(\/|#)(开启|关闭)代理$/i,
+      /^(\/|#)(开启|关闭)工具代理$/i,
       /(\/|#)切换图床(.*)$/i,
       /(\/|#)修改 ?(.+) ?模型 ?(.+)$/i,
       /(\/|#)(关闭|开启)复杂(输出|回复)$/i,
