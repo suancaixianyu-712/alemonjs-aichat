@@ -41,10 +41,6 @@ alemonjs-aichat:
     headless: true
     # executablePath: 'C:\Program Files\Google\Chrome\Application\chrome.exe'
 
-  # 可选：TTS 服务地址。
-  ttsServer:
-    host: ''
-
   # 可选：百度内容审核。
   baidu:
     ak: ''
