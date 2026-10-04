@@ -1,6 +1,6 @@
 {
   "name": "alemonjs-aichat",
-  "version": "1.0.90",
+  "version": "1.0.91",
   "description": "alemonjs-aichat",
   "author": "suancaixianyu",
   "license": "MIT",
@@ -12,6 +12,7 @@
     "test:panel-web": "npm run build && node --experimental-test-module-mocks --test tests/panel-web.test.mjs",
     "test:speech": "npm run build && node --experimental-test-module-mocks --test tests/speech.test.mjs tests/speech-config.test.mjs",
     "test:xianyu-game": "npm run build && node tests/xianyu-game-tool.test.mjs",
+    "test:codex": "npm run build && node --experimental-test-module-mocks --test tests/codex.test.mjs tests/codex-sessions.test.mjs",
     "review": "npx alemonc start",
     "view": "npx lvy dev --view",
     "img": "tsx watch --import lvyjs/register app.ts --jsxp",
@@ -154,7 +155,7 @@
         ]
       },
       {
-        "description": "Codex 工具",
+        "description": "Codex CLI 多轮任务工具",
         "name": "codexTool",
         "required": false,
         "type": "object",
@@ -164,6 +165,32 @@
             "name": "binary",
             "required": false,
             "type": "string"
+          },
+          {
+            "description": "允许 Codex 操作的工作目录绝对路径；省略时使用当前聊天的 public/{guid}/",
+            "name": "projectPath",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "description": "覆盖 Codex 本机配置的默认模型",
+            "name": "model",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "description": "默认允许在工作目录内修改文件并自动审核；false 为只读",
+            "name": "autoApprove",
+            "required": false,
+            "type": "boolean",
+            "default": true
+          },
+          {
+            "description": "单次任务超时秒数，最大 1800",
+            "name": "timeoutSeconds",
+            "required": false,
+            "type": "number",
+            "default": 600
           }
         ]
       }

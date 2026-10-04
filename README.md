@@ -118,6 +118,57 @@ aiChat:
 - 普通用户、未开启 agent 的主人以及被单独禁用的工具继续沿用原有限制。
 - 工具链绑定发起用户；执行期间只有发起者的补充消息可进入当前上下文，其他用户的消息和停止指令不会影响这轮任务。其他用户触发 AI 时会收到排队位置，消息在当前轮结束后按到达顺序作为独立 AI 对话执行，不会混入当前工具链。
 
+### Codex CLI 多轮任务工具
+
+AI 可以调用 `RunCodex` 将任务交给机器人所在机器的 Codex CLI。先在运行机器上安装
+`@openai/codex` 并完成 `codex login`；机器人复用该机器的 Codex 认证和配置。
+
+可在 AlemonX 配置页设置 `codexTool`，或在 YAML 的插件命名空间中配置：
+
+```yaml
+alemonjs-aichat:
+  codexTool:
+    # 可选，省略时从 PATH 寻找 codex；也可用环境变量 CODEX_TOOL_BINARY 覆盖。
+    # binary: 'C:\Users\你的用户名\AppData\Roaming\npm\codex.cmd'
+    # 工作目录必须存在，显式 projectPath 只能选择它或它的子目录。
+    projectPath: 'D:\projects\my-app'
+    # model: 你的 Codex 模型名称
+    autoApprove: true
+    timeoutSeconds: 600
+```
+
+未配置 `codexTool.projectPath` 时，自动使用当前聊天的 `public/{guid}/` 工作目录。
+`autoApprove=true` 使用 `workspace-write` 并由 Codex 自动审核操作；`false` 使用
+`read-only`。配置的目录范围同样检查符号链接，不能通过链接跳到外部目录。
+单次任务默认 600 秒，最大 1800 秒。Windows 支持 npm 安装生成的 `codex.cmd`，
+也支持配置 `.exe` 或 Codex 的 `.js` 启动文件。
+
+工具参数示例：
+
+```json
+{"prompt":"检查项目并修复测试"}
+{"prompt":"继续完成上次修复，并说明测试结果"}
+{"action":"listSessions"}
+{"prompt":"开始另一项任务","newSession":true}
+{"action":"switchSession","sessionId":"上面列表返回的会话 UUID"}
+{"prompt":"继续旧任务","sessionId":"上面列表返回的会话 UUID"}
+```
+
+首次调用创建会话；后续省略 `sessionId` 时自动续接。独立任务需传
+`newSession=true`。会话记录保存在 Redis，按聊天、发起用户和真实工作目录隔离；
+只能列出和恢复通过该作用域的工具创建的会话。机器人重启后可继续之前的任务，
+但 Codex 自身的本地会话文件也必须保留。更换工作目录后使用独立的会话记录。
+
+执行期间同一作用域的运行和切换操作会被拒绝，查询可用。发起用户发送 `#stop`
+可终止当前 CLI 进程及其子进程，保留会话以便后续恢复；普通成员在完全访问群中
+通过此独立 CLI 工具执行时继续强制只读。输出包括最终结果、命令/文件活动、
+会话 UUID、Token 用量和失败信息，内部推理事件不作为工具结果返回。
+
+运行 `npm run test:codex` 构建并验证多轮续接、会话隔离、目录范围、进程中止和超时。
+测试使用模拟 CLI 和 Redis，不调用真实模型。
+
+CLI 的多轮执行依据 [OpenAI 官方的会话续接说明](https://learn.chatgpt.com/docs/non-interactive-mode)。
+
 ## 4.使用
 
 需要先使用`#添加ai`,配置一个ai后才能使用对话功能,本项目仅支持`Chat Completions API`, 因此在填写主机地址时可能需要加上`/v1`,请根据供应商文档适当添加
