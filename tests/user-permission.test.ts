@@ -62,6 +62,19 @@ test("OpenCode 自动审核会写明拒绝后不能换操作重试", () => {
   assert.match(prompt, /换一条命令、换一个工具或拆开步骤再试/);
 });
 
+test("群完全访问允许普通群友使用服务器和完整 Git，但危险操作仍仅主人可用", () => {
+  const prompt = buildUserPermissionPrompt(base({ opencodePermission: "full" }));
+  assert.match(prompt, /身份：普通用户/);
+  assert.match(prompt, /完整 Git（提交、推送、拉取、合并）/);
+  assert.match(prompt, /scope=root/);
+  assert.match(prompt, /删除文件、目录或 Git 仓库/);
+  assert.match(prompt, /重启或停止服务和进程仅主人可用/);
+  assert.doesNotMatch(prompt, /Git 只限受限/);
+  assert.doesNotMatch(prompt, /这些要等主人发送/);
+  const privatePrompt = buildUserPermissionPrompt(base({ isPrivate: true, opencodePermission: "full" }));
+  assert.match(privatePrompt, /#开启agent/);
+});
+
 test("审核拒绝会标记为不可重试，普通执行失败保持原样", () => {
   const reviewed = annotatePermissionBoundary({
     success: false,

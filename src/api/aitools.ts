@@ -6,6 +6,7 @@ import OpenAi, { toFile } from "openai";
 import { loadSkillDetail } from "./loadSkill";
 import help from "@src/data/help.json";
 import redisClient from "../config";
+import { GROUP_FULL_ACCESS_BOUNDARY, hasGroupFullAccess, isOwnerOnlyOperation } from "./group-full-access";
 import { isNonVisionModel } from "../response/zreply/getChatConfig";
 import { isPrivateIP, validateURL } from "./security";
 import { spawn } from "child_process";
@@ -96,7 +97,7 @@ export const tools: ChatCompletionTool[] = [
             type: "array",
             items: { type: "string" },
             description:
-              "自定义声调或发音规则，每项格式为“原文/替换内容”。替换内容可以是括号拼音、IPA 或普通文本。示例：[\"处理/(chu3)(li3)\", \"危险/dangerous\"]。中文声调：1一声，2二声，3三声，4四声，5轻声。",
+              '自定义声调或发音规则，每项格式为“原文/替换内容”。替换内容可以是括号拼音、IPA 或普通文本。示例：["处理/(chu3)(li3)", "危险/dangerous"]。中文声调：1一声，2二声，3三声，4四声，5轻声。',
           },
         },
         required: ["text"],
@@ -1258,7 +1259,7 @@ export const tools: ChatCompletionTool[] = [
     type: "function",
     function: {
       name: "RunCodex",
-      description: `调用运行机器上已安装并完成认证的 Codex CLI，将提示词交给 Codex 在指定本地项目中读取代码、执行命令并完成开发任务，最后返回执行结果。
+      description: `调用运行机器上已安装并完成认证的 Codex CLI，让 Codex 在允许的工作目录中执行任务，返回结果、执行活动、会话 UUID 和用量。支持持久化的多轮对话与任务恢复。
 
 【何时使用】
 - 用户要求 Codex 实现、修改、重构或调试某个本地项目时
@@ -1266,26 +1267,39 @@ export const tools: ChatCompletionTool[] = [
 - 用户明确要求使用 Codex 时
 
 【使用要求】
-- projectPath 必须是本机已存在的目录绝对路径；普通目录也可使用，无需 git init
-- 第一次执行不要传 sessionId；继续同一任务时传入上次返回的 sessionId
+- action=run 执行任务，prompt 必填；省略 sessionId 时自动继续当前聊天、用户和目录的上一次会话
+- 独立的新任务传 newSession=true；需要恢复更早的任务时，先用 action=listSessions 查询，再传 sessionId 执行或用 action=switchSession 切换
+- 会话记录保存在 Redis，机器人重启后仍可续接；只允许查询和恢复当前聊天、用户及工作目录通过本工具创建的会话
+- projectPath 可省略：使用 codexTool.projectPath 配置的目录，未配置时使用当前聊天的 public/{guid}/；显式目录必须在这个范围内，普通目录无需 git init
 - 默认 autoApprove=true，允许 Codex 在项目目录内修改文件并自动审核操作；只读分析时传 false
 - 默认复用运行机器的 Codex 登录、配置和模型；model 仅在需要覆盖默认模型时传入
 - 运行机器必须已安装 Codex CLI，并可直接执行 codex 命令`,
       parameters: {
         type: "object",
         properties: {
+          action: {
+            type: "string",
+            enum: ["run", "listSessions", "switchSession"],
+            default: "run",
+            description: "run 执行或继续任务；listSessions 查询当前用户的会话；switchSession 切换到 sessionId 指定的已有会话",
+          },
           prompt: {
             type: "string",
-            description: "要交给 Codex 执行的任务描述/提示词",
+            description: "action=run 时必填。要交给 Codex 执行的任务描述或后续消息",
+          },
+          newSession: {
+            type: "boolean",
+            default: false,
+            description: "run 时传 true 开始独立任务；默认自动续接上次会话。不能同时传 sessionId",
           },
           sessionId: {
             type: "string",
             description:
-              "可选。Codex 会话 UUID；传入后继续该会话，不传则创建新会话",
+              "可选。listSessions 返回的 Codex 会话 UUID；run 时继续该会话，switchSession 时必填",
           },
           projectPath: {
             type: "string",
-            description: "Codex 工作的本地目录绝对路径，无需是 Git 仓库",
+            description: "可选，允许范围内的本地目录绝对路径。省略时使用配置的工作目录或当前聊天的 public/{guid}/",
           },
           model: {
             type: "string",
@@ -1303,7 +1317,7 @@ export const tools: ChatCompletionTool[] = [
             default: 600,
           },
         },
-        required: ["prompt", "projectPath"],
+        required: [],
       },
     },
   },
@@ -1665,6 +1679,7 @@ export const assertAgentToolAccess = async (
   guid?: string,
   scope?: unknown,
   isMaster?: boolean,
+  groupFullAccess = false,
 ) => {
   const isWorkspaceTool = AGENT_WORKSPACE_TOOL_NAMES.has(functionName);
   if (isWorkspaceTool) {
@@ -1677,21 +1692,21 @@ export const assertAgentToolAccess = async (
       throw new Error("scope 只能是 session、public 或 root");
     }
     if (scope === "root") {
-      if (isMaster !== true) {
+      if (isMaster !== true && !groupFullAccess) {
         throw new Error("服务器 root 目录仅主人可访问");
       }
-      await assertAgentEnabled(guid);
+      if (!groupFullAccess) await assertAgentEnabled(guid);
       return SERVER_ROOT_GUID;
     }
     if (scope === "public") {
       if (!READ_ONLY_AGENT_TOOL_NAMES.has(functionName)) {
-        if (isMaster !== true) {
+        if (isMaster !== true && !groupFullAccess) {
           throw new Error(
             "公共知识库仅主人可维护，其他用户只能列出、搜索和读取",
           );
         }
         // 开关属于真实会话，不能读取 knowledge 这个目录名对应的开关。
-        await assertAgentEnabled(guid);
+        if (!groupFullAccess) await assertAgentEnabled(guid);
       }
       return PUBLIC_KNOWLEDGE_GUID;
     }
@@ -1708,7 +1723,7 @@ export const assertAgentToolAccess = async (
     isAgentTool(functionName) &&
     !READ_ONLY_AGENT_TOOL_NAMES.has(functionName)
   ) {
-    await assertAgentEnabled(guid);
+    if (!groupFullAccess) await assertAgentEnabled(guid);
   }
   return guid;
 };
@@ -2881,7 +2896,10 @@ const reviewServerCommandWithAI = async ({
           role: "system",
           content:
             '你是服务器运维指令安全审核器。请只输出 JSON，格式为 {"allowed":boolean,"risk":"low|medium|high|blocked","reason":"简短中文原因"}。可以允许合理的服务器管理、状态查看、日志查看、服务重启、Docker/PM2/systemctl 操作、部署和包管理命令；必须阻止清空数据、破坏系统、植入后门、泄露密钥、反弹 shell、未知脚本下载后直接执行、越权访问或明显不可恢复的危险操作。' +
-            `\n性格约束:${aiConfig.config.systemPrompt || ""}`,
+            `\n性格约束:${aiConfig.config.systemPrompt || ""}` +
+            (localReview.reasons.includes(GROUP_FULL_ACCESS_BOUNDARY)
+              ? `\n最高优先级权限边界：${GROUP_FULL_ACCESS_BOUNDARY}。非危险操作应允许；无法确定脚本或命令实际效果时拒绝。`
+              : ""),
         },
         {
           role: "user",
@@ -3233,15 +3251,52 @@ const extractArchiveWithinWorkspace = async ({
   throw new Error("仅支持 zip、tar、tar.gz、tgz 压缩包");
 };
 
+export const assertGroupFullToolAccess = async (event: any, functionName: string, args: any) => {
+  const mode = await redisClient.redis.get(`ai:third_party_tool:permission:${event.guid}`);
+  const full = hasGroupFullAccess(event, String(mode || ""));
+  if (!full || event.IsMaster === true) return full;
+  if (functionName === "AgentDeleteFile") {
+    throw new Error("删除文件、目录或仓库仅主人可用");
+  }
+  const command = typeof args?.command === "string" ? args.command : "";
+  if (command && isOwnerOnlyOperation(command)) {
+    throw new Error("删除文件、目录、仓库以及重启或停止服务仅主人可用");
+  }
+  // 独立 CLI 子代理没有逐操作权限回调，普通成员只能以只读方式调用。
+  if (functionName === "RunCodex" || functionName === "RunOpencode") {
+    args.autoApprove = false;
+    args.prompt = `${GROUP_FULL_ACCESS_BOUNDARY}\n${String(args.prompt || "")}`;
+  }
+  return full;
+};
+
+const reviewGroupFullCommand = async (command: string, reviewGuid?: string, workingDirectory = ".") => {
+  if (!command?.trim() || command.includes("\0") || isOwnerOnlyOperation(command)) {
+    throw new Error("权限不足：空命令、非法字符或仅主人可用的删除/服务操作");
+  }
+  const localReview = {
+    allowed: true,
+    risk: "high" as const,
+    reasons: [GROUP_FULL_ACCESS_BOUNDARY],
+    baseCommand: "",
+    tokens: tokenizeCommand(command),
+  };
+  const aiReview = await reviewServerCommandWithAI({ command, reviewGuid, workingDirectory, localReview });
+  return { allowed: aiReview.status === "completed" && aiReview.allowed === true, risk: localReview.risk, localReview, aiReview };
+};
+
 const performProjectCommandReview = async ({
   command,
   reviewGuid,
   isMaster,
+  groupFullAccess,
 }: {
   command: string;
   reviewGuid?: string;
   isMaster?: boolean;
+  groupFullAccess?: boolean;
 }) => {
+  if (groupFullAccess && isMaster !== true) return await reviewGroupFullCommand(command, reviewGuid);
   const localReview = buildProjectCommandReview(command, isMaster);
   if (!localReview.allowed) {
     return {
@@ -3295,12 +3350,15 @@ const performServerCommandReview = async ({
   reviewGuid,
   workingDirectory,
   isMaster,
+  groupFullAccess,
 }: {
   command: string;
   reviewGuid?: string;
   workingDirectory: string;
   isMaster?: boolean;
+  groupFullAccess?: boolean;
 }) => {
+  if (groupFullAccess && isMaster !== true) return await reviewGroupFullCommand(command, reviewGuid, workingDirectory);
   if (isMaster === true) {
     const trimmed = command?.trim();
     if (!trimmed) {
@@ -3376,7 +3434,7 @@ const performServerCommandReview = async ({
 };
 
 const MINIMAX_DEFAULT_VOICE_ID = "voice_neko_2";
-const MINIMAX_TTS_MODEL = "speech-2.8-hd";
+const MINIMAX_TTS_MODEL = "speech-2.8-turbo";
 const MINIMAX_EMOTIONS = new Set([
   "happy",
   "sad",
@@ -4317,12 +4375,14 @@ export const availableTools = {
     workingDirectory = ".",
     reviewGuid,
     isMaster,
+    groupFullAccess,
   }: {
     guid: string;
     command: string;
     workingDirectory?: string;
     reviewGuid?: string;
     isMaster?: boolean;
+    groupFullAccess?: boolean;
   }) => {
     try {
       const { relativePath } = resolveAgentPath(guid, workingDirectory);
@@ -4330,6 +4390,7 @@ export const availableTools = {
         command,
         reviewGuid,
         isMaster,
+        groupFullAccess,
       });
 
       return {
@@ -4349,21 +4410,23 @@ export const availableTools = {
     workingDirectory,
     reviewGuid,
     isMaster,
+    groupFullAccess,
     timeoutSeconds = SERVER_COMMAND_DEFAULT_TIMEOUT_SECONDS,
   }: {
     command: string;
     workingDirectory?: string;
     reviewGuid: string;
     isMaster?: boolean;
+    groupFullAccess?: boolean;
     timeoutSeconds?: number;
   }) => {
     try {
-      await assertAgentEnabled(reviewGuid);
+      if (!groupFullAccess) await assertAgentEnabled(reviewGuid);
       if (!reviewGuid?.trim()) {
         throw new Error("reviewGuid 必填，请传入当前群号");
       }
-      const cwd = resolveServerWorkingDirectory(workingDirectory, isMaster);
-      if (isMaster !== true) {
+      const cwd = resolveServerWorkingDirectory(workingDirectory, isMaster === true || groupFullAccess);
+      if (isMaster !== true && !groupFullAccess) {
         assertServerCommandPathsInsideProject(command);
       }
       const timeoutMs = normalizeServerCommandTimeoutMs(timeoutSeconds);
@@ -4372,6 +4435,7 @@ export const availableTools = {
         reviewGuid,
         workingDirectory: cwd,
         isMaster,
+        groupFullAccess,
       });
       if (!review.allowed) {
         const safeCommand =
@@ -4499,6 +4563,7 @@ export const availableTools = {
     command,
     reviewGuid,
     isMaster,
+    groupFullAccess,
     archivePath,
     destinationPath,
     sourcePath,
@@ -4511,6 +4576,7 @@ export const availableTools = {
     command?: string;
     reviewGuid?: string;
     isMaster?: boolean;
+    groupFullAccess?: boolean;
     archivePath?: string;
     destinationPath?: string;
     sourcePath?: string;
@@ -4610,6 +4676,7 @@ export const availableTools = {
           command,
           reviewGuid,
           isMaster,
+          groupFullAccess,
         });
         if (!review.allowed) {
           return {
@@ -5351,7 +5418,9 @@ export const availableTools = {
   RunCodex: async (args: any) => {
     try {
       return await runCodex({
+        action: args?.action,
         prompt: args?.prompt,
+        newSession: args?.newSession,
         sessionId: args?.sessionId,
         projectPath: args?.projectPath,
         model: args?.model,
@@ -5382,7 +5451,9 @@ export const availableTools = {
     }
 
     const voiceId = String(voice_id ?? "").trim() || MINIMAX_DEFAULT_VOICE_ID;
-    const emotionName = String(emotion ?? "").trim().toLowerCase();
+    const emotionName = String(emotion ?? "")
+      .trim()
+      .toLowerCase();
     if (emotionName && !MINIMAX_EMOTIONS.has(emotionName)) {
       return {
         ok: false,
@@ -5392,7 +5463,8 @@ export const availableTools = {
     const toneRules = normalizeMiniMaxTone(tone);
 
     const key = String((await redis.get("minimax_api_key")) || "").trim();
-    if (!key) return { ok: false, error: "未配置 MiniMax API Key（minimax_api_key）" };
+    if (!key)
+      return { ok: false, error: "未配置 MiniMax API Key（minimax_api_key）" };
 
     let directory = "";
     try {
@@ -5465,7 +5537,10 @@ export const availableTools = {
           : "MiniMax 语音合成失败，请稍后重试",
       };
     } finally {
-      if (directory) await rm(directory, { recursive: true, force: true }).catch(() => undefined);
+      if (directory)
+        await rm(directory, { recursive: true, force: true }).catch(
+          () => undefined,
+        );
     }
   },
 };

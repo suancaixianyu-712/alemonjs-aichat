@@ -11,6 +11,7 @@ import {
 } from "@src/api/tool-message-content";
 import { requestRapiCompletion } from "@src/response/zreply/rapi";
 import { buildUserPermissionPrompt } from "@src/api/user-permission";
+import { GROUP_FULL_ACCESS_BOUNDARY, hasGroupFullAccess, isOwnerOnlyOperation } from "@src/api/group-full-access";
 import {
   createOpencodeSession,
   ensureInheritedOpencodeServer,
@@ -764,6 +765,21 @@ export class ToolSessionController {
       const runtime = await ensureInheritedOpencodeServer(event.guid, config);
       const directory = resolveCurrentSessionDirectory(event.guid);
       const mode = await this.getPermission(event.guid);
+      const sharedFull = hasGroupFullAccess(event, mode) && event.IsMaster !== true;
+      // 每条消息重新设置，避免上一位主人的全放行规则用于普通群成员。
+      await updateOpencodeSessionPermission(
+        runtime.url,
+        directory,
+        sessionId,
+        sharedFull
+          ? [
+              { permission: "*", pattern: "*", action: "allow" },
+              { permission: "edit", pattern: "*", action: "ask" },
+              { permission: "bash", pattern: "*", action: "ask" },
+              { permission: "task", pattern: "*", action: "ask" },
+            ]
+          : permissionRules[mode],
+      );
       const permissionPrompt = buildUserPermissionPrompt({
         isMaster: event.IsMaster === true,
         isAdmin: event.isAdmin === true,
@@ -787,6 +803,14 @@ export class ToolSessionController {
         guid: event.guid,
         userID: String(event.UserId || ""),
         replyPermission: async (request) => {
+          if (sharedFull) {
+            if (isOwnerOnlyOperation(JSON.stringify(request.raw))) return "reject";
+            return await reviewPermissionWithCurrentAI(
+              event.guid,
+              request,
+              `${permissionPrompt}\n${GROUP_FULL_ACCESS_BOUNDARY}`,
+            );
+          }
           if (mode === "full") return "always";
           if (mode === "readonly") return "reject";
           if (mode === "auto") {

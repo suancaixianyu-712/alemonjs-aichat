@@ -24,6 +24,7 @@ import {
   removePublicIpFromOutput,
   removePublicIpFromToolArguments,
   assertAgentToolAccess,
+  assertGroupFullToolAccess,
 } from "@src/api/aitools";
 import redisClient, { DEFAULT_CAPI_CONTEXT_LIMIT } from "@src/config";
 import {
@@ -931,11 +932,13 @@ export const CApiReply = async (
             };
           } else {
             try {
+              const groupFullAccess = await assertGroupFullToolAccess(e, functionName, functionArgs);
               const toolGuid = await assertAgentToolAccess(
                 functionName,
                 e.guid,
                 functionArgs?.scope,
                 e.IsMaster === true,
+                groupFullAccess,
               );
               if (
                 (await redisClient.getToolStatus(e.guid, functionName)) === "1"
@@ -949,12 +952,14 @@ export const CApiReply = async (
                 // 覆盖式注入主人权限标识（alemonjs 框架的 e.IsMaster），防止模型伪造参数；主人执行指令无需审核
                 if (functionArgs && typeof functionArgs === "object") {
                   functionArgs.isMaster = e.IsMaster === true;
+                  functionArgs.groupFullAccess = groupFullAccess;
                 }
                 // 公共知识库仅映射工作目录；审核配置仍绑定真实会话。
                 if (functionArgs && typeof functionArgs === "object") {
                   functionArgs.guid = toolGuid;
                   if (
                     functionName === "RunServerCommand" ||
+                    groupFullAccess ||
                     functionArgs.scope === "public" ||
                     functionArgs.scope === "root"
                   ) {

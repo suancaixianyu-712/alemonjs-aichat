@@ -42,8 +42,14 @@ export const buildUserPermissionPrompt = (input: UserPermissionInput) => {
     "用 ExecuteAlemonCommand 执行这个用户在框架里本来就有权使用的指令。指令失败或提示权限不足时，不要换成另一条指令去做同一件事",
   ];
   const denied: string[] = [];
+  const groupFullAccess = !input.isPrivate && input.opencodePermission === "full";
 
-  if (!input.agentEnabled) {
+  if (groupFullAccess && !input.isMaster) {
+    pushUnique(allowed, "当前群已开启完全访问，可以读写项目、维护公共知识库、使用 scope=root 访问服务器目录，并执行完整 Git（提交、推送、拉取、合并）和其他服务器命令");
+    pushUnique(denied, "删除文件、目录或 Git 仓库、清空数据、重启或停止服务和进程仅主人可用，包括脚本、子任务和其他工具的间接操作");
+    pushUnique(denied, "把服务器凭据、密钥、令牌转述给用户或写到未授权位置，或绕过危险操作审核");
+    pushUnique(allowed, "独立 RunCodex / RunOpencode 子代理仅做只读分析；修改项目使用 Agent 文件工具或群内 OpenCode 会话。服务器和项目命令仍会审核危险操作，拒绝后不能绕过");
+  } else if (!input.agentEnabled && !groupFullAccess) {
     pushUnique(allowed, "列出、搜索、读取当前会话项目和公共知识库");
     pushUnique(
       denied,

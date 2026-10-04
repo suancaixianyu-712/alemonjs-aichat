@@ -1021,6 +1021,13 @@ export const runOpencode = async (input: RunOpencodeInput = {}) => {
   );
   const sessionId = String(session.id);
 
+  if (!autoApprove) {
+    // 续接既有会话也必须撤销此前的自动放行规则。
+    await updateOpencodeSessionPermission(url, resolvedDir, sessionId, [
+      { permission: "*", pattern: "*", action: "deny" },
+    ]);
+  }
+
   const controller = new AbortController();
   const unregister = registerActiveRun({
     guid: input.guid,

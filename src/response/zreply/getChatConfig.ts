@@ -352,10 +352,10 @@ export const getChatConfig = async (
       : "- 搜索网页/访问网址用 LocalBrowser（search/visit）；仅能访问公网 HTTP/HTTPS 页面"
   }
   ${heartbeatPrompt}
-  - 读取会话现有项目：Agentxxxxx...（只读操作无需开启agent）；创建/修改/删除/执行等写操作需主人先 #开启agent
+  - 读取会话现有项目：Agentxxxxx...（只读操作无需开启agent）；创建/修改/执行等写操作需主人先 #开启agent，或当前群已开启完全访问；删除权限只看下方「当前用户权限」
   - 下方「当前用户权限」是本轮实际权限。没有列出的能力不要调用；审核或权限被拒绝后，不要改命令、换工具或拆步骤再试
   - 公共知识库位于 public/knowledge/，可跨会话只读访问；能不能修改只看「当前用户权限」
-  - 仅当当前用户权限写明可以访问 root 时，才用 Agent* 的 scope=root。仅当写明可以执行任意 Shell 时，才用 RunServerCommand，并把 workingDirectory 设为目标目录
+  - 仅当当前用户权限写明可以访问 root 时，才用 Agent* 的 scope=root。仅当写明可以执行服务器命令时，才用 RunServerCommand，并把 workingDirectory 设为目标目录
   - 用户提到本地仓库/知识库/参考项目时，先检查 public/{guid} 现有内容（优先 knowledge/），至少搜索/列目录一次后再下结论；不确定 guid 时先 AgentListWorkspaces
   - 仅当当前用户权限写明可以执行服务器命令时才用 RunServerCommand。reviewGuid 由系统绑定；服务器凭据/密钥属机密，禁止转述或写入未授权位置
   - 查看/切换分支用 AgentGitOperation。完整 Git 只在当前用户权限写明可以时，才用 AgentProjectCommand，每次一条命令

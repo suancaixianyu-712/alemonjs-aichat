@@ -5,14 +5,13 @@ import {
 } from "child_process";
 import fs from "fs";
 import path from "path";
+import { CODEX_SESSION_ID_RE, CodexSessionStore } from "./codex-sessions";
 
 const MAX_OUTPUT_CHARS = 24000;
 const MAX_ACTIVITY_CHARS = 12000;
 const MAX_STDERR_CHARS = 12000;
 const DEFAULT_TIMEOUT_SECONDS = 600;
 const MAX_TIMEOUT_SECONDS = 1800;
-const CODEX_SESSION_ID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 type CodexCommand = {
   file: string;
@@ -20,7 +19,9 @@ type CodexCommand = {
 };
 
 export type RunCodexInput = {
+  action?: "run" | "listSessions" | "switchSession";
   prompt?: string;
+  newSession?: boolean;
   sessionId?: string;
   projectPath?: string;
   model?: string;
@@ -41,6 +42,7 @@ export type CodexJsonlResult = {
 
 type MutableCodexJsonlResult = CodexJsonlResult & {
   activityChars: number;
+  completed: boolean;
 };
 
 export type CodexRunRecord = {
@@ -49,6 +51,7 @@ export type CodexRunRecord = {
   sessionId?: string;
   directory: string;
   child: ChildProcessWithoutNullStreams;
+  aborted?: boolean;
 };
 
 const activeRuns: CodexRunRecord[] = [];
@@ -126,6 +129,7 @@ const createJsonlResult = (): MutableCodexJsonlResult => ({
   error: null,
   invalidLines: 0,
   activityChars: 0,
+  completed: false,
 });
 
 const appendActivity = (result: MutableCodexJsonlResult, text: string) => {
@@ -143,6 +147,10 @@ const consumeJsonlLine = (result: MutableCodexJsonlResult, line: string) => {
   let event: Record<string, any>;
   try {
     event = JSON.parse(normalized);
+    if (!event || typeof event !== "object" || Array.isArray(event)) {
+      result.invalidLines += 1;
+      return;
+    }
   } catch {
     result.invalidLines += 1;
     return;
@@ -153,6 +161,7 @@ const consumeJsonlLine = (result: MutableCodexJsonlResult, line: string) => {
     return;
   }
   if (event.type === "turn.completed") {
+    result.completed = true;
     result.usage =
       event.usage && typeof event.usage === "object" ? event.usage : null;
     return;
@@ -197,6 +206,7 @@ export const buildCodexExecArgs = (input: {
   projectPath: string;
   model?: string;
   autoApprove?: boolean;
+  useStdin?: boolean;
 }) => {
   const args = [
     "exec",
@@ -212,7 +222,7 @@ export const buildCodexExecArgs = (input: {
   else args.push("--approve-for-me");
   if (input.model?.trim()) args.push("--model", input.model.trim());
   if (input.sessionId) args.push("resume", input.sessionId);
-  args.push("--", input.prompt);
+  args.push("--", input.useStdin ? "-" : input.prompt);
   return args;
 };
 
@@ -261,12 +271,8 @@ const findWindowsCodexCommand = () =>
     });
   });
 
-const resolveCodexCommand = async (): Promise<CodexCommand> => {
-  let configured = String(process.env.CODEX_TOOL_BINARY || "").trim();
-  if (!configured) {
-    const { getAiChatConfigValue } = await import("../config/app");
-    configured = String(getAiChatConfigValue()?.codexTool?.binary || "").trim();
-  }
+const resolveCodexCommand = async (binary?: string): Promise<CodexCommand> => {
+  const configured = String(process.env.CODEX_TOOL_BINARY || binary || "").trim();
   if (configured) {
     const command = commandFromPath(configured);
     if (!command) {
@@ -326,6 +332,7 @@ export const abortCodexRuns = async (options?: {
   });
   let aborted = 0;
   for (const run of targets) {
+    run.aborted = true;
     if (await terminateProcessTree(run.child)) aborted += 1;
   }
   return { aborted };
@@ -339,6 +346,8 @@ const runCodexProcess = async (input: {
   guid?: string;
   userID?: string;
   sessionId?: string;
+  prompt: string;
+  onSessionStarted?: (sessionId: string) => Promise<unknown>;
 }) => {
   const result = createJsonlResult();
   const child = spawn(
@@ -348,19 +357,35 @@ const runCodexProcess = async (input: {
       cwd: input.directory,
       windowsHide: true,
       detached: process.platform !== "win32",
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["pipe", "pipe", "pipe"],
     },
   );
-  const unregister = registerActiveRun({
+  const record: CodexRunRecord = {
     guid: input.guid,
     userID: input.userID,
     sessionId: input.sessionId,
     directory: input.directory,
     child,
-  });
+  };
+  const unregister = registerActiveRun(record);
   let stdoutBuffer = "";
   let stderr = "";
   let timedOut = false;
+  let sessionSave: Promise<unknown> = Promise.resolve();
+  let sessionSaveError: string | null = null;
+  let startedSessionId = "";
+
+  const consumeLine = (line: string) => {
+    consumeJsonlLine(result, line);
+    if (result.sessionId && result.sessionId !== startedSessionId) {
+      startedSessionId = result.sessionId;
+      record.sessionId = result.sessionId;
+      const id = result.sessionId;
+      sessionSave = sessionSave
+        .then(() => input.onSessionStarted?.(id))
+        .catch((error) => { sessionSaveError = toErrorText(error); });
+    }
+  };
 
   child.stdout.setEncoding("utf8");
   child.stderr.setEncoding("utf8");
@@ -368,7 +393,7 @@ const runCodexProcess = async (input: {
     stdoutBuffer += chunk;
     const lines = stdoutBuffer.split(/\r?\n/);
     stdoutBuffer = lines.pop() || "";
-    for (const line of lines) consumeJsonlLine(result, line);
+    for (const line of lines) consumeLine(line);
     if (stdoutBuffer.length > 1024 * 1024) {
       result.invalidLines += 1;
       stdoutBuffer = "";
@@ -392,11 +417,18 @@ const runCodexProcess = async (input: {
     }>((resolve, reject) => {
       child.once("error", reject);
       child.once("close", (code, signal) => resolve({ code, signal }));
+      // CLI 提前退出时 stdin 可能产生 EPIPE，执行错误由进程事件回传。
+      child.stdin.on("error", () => undefined);
+      child.stdin.end(input.prompt, "utf8");
     });
-    if (stdoutBuffer.trim()) consumeJsonlLine(result, stdoutBuffer);
+    if (stdoutBuffer.trim()) consumeLine(stdoutBuffer);
+    await sessionSave;
     return {
       ...exit,
       timedOut,
+      aborted: record.aborted === true,
+      sessionSaveError,
+      completed: result.completed,
       stderr: truncateText(stripAnsi(stderr).trim(), MAX_STDERR_CHARS),
       parsed: finalizeJsonlResult(result),
     };
@@ -406,71 +438,154 @@ const runCodexProcess = async (input: {
   }
 };
 
+const assertInsideDirectory = (root: string, directory: string) => {
+  const relative = path.relative(root, directory);
+  if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw new Error("Codex 工作目录超出允许范围，请在 codexTool.projectPath 内执行");
+  }
+};
+
+const resolveWorkingDirectory = (input: RunCodexInput, configuredPath?: string) => {
+  let root = String(configuredPath || "").trim();
+  if (!root && input.guid) {
+    const guid = input.guid.trim();
+    if (!guid || guid === "." || guid === ".." || /[\\/\0:]/.test(guid)) {
+      throw new Error("当前聊天标识不能作为工作目录名");
+    }
+    const publicRoot = path.resolve(process.cwd(), "public");
+    root = path.join(publicRoot, guid);
+    fs.mkdirSync(root, { recursive: true });
+    assertInsideDirectory(fs.realpathSync.native(publicRoot), fs.realpathSync.native(root));
+  }
+  const projectPath = String(input.projectPath || root || "").trim();
+  if (!projectPath) throw new Error("projectPath(项目目录绝对路径) 不能为空");
+  if (!path.isAbsolute(projectPath) || (root && !path.isAbsolute(root))) {
+    throw new Error("Codex 工作目录必须是绝对路径");
+  }
+  if (root && (!fs.existsSync(root) || !fs.statSync(root).isDirectory())) {
+    throw new Error(`配置的 Codex 工作目录不存在或不是目录: ${root}`);
+  }
+  if (!fs.existsSync(projectPath)) throw new Error(`项目目录不存在: ${projectPath}`);
+  if (!fs.statSync(projectPath).isDirectory()) throw new Error(`项目路径不是目录: ${projectPath}`);
+  const directory = fs.realpathSync.native(projectPath);
+  if (root) assertInsideDirectory(fs.realpathSync.native(root), directory);
+  return directory;
+};
+
 export const runCodex = async (input: RunCodexInput = {}) => {
-  const projectPath = String(input.projectPath || "").trim();
-  if (!projectPath) {
-    return { ok: false, error: "projectPath(项目目录绝对路径) 不能为空" };
-  }
-  const resolvedDir = path.resolve(projectPath);
-  if (!fs.existsSync(resolvedDir)) {
-    return { ok: false, error: `项目目录不存在: ${projectPath}` };
-  }
-  if (!fs.statSync(resolvedDir).isDirectory()) {
-    return { ok: false, error: `项目路径不是目录: ${projectPath}` };
-  }
-
-  const prompt = String(input.prompt || "").trim();
-  if (!prompt)
-    return { ok: false, error: "prompt(要交给 Codex 的提示词) 不能为空" };
-
-  const sessionId = String(input.sessionId || "").trim();
-  if (sessionId && !CODEX_SESSION_ID_RE.test(sessionId)) {
-    return { ok: false, error: "sessionId 不是有效的 Codex 会话 UUID" };
-  }
-
-  const timeoutSeconds = Math.max(
-    1,
-    Math.min(
-      Number(input.timeoutSeconds) || DEFAULT_TIMEOUT_SECONDS,
+  let release: (() => Promise<void>) | undefined;
+  try {
+    const action = input.action || "run";
+    if (!["run", "listSessions", "switchSession"].includes(action)) {
+      throw new Error("action 仅支持 run、listSessions 或 switchSession");
+    }
+    const prompt = String(input.prompt || "").trim();
+    if (action === "run" && !prompt) throw new Error("prompt(要交给 Codex 的提示词) 不能为空");
+    const requestedSessionId = String(input.sessionId || "").trim();
+    if (requestedSessionId && !CODEX_SESSION_ID_RE.test(requestedSessionId)) {
+      throw new Error("sessionId 不是有效的 Codex 会话 UUID");
+    }
+    if (input.newSession && requestedSessionId) throw new Error("newSession 和 sessionId 不能同时使用");
+    const { getAiChatConfigValue } = await import("../config/app");
+    const config = getAiChatConfigValue()?.codexTool || {};
+    const directory = resolveWorkingDirectory(input, config.projectPath);
+    const timeoutSeconds = Math.max(1, Math.min(
+      Math.floor(Number(input.timeoutSeconds ?? config.timeoutSeconds) || DEFAULT_TIMEOUT_SECONDS),
       MAX_TIMEOUT_SECONDS,
-    ),
-  );
-  const command = await resolveCodexCommand();
-  const run = await runCodexProcess({
-    command,
-    args: buildCodexExecArgs({
+    ));
+    let store: CodexSessionStore | undefined;
+    if (input.guid) {
+      const { redis } = await import("../redis");
+      store = new CodexSessionStore(redis, input.guid, input.userID || "", directory);
+    }
+    if (action === "listSessions") {
+      if (!store) throw new Error("查询会话需要当前聊天标识 guid");
+      return {
+        ok: true,
+        action,
+        directory,
+        currentSessionId: (await store.current())?.id || null,
+        sessions: await store.list(),
+      };
+    }
+    if (store) release = await store.acquire(timeoutSeconds);
+    if (action === "switchSession") {
+      if (!store) throw new Error("切换会话需要当前聊天标识 guid");
+      if (!requestedSessionId) throw new Error("切换会话必须提供 sessionId");
+      const session = await store.select(requestedSessionId);
+      return { ok: true, action, directory, sessionId: session.id, session };
+    }
+    const previous = store
+      ? requestedSessionId
+        ? await store.get(requestedSessionId)
+        : input.newSession ? null : await store.current()
+      : null;
+    if (store && requestedSessionId && !previous) {
+      throw new Error("未找到当前聊天、用户和工作目录下的 Codex 会话");
+    }
+    const sessionId = previous?.id || requestedSessionId;
+    const model = String(input.model || config.model || previous?.model || "").trim();
+    const autoApprove = input.autoApprove ?? config.autoApprove ?? true;
+    const command = await resolveCodexCommand(config.binary);
+    const saveSession = (id: string, status: "running" | "completed" | "failed" | "stopped") =>
+      store?.save({ id, prompt, model: model || null, status });
+    const run = await runCodexProcess({
+      command,
+      args: buildCodexExecArgs({
+        prompt,
+        sessionId: sessionId || undefined,
+        projectPath: directory,
+        model,
+        autoApprove,
+        useStdin: true,
+      }),
       prompt,
+      directory,
+      timeoutMs: timeoutSeconds * 1000,
+      guid: input.guid,
+      userID: input.userID,
       sessionId: sessionId || undefined,
-      projectPath: resolvedDir,
-      model: input.model,
-      autoApprove: input.autoApprove,
-    }),
-    directory: resolvedDir,
-    timeoutMs: timeoutSeconds * 1000,
-    guid: input.guid,
-    userID: input.userID,
-    sessionId: sessionId || undefined,
-  });
-
-  const error = run.timedOut
-    ? `Codex 运行超时(${timeoutSeconds}秒)，已终止任务`
-    : run.parsed.error ||
-      (run.code === 0
-        ? null
-        : run.stderr || `Codex 进程退出，退出码 ${run.code ?? "未知"}`);
-  return {
-    ok: !error,
-    action: "run",
-    sessionId: run.parsed.sessionId || sessionId || null,
-    directory: resolvedDir,
-    model: input.model?.trim() || null,
-    sandbox: input.autoApprove === false ? "read-only" : "workspace-write",
-    usage: run.parsed.usage,
-    output: run.parsed.output,
-    activity: run.parsed.activity,
-    error,
-    message: error
-      ? `Codex 执行失败：${error}`
-      : `Codex 会话 ${run.parsed.sessionId || sessionId || "未知"} 已运行完成`,
-  };
+      onSessionStarted: (id) => Promise.resolve(saveSession(id, "running")),
+    });
+    const error = run.timedOut
+      ? `Codex 运行超时(${timeoutSeconds}秒)，已终止任务`
+      : run.aborted ? "Codex 任务已中止，可继续该会话恢复任务"
+      : run.parsed.error || (run.code === 0 ? null
+        : run.stderr || `Codex 进程退出，退出码 ${run.code ?? "未知"}`) ||
+        (!run.completed ? "Codex 进程未返回任务完成事件" : null);
+    const returnedSessionId = run.parsed.sessionId || sessionId || null;
+    let sessionWarning: string | null = run.sessionSaveError;
+    if (returnedSessionId) {
+      try {
+        await saveSession(returnedSessionId, run.aborted ? "stopped" : error ? "failed" : "completed");
+      } catch (saveError) {
+        sessionWarning = toErrorText(saveError);
+      }
+    }
+    return {
+      ok: !error,
+      action,
+      sessionId: returnedSessionId,
+      resumed: Boolean(sessionId),
+      directory,
+      model: model || null,
+      sandbox: autoApprove === false ? "read-only" : "workspace-write",
+      usage: run.parsed.usage,
+      output: run.parsed.output,
+      activity: run.parsed.activity,
+      error,
+      ...(sessionWarning ? { warning: `执行结果已返回，但会话记录保存失败：${sessionWarning}` } : {}),
+      message: error ? `Codex 执行失败：${error}`
+        : `Codex 会话 ${returnedSessionId || "未知"} 已运行完成`,
+    };
+  } catch (error: any) {
+    return {
+      ok: false,
+      error: error?.code === "ENOENT"
+        ? "未找到 Codex CLI，请先安装，或配置 codexTool.binary / CODEX_TOOL_BINARY"
+        : error instanceof Error ? error.message : String(error),
+    };
+  } finally {
+    if (release) await release().catch((error) => console.error("Codex 会话锁释放失败", error));
+  }
 };
