@@ -96,10 +96,16 @@ export default onMiddleware(selects, async (event, next) => {
             "onebot平台连接错误, 影响:无法发送语音,无法获取自己的信息,无法获取at用户的信息,这是alemonjs的锅";
           throw new Error("获取机器人信息失败，数据格式不正确");
         }
-        event["bot"] = botInfo[0].data ?? {
-          nickname: "小喵酱",
-          user_id: event.BotId,
-        }; // 机器人信息
+        const loginInfo = botInfo[0].data;
+        if (!loginInfo || !String(loginInfo.nickname || "").trim()) {
+          event["bot"] = {
+            nickname: "小喵酱",
+            user_id: event.BotId,
+          };
+          event["botInfoFault"] = true;
+        } else {
+          event["bot"] = loginInfo;
+        }
       }
     } catch (error) {
       console.error("获取机器人信息失败，使用默认信息", error);
@@ -107,6 +113,7 @@ export default onMiddleware(selects, async (event, next) => {
         nickname: "小喵酱",
         user_id: event.BotId,
       }; // 机器人信息
+      event["botInfoFault"] = true;
     }
 
     event["self_id"] = event.BotId; // 机器人QQ号

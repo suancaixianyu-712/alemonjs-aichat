@@ -55,6 +55,7 @@ const createSyntheticEvent = (task: TriggerTask) => {
       nickname: "小咸鱼",
       user_id: "__scheduled_task__",
     },
+    botInfoFault: true,
   };
 };
 

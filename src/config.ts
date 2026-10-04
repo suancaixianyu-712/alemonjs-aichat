@@ -68,6 +68,16 @@ const TOOL_LOOP_TTL_SECONDS = 3600;
 const TOOL_LOOP_STALE_MS = TOOL_LOOP_TTL_SECONDS * 1000;
 export const AI_LOCKED_CONFIGS_KEY = "ai:locked:configs";
 export const NEXT_USER_MESSAGE_SUBSCRIPTION_TTL_SECONDS = 600;
+export const FOLLOWUP_WATCH_TTL_SECONDS = 60;
+const FOLLOWUP_LOG_LIMIT = 40;
+const FOLLOWUP_TEXT_LIMIT = 300;
+
+export type FollowupMessageRecord = {
+  userID: string;
+  name: string;
+  text: string;
+  at: number;
+};
 export const DEFAULT_CAPI_CONTEXT_LIMIT = 512000;
 const ARCHIVED_CHAT_SUMMARY_MAX_LENGTH = 240;
 const ARCHIVED_CHAT_DETAIL_MAX_LENGTH = 4000;
@@ -1631,6 +1641,9 @@ class db {
         "ai:tool_loop_processing:",
         "ai:guidance:",
         "ai:next_user_message:",
+        "ai:followup:active:",
+        "ai:followup:watch:",
+        "ai:followup:log:",
         "ai:session:",
       ];
       for (const prefix of transientPrefixes) {
@@ -1648,6 +1661,11 @@ class db {
       `ai:guidance:${guid}`,
       `ai:guidance:${guid}:*`,
       `ai:next_user_message:${guid}:*`,
+      `ai:followup:active:${guid}`,
+      `ai:followup:active:${guid}:*`,
+      `ai:followup:watch:${guid}:*`,
+      `ai:followup:log:${guid}`,
+      `ai:followup:log:${guid}:*`,
       `ai:session:${guid}`,
     ];
     const keys = (
@@ -1701,6 +1719,116 @@ class db {
       this.getNextUserMessageSubscriptionKey(guid, userID, platform),
     );
     return Number(result) === 1;
+  }
+
+  private getFollowupActiveKey(guid: string, platform?: string) {
+    return `ai:followup:active:${guid}:${platform || "default"}`;
+  }
+
+  private getFollowupWatchKey(
+    guid: string,
+    userID: string,
+    platform?: string,
+  ) {
+    return `ai:followup:watch:${guid}:${platform || "default"}:${userID}`;
+  }
+
+  private getFollowupLogKey(guid: string, platform?: string) {
+    return `ai:followup:log:${guid}:${platform || "default"}`;
+  }
+
+  /**
+   * AI 实际回复后，或一分钟窗口内有人新触发时，记下这个用户。
+   * 同一群共用一份一分钟消息记录，不按人各开一份。
+   */
+  async markFollowupWatch(
+    guid: string,
+    userID: string,
+    platform?: string,
+  ): Promise<void> {
+    if (!guid || !userID) return;
+    const ttl = FOLLOWUP_WATCH_TTL_SECONDS;
+    await this.redis
+      .pipeline()
+      .set(this.getFollowupWatchKey(guid, userID, platform), "1", "EX", ttl)
+      .set(this.getFollowupActiveKey(guid, platform), "1", "EX", ttl)
+      .expire(this.getFollowupLogKey(guid, platform), ttl)
+      .exec();
+  }
+
+  async isFollowupWindowActive(
+    guid: string,
+    platform?: string,
+  ): Promise<boolean> {
+    if (!guid) return false;
+    return (
+      (await this.redis.get(this.getFollowupActiveKey(guid, platform))) === "1"
+    );
+  }
+
+  async isFollowupUserWatched(
+    guid: string,
+    userID: string,
+    platform?: string,
+  ): Promise<boolean> {
+    if (!guid || !userID) return false;
+    return (
+      (await this.redis.get(
+        this.getFollowupWatchKey(guid, userID, platform),
+      )) === "1"
+    );
+  }
+
+  /** 窗口开启时追加一条群消息。只保留最近一分钟、最多 40 条。 */
+  async appendFollowupMessage(
+    guid: string,
+    platform: string | undefined,
+    entry: { userID: string; name: string; text: string },
+  ): Promise<void> {
+    if (!guid) return;
+    if (!(await this.isFollowupWindowActive(guid, platform))) return;
+    const text = String(entry.text || "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, FOLLOWUP_TEXT_LIMIT);
+    const record: FollowupMessageRecord = {
+      userID: String(entry.userID || ""),
+      name: String(entry.name || entry.userID || "未知").slice(0, 80),
+      text: text || "[非文本消息]",
+      at: Date.now(),
+    };
+    const key = this.getFollowupLogKey(guid, platform);
+    await this.redis
+      .pipeline()
+      .rpush(key, JSON.stringify(record))
+      .ltrim(key, -FOLLOWUP_LOG_LIMIT, -1)
+      .expire(key, FOLLOWUP_WATCH_TTL_SECONDS)
+      .exec();
+  }
+
+  async getFollowupMessages(
+    guid: string,
+    platform?: string,
+  ): Promise<FollowupMessageRecord[]> {
+    if (!guid) return [];
+    const rows = await this.redis.lrange(
+      this.getFollowupLogKey(guid, platform),
+      0,
+      -1,
+    );
+    const cutoff = Date.now() - FOLLOWUP_WATCH_TTL_SECONDS * 1000;
+    const messages: FollowupMessageRecord[] = [];
+    for (const row of rows) {
+      try {
+        const item = JSON.parse(row) as FollowupMessageRecord;
+        if (!item || typeof item.at !== "number" || item.at < cutoff) continue;
+        if (!item.text) continue;
+        messages.push(item);
+      } catch {
+        continue;
+      }
+    }
+    return messages;
   }
 
   private getToolLoopStateKey(guid: string, platform?: string) {

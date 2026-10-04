@@ -97,22 +97,65 @@ const buildGuidanceMessage = async (event: any) => {
   };
 };
 
+const recordFollowupMessage = async (event: any) => {
+  if (event.name === "private.message.create") return;
+  if (!(await redisClient.isFollowupWindowActive(event.guid, event.Platform))) {
+    return;
+  }
+  const text = String(event.msg || "");
+  const imageMark =
+    Array.isArray(event.img) && event.img.length > 0 ? " [图片]" : "";
+  await redisClient.appendFollowupMessage(event.guid, event.Platform, {
+    userID: String(event.UserId || ""),
+    name: String(event.UserName || event.UserId || ""),
+    text: `${text}${imageMark}`.trim(),
+  });
+};
+
+/** 与 shouldSkipAIReply 同一套概率，用来识别“这句本来会触发回复”。 */
+const wouldReplyByChance = async (event: any) => {
+  if (event.atBot) return true;
+  const proactiveSwitch = await redisClient.getProactiveSwitch(event.guid);
+  if (proactiveSwitch !== "1" && event.at && !event.atBot) return false;
+  const rand = Math.random();
+  if ((!event.at && rand > 0.1) || (event.at && !event.atBot && rand > 0.2)) {
+    return false;
+  }
+  return true;
+};
+
 const canPassReplyTriggerGate = async (event: any) => {
-  if (
-    event.UserId == event.bot?.user_id ||
-    !event.msg ||
-    event.msg.startsWith("/") ||
-    event.msg.startsWith("#")
-  ) {
+  if (event.UserId == event.bot?.user_id) {
+    return false;
+  }
+  const text = String(event.msg || "");
+  if (text.startsWith("/") || text.startsWith("#")) {
     return false;
   }
 
-  // 聊天频率限制（每分钟最多 N 条，主人除外）
-  if (event.IsMaster !== true) {
+  // 一分钟窗口里记下群里的全部消息，包括这次不会调用 AI 的发言
+  await recordFollowupMessage(event);
+
+  if (!event.msg) {
+    return false;
+  }
+
+  const isGroup = event.name !== "private.message.create";
+  const userID = String(event.UserId || "");
+  const watched =
+    isGroup &&
+    (await redisClient.isFollowupUserWatched(
+      event.guid,
+      userID,
+      event.Platform,
+    ));
+
+  // 已监听的用户再发言必须能进入判断，不受每分钟条数限制
+  if (!watched && event.IsMaster !== true) {
     const chatRateLimit = await redisClient.getChatRateLimit(event.guid);
     const allowed = await redisClient.checkChatRateLimit(
       event.guid,
-      String(event.UserId || ""),
+      userID,
       chatRateLimit,
     );
     if (!allowed) {
@@ -135,11 +178,11 @@ const canPassReplyTriggerGate = async (event: any) => {
     return false;
   }
 
-  if (event.name !== "private.message.create") {
+  if (isGroup) {
     const subscriptionTriggered =
       await redisClient.consumeNextUserMessageSubscription(
         event.guid,
-        String(event.UserId || ""),
+        userID,
         event.Platform,
       );
     if (subscriptionTriggered) {
@@ -151,18 +194,46 @@ const canPassReplyTriggerGate = async (event: any) => {
   const atTriggerSwitch = await redisClient.getAtTriggerSwitch(
     event.ChannelId ?? event.UserId,
   );
-  if (atTriggerSwitch === "1" && event.Platform !== "testone") {
-    if (!event["atBot"] && event.name !== "private.message.create") {
-      const regexMatched = await redisClient.matchRegexRule(
-        event.ChannelId ?? event.UserId,
-        event.msg || "",
-      );
-      if (regexMatched) {
-        event["regexTriggered"] = true;
-        return true;
-      }
-      return false;
+  const atOnly =
+    atTriggerSwitch === "1" &&
+    event.Platform !== "testone" &&
+    isGroup &&
+    !event["atBot"];
+
+  if (atOnly) {
+    const regexMatched = await redisClient.matchRegexRule(
+      event.ChannelId ?? event.UserId,
+      event.msg || "",
+    );
+    if (regexMatched) {
+      event["regexTriggered"] = true;
+      return true;
     }
+    if (watched) {
+      event["followupJudgement"] = true;
+      console.log("一分钟跟进: 监听用户再次发言, 交给 AI 判断", userID);
+      return true;
+    }
+    return false;
+  }
+
+  // 已经回复过的人，在一分钟内再发一条：只触发这个人，由 AI 决定回不回
+  if (watched) {
+    event["followupJudgement"] = true;
+    console.log("一分钟跟进: 监听用户再次发言, 交给 AI 判断", userID);
+    return true;
+  }
+
+  // 窗口内其他人即使本来会触发，也先记下，不另起一轮回复。等他再发一条再判断。
+  if (
+    isGroup &&
+    (await redisClient.isFollowupWindowActive(event.guid, event.Platform))
+  ) {
+    if (await wouldReplyByChance(event)) {
+      await redisClient.markFollowupWatch(event.guid, userID, event.Platform);
+      console.log("一分钟内新的触发已记下, 等待该用户再发一条", userID);
+    }
+    return false;
   }
 
   return true;
