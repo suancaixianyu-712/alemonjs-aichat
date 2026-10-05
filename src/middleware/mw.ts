@@ -412,5 +412,20 @@ export default onMiddleware(selects, async (event, next) => {
     }
   }
 
+  // 在进入具体响应路由前记录群消息，避免非 AI 路由消费消息时漏记。
+  if (
+    event.name !== "private.message.create" &&
+    String(event.UserId || "") !== String(event.bot?.user_id || "") &&
+    (await redisClient.isFollowupWindowActive(event.guid, event.Platform))
+  ) {
+    const imageMark =
+      Array.isArray(event.img) && event.img.length > 0 ? " [图片]" : "";
+    await redisClient.appendFollowupMessage(event.guid, event.Platform, {
+      userID: String(event.UserId || ""),
+      name: String(event.UserName || event.UserId || ""),
+      text: `${String(event.msg || "")}${imageMark}`.trim(),
+    });
+  }
+
   return next();
 });
