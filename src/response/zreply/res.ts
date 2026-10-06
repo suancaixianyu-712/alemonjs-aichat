@@ -570,6 +570,18 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
           functionArgs.userID = String(e.UserId || "");
         }
 
+        // 子agent绑定真实会话与用户：通知目标和结果回传都以真实事件为准
+        if (
+          functionName === "SubAgent" &&
+          functionArgs &&
+          typeof functionArgs === "object"
+        ) {
+          functionArgs.userID = String(e.UserId || "");
+          functionArgs.platform = e.Platform;
+          functionArgs.spaceId = e.SpaceId;
+          functionArgs.isPrivate = e.name === "private.message.create";
+        }
+
         if (
           functionName === "XianyuGame" &&
           functionArgs &&
