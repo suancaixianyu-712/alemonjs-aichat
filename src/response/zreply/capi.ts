@@ -36,6 +36,7 @@ import {
 } from "./getChatConfig";
 import { executeAlemonCommand } from "@src/routes/commands";
 import { parseAIReply, removeThinkContent, sendAIReplyToOutput } from "./tools";
+import { shouldSuppressFollowupReply } from "./followup-reply";
 import { requestRapiCompletion } from "./rapi";
 import { getProviderBuiltinToolParams } from "./provider-tools";
 import { createScbbsProgress } from "./scbbs-progress";
@@ -1091,6 +1092,13 @@ export const CApiReply = async (
     let reply =
       res.choices?.[0]?.message?.content?.trim() || `${cfg.botName}:[]`;
     reply = removePublicIpFromOutput(reply, e.IsMaster === true);
+    if (
+      e["followupJudgement"] &&
+      shouldSuppressFollowupReply(removeThinkContent(reply), cfg.botName)
+    ) {
+      log("一分钟跟进: AI选择不回复，已丢弃静默标记或括号旁白");
+      return;
+    }
     if (reply === `${cfg.botName}:[]`) {
       log("AI选择不回复");
       return;
