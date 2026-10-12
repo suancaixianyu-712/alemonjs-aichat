@@ -14,14 +14,22 @@ const ai = {
 };
 const configs = new Map();
 const values = new Map();
+const redisStore = new Map([["ai:currentAI:test-group", "Test AI"]]);
 export const client = new Proxy(
   {
     redis: {
-      keys: async (pattern) =>
-        pattern === "ai:currentAI:*" ? ["ai:currentAI:test-group"] : [],
-      get: async () => "Test AI",
-      set: async (...args) => {
-        calls.push(["redis.set", ...args]);
+      keys: async (pattern) => {
+        if (pattern === "ai:currentAI:*") return ["ai:currentAI:test-group"];
+        const prefix = pattern.endsWith("*") ? pattern.slice(0, -1) : pattern;
+        return [...redisStore.keys()].filter((key) => key.startsWith(prefix));
+      },
+      get: async (key) => redisStore.get(key) ?? null,
+      set: async (key, value) => {
+        redisStore.set(key, value);
+        calls.push(["redis.set", key, value]);
+      },
+      del: async (key) => {
+        redisStore.delete(key);
       },
     },
     getAIList: async () => ["Test AI"],

@@ -16,7 +16,7 @@ export const commandChildren = [
     handler: lazy(() => import("../response/minimax/res")),
   },
   {
-    regular: /^(\/|#)(开启网页(?:\s+.*)?|关闭网页|网页状态)$/,
+    regular: /^(\/|#)(开启网页(?:\s+.*)?|关闭网页|网页状态|登录面板)$/,
     handler: lazy(() => import("../response/panel/res")),
   },
   // help

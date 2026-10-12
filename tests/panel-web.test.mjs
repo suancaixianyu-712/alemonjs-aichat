@@ -8,6 +8,7 @@ import vm from "node:vm";
 import {
   startPanelTestRuntime,
   calls,
+  client,
   imageSource,
 } from "./helpers/panel-runtime.mjs";
 
@@ -301,6 +302,16 @@ const availablePort = async () => {
   return reservation.port;
 };
 const hostedBase = "/robot-proxy/apps/alemonjs-aichat/api";
+const PANEL_ACCESS_KEY = "ai:panel:access";
+const enableStandaloneAccess = async (token = "test-panel-token") => {
+  await client.redis.set(
+    PANEL_ACCESS_KEY,
+    JSON.stringify({ enabled: "1", token }),
+  );
+  return token;
+};
+const standaloneUrl = (port, token, path = "/panel/config") =>
+  `http://127.0.0.1:${port}/${token}${path}`;
 
 test("independent listener defaults to stopped; only hosted config shows controls", async () => {
   assert.equal(panelService.getPanelServerStatus().running, false);
@@ -343,9 +354,24 @@ test("hosted controls start a real listener on custom port and stop only that li
       running: true,
       port,
     });
-    const standalone = await fetch(`http://127.0.0.1:${port}/panel/config`);
+    assert.equal(
+      (await fetch(`http://127.0.0.1:${port}/panel/config`)).status,
+      403,
+    );
+    const token = await enableStandaloneAccess();
+    assert.equal(
+      (await fetch(`http://127.0.0.1:${port}/panel/config`)).status,
+      401,
+    );
+    assert.equal(
+      (await fetch(`http://127.0.0.1:${port}/wrong-token/panel/config`)).status,
+      401,
+    );
+    const standalone = await fetch(standaloneUrl(port, token));
     assert.equal(standalone.status, 200);
-    assert.doesNotMatch(await standalone.text(), /关闭独立网页/);
+    const standaloneHtml = await standalone.text();
+    assert.doesNotMatch(standaloneHtml, /关闭独立网页/);
+    assert.ok(standaloneHtml.includes(`href="/${token}/panel/config"`));
     const hosted = await (await request(`${hostedBase}/panel/config`)).text();
     assert.match(hosted, /关闭独立网页/);
     assert.ok(hosted.includes(`端口 ${port}`));
@@ -383,8 +409,10 @@ test("occupied port reports failure and can be retried after it is released", as
     assert.deepEqual(state, { running: true, port: reservation.port });
     const otherPort = await availablePort();
     await assert.rejects(panelService.createPanelServer(otherPort), /先关闭/);
+    const token = await enableStandaloneAccess();
     assert.equal(
-      (await fetch(`http://127.0.0.1:${reservation.port}/panel/chat`)).status,
+      (await fetch(standaloneUrl(reservation.port, token, "/panel/chat")))
+        .status,
       200,
     );
   } finally {
@@ -406,8 +434,9 @@ test("concurrent start and stop operations are serialized and reopening remember
       [true, true, false, true],
     );
     assert.ok(states.every((state) => state.port === port));
+    const token = await enableStandaloneAccess();
     assert.equal(
-      (await fetch(`http://127.0.0.1:${port}/panel/config`)).status,
+      (await fetch(standaloneUrl(port, token))).status,
       200,
     );
   } finally {
@@ -450,6 +479,8 @@ test("owner commands enforce event identity and share state with hosted controls
       port,
     });
     assert.match(replies.at(-1), /已开启/);
+    assert.match(replies.at(-1), /访问地址请私聊发 #登录面板/);
+    assert.doesNotMatch(replies.at(-1), /\/panel\/config/);
     await command.current({ IsMaster: false, MessageText: "#关闭网页" });
     assert.equal(panelService.getPanelServerStatus().running, true);
     await command.current({ IsMaster: true, MessageText: "/网页状态" });
@@ -466,6 +497,44 @@ test("owner commands enforce event identity and share state with hosted controls
     });
     await command.current({ IsMaster: true, MessageText: "#关闭网页" });
     assert.equal(panelService.getPanelServerStatus().running, false);
+    const closedAccess = JSON.parse(
+      (await client.redis.get(PANEL_ACCESS_KEY)) || "{}",
+    );
+    assert.equal(closedAccess.enabled, "0");
+
+    await command.current({
+      IsMaster: true,
+      name: "message.create",
+      MessageText: "#登录面板",
+    });
+    assert.match(replies.at(-1), /仅限私聊/);
+    await command.current({
+      IsMaster: true,
+      name: "private.message.create",
+      MessageText: "#登录面板",
+    });
+    assert.match(replies.at(-1), /面板已开启访问/);
+    assert.match(replies.at(-1), /\/panel\/config/);
+    const openedAccess = JSON.parse(await client.redis.get(PANEL_ACCESS_KEY));
+    assert.equal(openedAccess.enabled, "1");
+    assert.ok(openedAccess.token);
+    assert.equal(panelService.getPanelServerStatus().running, true);
+    assert.equal(
+      (
+        await fetch(
+          standaloneUrl(
+            panelService.getPanelServerStatus().port,
+            openedAccess.token,
+          ),
+        )
+      ).status,
+      200,
+    );
+    const tokenBeforeClose = openedAccess.token;
+    await command.current({ IsMaster: true, MessageText: "#关闭网页" });
+    const afterClose = JSON.parse(await client.redis.get(PANEL_ACCESS_KEY));
+    assert.equal(afterClose.enabled, "0");
+    assert.equal(afterClose.token, tokenBeforeClose);
   } finally {
     await panelService.stopPanelServer();
     globalNames.forEach((name, index) => {

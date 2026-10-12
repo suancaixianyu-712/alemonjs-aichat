@@ -22,6 +22,7 @@ import {
 } from "@src/panel/groupConfig";
 import { PanelBasePath, panelUrl } from "@src/panel/urls";
 import { createPanelServerController } from "@src/panel/lifecycle";
+import { getPanelAccess } from "@src/panel/access";
 
 const textTypes = new Set(["css", "js", "mjs", "html", "svg", "json"]);
 const mimeTypes: Record<string, string> = {
@@ -635,7 +636,8 @@ export const createPanelRouter = ({ hosted = false } = {}) => {
     );
     ctx.state.panelBasePath = hosted
       ? Array(depth).fill("..").join("/") || "."
-      : prefix;
+      : ((ctx.state as { panelAccessBasePath?: string }).panelAccessBasePath ??
+        prefix);
     await next();
   });
 
@@ -817,7 +819,37 @@ const listenPanelServer = (port: number) => {
   const app = new Koa();
   const router = createPanelRouter();
 
-  // 保留独立网页原有的静态目录优先级和启动方式。
+  // 独立网页：/{token}/... 路径闸；enabled=0 → 403，token 错 → 401。
+  app.use(async (ctx, next) => {
+    const access = await getPanelAccess();
+    if (access.enabled !== "1" || !access.token) {
+      ctx.status = 403;
+      ctx.body = "Panel access disabled";
+      return;
+    }
+
+    const tokenPrefix = `/${access.token}`;
+    if (
+      ctx.path !== tokenPrefix &&
+      !ctx.path.startsWith(`${tokenPrefix}/`)
+    ) {
+      ctx.status = 401;
+      ctx.body = "Unauthorized";
+      return;
+    }
+
+    const originalPath = ctx.path;
+    ctx.path = ctx.path.slice(tokenPrefix.length) || "/";
+    (ctx.state as { panelAccessBasePath?: string }).panelAccessBasePath =
+      tokenPrefix;
+    try {
+      await next();
+    } finally {
+      ctx.path = originalPath;
+    }
+  });
+
+  // 保留独立网页原有的静态目录优先级和启动方式（鉴权之后）。
   const statics = config?.statics ?? "public";
   for (const root of Array.isArray(statics) ? statics : [statics]) {
     app.use(KoaStatic(root));
@@ -828,7 +860,7 @@ const listenPanelServer = (port: number) => {
   const server = app.listen(port);
   server.once("listening", () => {
     console.log(
-      `独立网页已开启：http://${config?.host ?? "127.0.0.1"}:${port}${config?.prefix ?? ""}/panel/config`,
+      `独立网页已开启：http://${config?.host ?? "127.0.0.1"}:${port}/<token>/panel/config`,
     );
   });
   return server;

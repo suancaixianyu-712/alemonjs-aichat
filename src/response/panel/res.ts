@@ -5,6 +5,13 @@ import {
   stopPanelServer,
   getPanelServerStatus,
 } from "@src/panel/server";
+import {
+  buildPanelAccessUrls,
+  disablePanelAccess,
+  enablePanelAccess,
+  listPrivateIpv4,
+  probePublicIpv4,
+} from "@src/panel/access";
 
 export const selects = onSelects(["message.create", "private.message.create"]);
 
@@ -16,15 +23,40 @@ export default onResponse(selects, async (event) => {
     return;
   }
   const command = String(event.MessageText || event.msg || "").trim();
+  const eventName = String(
+    event.name || (event as { Name?: string }).Name || "",
+  );
   try {
+    if (/^[#/]登录面板$/.test(command)) {
+      if (eventName !== "private.message.create") {
+        await reply("仅限私聊使用 #登录面板");
+        return;
+      }
+      const state = await createPanelServer();
+      const access = await enablePanelAccess();
+      const [publicIp, privateIps] = await Promise.all([
+        probePublicIpv4(),
+        Promise.resolve(listPrivateIpv4()),
+      ]);
+      const lines = buildPanelAccessUrls(
+        state.port,
+        access.token,
+        publicIp,
+        privateIps,
+      );
+      await reply(`面板已开启访问\n${lines.join("\n")}`);
+      return;
+    }
+
     const match = command.match(/^[#/]开启网页(?:\s+([\s\S]*))?$/);
     if (match) {
       const state = await createPanelServer(match[1]);
       await reply(
-        `独立网页已开启，端口 ${state.port}\n本机访问：http://127.0.0.1:${state.port}/panel/config\n远程访问时请将 127.0.0.1 替换为机器人所在服务器的地址`,
+        `独立网页已开启，端口 ${state.port}\n访问地址请私聊发 #登录面板`,
       );
     } else if (/^[#/]关闭网页$/.test(command)) {
       await stopPanelServer();
+      await disablePanelAccess();
       await reply("独立网页已关闭，AlemonX 页面可继续使用");
     } else {
       const state = getPanelServerStatus();
