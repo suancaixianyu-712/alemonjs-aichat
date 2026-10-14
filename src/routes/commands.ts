@@ -33,7 +33,7 @@ export const commandChildren = [
 
   // revoke
   {
-    regular: /^(\/|#)撤回$/i,
+    regular: /^(\/|#)撤回(消息)?$/i,
     handler: lazy(() => import("../response/revoke/res")),
   },
 
@@ -155,6 +155,7 @@ export const commandChildren = [
       /(\/|#)正则规则列表$/i,
       /(\/|#)清空正则规则$/i,
       /(\/|#)工具列表$/i,
+      /^(\/|#)工具搜索模式(动态|全量)$/i,
       /(\/|#)(开启|关闭)(MCP)?工具$/i,
       /(\/|#)(开启|关闭)工具(.*)$/i,
       /(\/|#)(开启|关闭)限制([0-9]+)?$/i,

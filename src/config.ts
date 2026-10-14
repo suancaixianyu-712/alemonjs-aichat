@@ -281,6 +281,10 @@ class db {
     return this.sanitizeAIChatHistory(history);
   }
 
+  async getAllToolDefinitions(): Promise<any[]> {
+    return this.getToolDefinitions();
+  }
+
   private async getToolDefinitions() {
     const { tools } = await import("./api/aitools");
     return tools;
@@ -763,6 +767,72 @@ class db {
   /** 设置工具开关状态 */
   async setToolSwitch(guid: string, enable: boolean): Promise<void> {
     await this.redis.set(`ai:tool:switch:${guid}`, enable ? "1" : "0");
+  }
+
+  /** 工具下发模式：dynamic（search_tools 按需加载，默认）| full（全量直传） */
+  async getToolSearchMode(guid: string): Promise<"dynamic" | "full"> {
+    return (await this.redis.get(`ai:tool_search_mode:${guid}`)) === "full"
+      ? "full"
+      : "dynamic";
+  }
+
+  async setToolSearchMode(guid: string, mode: "dynamic" | "full"): Promise<void> {
+    await this.redis.set(`ai:tool_search_mode:${guid}`, mode);
+  }
+
+  /** 动态加载过的工具名（跨消息保留 30 分钟） */
+  async getLoadedToolNames(guid: string): Promise<string[]> {
+    try {
+      const parsed = JSON.parse((await this.redis.get(`ai:loaded_tools:${guid}`)) || "[]");
+      return Array.isArray(parsed) ? parsed.map(String) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  async setLoadedToolNames(guid: string, names: string[], ttlSeconds: number): Promise<void> {
+    await this.redis.set(`ai:loaded_tools:${guid}`, JSON.stringify(names), "EX", ttlSeconds);
+  }
+
+  async clearLoadedToolNames(guid: string): Promise<void> {
+    await this.redis.del(`ai:loaded_tools:${guid}`, `ai:auto_tools:${guid}`);
+  }
+
+  /** 工具成功调用计数：按天分桶，保留 8 天自动过期 */
+  async incrementToolUsage(guid: string, toolName: string): Promise<void> {
+    const day = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+    const key = `ai:tool_usage:${guid}:${day}`;
+    await this.redis.hincrby(key, toolName, 1);
+    await this.redis.expire(key, 8 * 24 * 60 * 60);
+  }
+
+  /** 近 days 天的工具使用次数 */
+  async getToolUsage(guid: string, days = 7): Promise<Record<string, number>> {
+    const usage: Record<string, number> = {};
+    for (let i = 0; i < days; i++) {
+      const day = new Date(Date.now() - i * 86400000).toISOString().slice(0, 10).replace(/-/g, "");
+      const bucket = await this.redis.hgetall(`ai:tool_usage:${guid}:${day}`);
+      for (const [name, count] of Object.entries(bucket || {})) {
+        usage[name] = (usage[name] || 0) + Number(count || 0);
+      }
+    }
+    return usage;
+  }
+
+  /** 自动常驻工具名缓存（仅名字，TTL 1 小时） */
+  async getAutoToolNames(guid: string): Promise<string[] | null> {
+    const raw = await this.redis.get(`ai:auto_tools:${guid}`);
+    if (raw === null || raw === undefined) return null;
+    try {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed.map(String) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  async setAutoToolNames(guid: string, names: string[], ttlSeconds: number): Promise<void> {
+    await this.redis.set(`ai:auto_tools:${guid}`, JSON.stringify(names), "EX", ttlSeconds);
   }
 
   /** 工具调用时是否发送提示 */

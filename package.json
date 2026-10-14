@@ -12,6 +12,7 @@
     "test:panel-web": "npm run build && node --experimental-test-module-mocks --test tests/panel-web.test.mjs",
     "test:speech": "npm run build && node --experimental-test-module-mocks --test tests/speech.test.mjs tests/speech-config.test.mjs",
     "test:xianyu-game": "npm run build && node tests/xianyu-game-tool.test.mjs",
+    "test:tool-search": "npm run build && node --experimental-test-module-mocks --test --test-force-exit tests/tool-search.test.mjs",
     "test:codex": "npm run build && node --experimental-test-module-mocks --test tests/codex.test.mjs tests/codex-sessions.test.mjs",
     "review": "npx alemonc start",
     "view": "npx lvy dev --view",
@@ -23,7 +24,7 @@
   },
   "devDependencies": {
     "@alemonjs/bubble": "^2.1.10",
-    "@alemonjs/onebot": "^2.1.14",
+    "@alemonjs/onebot": "2.1.14",
     "@types/node": "^22.19.17",
     "alemonjs": "2.1.92",
     "cssnano": "^7",

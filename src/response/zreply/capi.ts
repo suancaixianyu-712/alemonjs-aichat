@@ -43,6 +43,11 @@ import { createScbbsProgress } from "./scbbs-progress";
 import { buildXianyuGameSession } from "@src/api/xianyu-game";
 import { getLockedAIMessage } from "@src/api/ai-lock";
 import { annotatePermissionBoundary } from "@src/api/user-permission";
+import { isEmptyAtBotMessage } from "@src/api/empty-at";
+import {
+  MAX_TOOL_ROUNDS,
+  createTurnToolState,
+} from "@src/api/tool-search";
 
 export const selects = onSelects(["message.create", "private.message.create"]);
 const CAPI_CONTEXT_COMPRESSION_RATIO = 0.9;
@@ -412,6 +417,11 @@ export const CApiReply = async (
 ) => {
   console.log("e.UserId", e.UserId, e.bot);
 
+  // 只 @ 机器人没有内容：静默跳过，交给后续中间件
+  if (isEmptyAtBotMessage(e)) {
+    return { next: true };
+  }
+
   if (e.IsMaster !== true && (e as any).__allowLockedAI !== true) {
     const currentAI = await redisClient.getCurrentAI(e.guid);
     if (currentAI && (!await redisClient.canUseLockedAI(e.guid, e.name !== "private.message.create", currentAI))) {
@@ -423,18 +433,23 @@ export const CApiReply = async (
 
   const cfg = await getChatConfig(e);
   const internalAllowedToolNames = Array.isArray((e as any).__allowedToolNames)
-    ? new Set(
+    ? new Set<string>(
         (e as any).__allowedToolNames
           .map((name: unknown) => String(name ?? "").trim())
           .filter(Boolean),
       )
     : null;
-  const getTurnTools = () =>
-    internalAllowedToolNames
-      ? cfg.toolConfig.cApiToolList.filter((tool: any) =>
-          internalAllowedToolNames.has(String(tool?.function?.name ?? "")),
-        )
-      : cfg.toolConfig.cApiToolList;
+  const turnTools = await createTurnToolState({
+    guid: e.guid,
+    store: redisClient,
+    mode: cfg.toolConfig.toolSearchMode,
+    toolSwitch: cfg.toolConfig.toolSwitch,
+    availableTools: cfg.toolConfig.cApiToolList,
+    allTools: cfg.toolConfig.allToolList,
+    disabledToolNames: cfg.toolConfig.disabledToolNames,
+    allowedToolNames: internalAllowedToolNames,
+  });
+  const getTurnTools = turnTools.getTurnTools;
   if (await shouldSkipAIReply(e, cfg)) {
     return {
       next: true,
@@ -665,7 +680,7 @@ export const CApiReply = async (
     await redisClient.addAIChatHistory(e.guid, usermessage);
 
     // 检查是否有工具调用需要处理
-    let toolRound = 0;
+    const toolRounds = turnTools.rounds;
     try {
       while (true) {
         throwIfAITurnAborted(aiTurn.signal);
@@ -707,7 +722,6 @@ export const CApiReply = async (
           continue;
         }
 
-        toolRound += 1;
         const rawResponseMessage = res.choices[0].message as any;
         const normalizedToolCalls = normalizeAssistantToolCalls(
           rawResponseMessage?.tool_calls,
@@ -717,6 +731,8 @@ export const CApiReply = async (
           log("工具调用列表无效，跳过本轮工具处理");
           break;
         }
+        // 只搜索工具的轮次不计入轮数上限
+        const toolRound = toolRounds.record(normalizedToolCalls);
 
         const responseMessage = {
           ...rawResponseMessage,
@@ -929,7 +945,9 @@ export const CApiReply = async (
           const functionToCall = availableTools[functionName];
           let functionResult: any;
 
-          if (
+          if (turnTools.handles(functionName)) {
+            functionResult = await turnTools.runSearchTools(functionArgs);
+          } else if (
             internalAllowedToolNames &&
             !internalAllowedToolNames.has(functionName)
           ) {
@@ -989,6 +1007,7 @@ export const CApiReply = async (
                   aiTurn.signal,
                 );
                 throwIfAITurnAborted(aiTurn.signal);
+                await turnTools.afterToolExecuted(functionName, functionResult);
               }
             } catch (err: any) {
               if (isAITurnAbortError(err, aiTurn.signal)) {
@@ -1064,7 +1083,7 @@ export const CApiReply = async (
           messages: messages,
         };
         if (cfg.toolConfig.toolSwitch === "1") {
-          params.tools = cfg.toolConfig.cApiToolList;
+          params.tools = getTurnTools();
           params.tool_choice = "auto";
         }
 
@@ -1074,14 +1093,21 @@ export const CApiReply = async (
 
         // log("重新请求AI，参数：", params);
 
-        // 重新请求
+        // 重新请求（达到轮数上限时强制收尾）
         throwIfAITurnAborted(aiTurn.signal);
-        res = await requestChatCompletion(params, messages);
+        res = await requestChatCompletion(
+          toolRounds.prepareParams(params),
+          messages,
+        );
 
         // 检查是否还有工具调用需要处理
         if (!res.choices || res.choices.length === 0) {
           log("AI未返回内容");
           return;
+        }
+        if (toolRounds.finishResponse(res)) {
+          log(`工具调用已达 ${MAX_TOOL_ROUNDS} 轮上限，强制收尾回复`);
+          break;
         }
       }
     } finally {

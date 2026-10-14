@@ -370,6 +370,7 @@ export default onResponse(selects, async (e, next) => {
     const archived = await archiveCurrentConversation(e.guid, "clear", config);
     await redisClient.clearAIChatHistory(e.guid);
     await redisClient.deleteSessionId(e.guid);
+    await redisClient.clearLoadedToolNames(e.guid);
     message.send(
       format(Text(archived ? "当前对话已归档并清空" : "对话已清空")),
     );

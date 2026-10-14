@@ -38,6 +38,8 @@ import {
   buildUserPermissionPrompt,
 } from "@src/api/user-permission";
 import { toolSessionController } from "@src/api/tool-session-controller";
+import { isEmptyAtBotMessage } from "@src/api/empty-at";
+import { MAX_TOOL_ROUNDS, createTurnToolState } from "@src/api/tool-search";
 
 const value = getAiChatConfigValue();
 
@@ -216,6 +218,12 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
 
   // 发消息的人是机器人自己, 则不处理
   if (e.UserId == e.bot.user_id) {
+    next();
+    return;
+  }
+
+  // 只 @ 机器人没有内容：静默跳过，交给后续中间件
+  if (isEmptyAtBotMessage(e)) {
     next();
     return;
   }
@@ -411,13 +419,26 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
       messages: messages,
     };
 
-    if (isTool === "1") {
-      const availableTools = await redisClient.getAvailableTools(e.guid);
-      createParams["tools"] = availableTools.filter(
+    const turnTools = await createTurnToolState({
+      guid: e.guid,
+      store: redisClient,
+      mode: await redisClient.getToolSearchMode(e.guid),
+      toolSwitch: isTool,
+      availableTools: (await redisClient.getAvailableTools(e.guid)).filter(
         (tool) =>
           isNonVisionModel(config.model) ||
           tool.function?.name !== "DescribeImage",
-      );
+      ),
+      allTools: tools,
+      disabledToolNames: Object.entries(
+        await redisClient.getAllToolStatus(e.guid),
+      )
+        .filter(([, status]) => status === "1")
+        .map(([name]) => name),
+    });
+
+    if (isTool === "1") {
+      createParams["tools"] = turnTools.getTurnTools();
       createParams["tool_choice"] = "auto";
     }
     if (deepThoughtSwitch === "0") {
@@ -508,6 +529,7 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
       if (normalizedToolCalls.length === 0) {
         break;
       }
+      turnTools.rounds.record(normalizedToolCalls);
 
       const responseMessage = {
         ...rawResponseMessage,
@@ -595,7 +617,9 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
         const functionToCall = availableTools[functionName];
         let functionResult: any;
 
-        if (!functionToCall) {
+        if (turnTools.handles(functionName)) {
+          functionResult = await turnTools.runSearchTools(functionArgs);
+        } else if (!functionToCall) {
           console.error(`未找到函数：${functionName}`);
           functionResult = {
             ok: false,
@@ -643,6 +667,7 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
                 e.IsMaster === true,
               );
               functionResult = await functionToCall(functionArgs);
+              await turnTools.afterToolExecuted(functionName, functionResult);
             }
           } catch (err: any) {
             console.error(`工具执行失败：${functionName}`, err);
@@ -697,17 +722,24 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
       messages = redisClient.sanitizeChatMessages(messages);
 
       // 重新请求
-      res = await openai.chat.completions.create({
-        model: config.model,
-        messages: messages,
-        tools,
-        tool_choice: "auto",
-      });
+      // 重新请求（达到轮数上限时强制收尾）
+      res = await openai.chat.completions.create(
+        turnTools.rounds.prepareParams({
+          model: config.model,
+          messages: messages,
+          tools: turnTools.getTurnTools(),
+          tool_choice: "auto",
+        }),
+      );
 
       // 检查是否还有工具调用需要处理
       if (!res.choices || res.choices.length === 0) {
         log("AI未返回内容");
         return;
+      }
+      if (turnTools.rounds.finishResponse(res)) {
+        log(`工具调用已达 ${MAX_TOOL_ROUNDS} 轮上限，强制收尾回复`);
+        break;
       }
     }
 
