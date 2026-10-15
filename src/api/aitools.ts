@@ -529,7 +529,7 @@ export const tools: ChatCompletionTool[] = [
     function: {
       name: "AgentProjectCommand",
       description:
-        "在 public/{guid}/ 工作目录内执行项目操作：环境检测、命令执行、解压缩、重命名、创建目录。run 会自动审查命令；框架确认是主人时允许完整 Git 子命令和参数（含提交、推送、拉取、合并、重置、SSH 克隆），免 AI 审核。Git 按参数直接执行、每次一条、不经 shell。普通用户和其他命令沿用原有限制。",
+        "在 public/{guid}/ 工作目录内执行项目操作：环境检测、命令执行、解压缩、重命名、创建目录。run 会自动审查命令；框架确认是主人时允许完整 Git 子命令和参数（含提交、推送、拉取、合并、重置、SSH 克隆），免 AI 审核。Git 按参数直接执行、每次一条、不经 shell。普通用户和其他命令沿用原有限制。本环境请用 npm/npx（或 pnpm/bun），不要调用 yarn。",
       parameters: {
         type: "object",
         properties: {
@@ -552,7 +552,7 @@ export const tools: ChatCompletionTool[] = [
           command: {
             type: "string",
             description:
-              "action=run 时必填。主人可传入完整 git 命令，例如 git add -A、git commit -m '更新说明'、git push origin main；其他情况仅允许受限项目命令。",
+              "action=run 时必填。主人可传入完整 git 命令，例如 git add -A、git commit -m '更新说明'、git push origin main；其他情况仅允许受限项目命令（包管理请用 npm/npx，不要用 yarn）。",
           },
           reviewGuid: {
             type: "string",
@@ -1363,7 +1363,7 @@ const AGENT_FILE_MAX_LIST_ENTRIES = 500;
 const AGENT_FILE_MAX_SEARCH_RESULTS = 100;
 const PROJECT_COMMAND_MAX_OUTPUT = 24000;
 const PROJECT_COMMAND_TIMEOUT_MS = 10 * 60 * 1000;
-const ALLOWED_PROJECT_COMMAND_BASES = new Set([
+export const ALLOWED_PROJECT_COMMAND_BASES = new Set([
   "dotnet",
   "dotnet.exe",
   "npm",
@@ -1372,8 +1372,6 @@ const ALLOWED_PROJECT_COMMAND_BASES = new Set([
   "npx.cmd",
   "pnpm",
   "pnpm.cmd",
-  "yarn",
-  "yarn.cmd",
   "bun",
   "bunx",
   "node",
@@ -2399,7 +2397,7 @@ const isUnsafePathToken = (token: string) => {
   return false;
 };
 
-const buildProjectCommandReview = (command: string, isMaster?: boolean) => {
+export const buildProjectCommandReview = (command: string, isMaster?: boolean) => {
   const trimmed = command.trim();
   if (!trimmed) {
     return {
@@ -2484,10 +2482,14 @@ const buildProjectCommandReview = (command: string, isMaster?: boolean) => {
 
   const baseCommand = tokens[0].toLowerCase();
   if (!ALLOWED_PROJECT_COMMAND_BASES.has(baseCommand)) {
+    const yarnHint =
+      baseCommand === "yarn" || baseCommand === "yarn.cmd"
+        ? "本环境请用 npm/npx，请改用 npm/npx"
+        : "仅允许受限的项目命令，当前基础命令不在允许列表中";
     return {
       allowed: false,
       risk: "blocked" as const,
-      reasons: ["仅允许受限的项目命令，当前基础命令不在允许列表中"],
+      reasons: [yarnHint],
       baseCommand,
       tokens,
     };

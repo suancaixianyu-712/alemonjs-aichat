@@ -3,12 +3,16 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { Text } from "alemonjs";
 import { useMessage } from "@src/utils/command-message";
+import { resolveUpdatePackageManager } from "@src/api/update-package-manager";
 
 export const selects = onSelects(["message.create", "private.message.create"]);
 
 const runGitPull = (cwd: string): Promise<string> => {
   return new Promise((resolve, reject) => {
-    const child = exec("git pull", { cwd, env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } });
+    const child = exec("git pull", {
+      cwd,
+      env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+    });
     let output = "";
     const appendOutput = (data: Buffer) => {
       output += data.toString();
@@ -26,9 +30,9 @@ const runGitPull = (cwd: string): Promise<string> => {
   });
 };
 
-const runYarnAdd = (cwd: string): Promise<string> => {
+const runPackageInstall = (cwd: string, command: string): Promise<string> => {
   return new Promise((resolve, reject) => {
-    const child = exec("yarn add alemonjs-aichat", { cwd });
+    const child = exec(command, { cwd });
     let output = "";
     const appendOutput = (data: Buffer) => {
       output += data.toString();
@@ -40,8 +44,8 @@ const runYarnAdd = (cwd: string): Promise<string> => {
     child.stderr?.on("data", appendOutput);
     child.on("error", (error) => reject(error));
     child.on("close", (code) => {
-      if (code === 0) resolve(output.trim() || "yarn add alemonjs-aichat 完成");
-      else reject(new Error(`yarn add alemonjs-aichat 退出码 ${code}\n${output.trim()}`));
+      if (code === 0) resolve(output.trim() || `${command} 完成`);
+      else reject(new Error(`${command} 退出码 ${code}\n${output.trim()}`));
     });
   });
 };
@@ -60,7 +64,9 @@ export default onResponse(selects, async (e) => {
     return;
   }
 
-  await message.send(format(Text("正在检查 packages 目录中的 alemonjs-aichat 项目...")));
+  await message.send(
+    format(Text("正在检查 packages 目录中的 alemonjs-aichat 项目...")),
+  );
 
   const packagesDir = join(process.cwd(), "packages");
   const projectDir = join(packagesDir, "alemonjs-aichat");
@@ -71,8 +77,12 @@ export default onResponse(selects, async (e) => {
       const result = await runGitPull(projectDir);
       await message.send(format(Text(truncateOutput(result))));
     } else {
-      await message.send(format(Text("未检测到本地项目，正在执行 yarn add alemonjs-aichat...")));
-      const result = await runYarnAdd(process.cwd());
+      // 安装 cwd 是宿主项目根目录（process.cwd），按该目录锁文件选包管理器
+      const plan = resolveUpdatePackageManager(process.cwd());
+      await message.send(
+        format(Text(`未检测到本地项目，正在执行 ${plan.hint}...`)),
+      );
+      const result = await runPackageInstall(process.cwd(), plan.command);
       await message.send(format(Text(truncateOutput(result))));
     }
   } catch (error) {
