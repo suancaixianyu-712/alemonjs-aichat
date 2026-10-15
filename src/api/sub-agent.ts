@@ -1,12 +1,13 @@
 import { randomUUID } from "node:crypto";
 import OpenAI from "openai";
-import { MessageDirect, Text, format } from "alemonjs";
+import { MessageDirect, Mention, Text } from "alemonjs";
 import redisClient from "@src/config";
 import { getAiChatConfigValue } from "@src/config/app";
 import { getOpenAIProxyFetch } from "./openaiProxy";
 import { PROCESS_INSTANCE_ID } from "./runtime-instance";
 import { buildUserPermissionPrompt } from "./user-permission";
 import { requestRapiCompletion } from "@src/response/zreply/rapi";
+import { createSubAgentDelivery } from "./sub-agent-delivery";
 
 /**
  * 后台子agent：主 AI 通过 SubAgent 工具把耗时任务派给独立的后台会话执行，
@@ -23,6 +24,8 @@ export type SubAgentRecord = {
   userID: string;
   platform?: string;
   spaceId?: string;
+  /** 发起子agent的原消息 ID，结果回复时引用 */
+  messageId?: string;
   isPrivate: boolean;
   isMaster: boolean;
   task: string;
@@ -44,6 +47,7 @@ export type SubAgentContext = {
   userID: string;
   platform?: string;
   spaceId?: string;
+  messageId?: string;
   isPrivate: boolean;
   isMaster: boolean;
 };
@@ -54,8 +58,6 @@ const SUB_AGENT_TASK_MAX_LENGTH = 8000;
 const SUB_AGENT_CONTEXT_MAX_LENGTH = 4000;
 const SUB_AGENT_TOOL_CONTENT_MAX = 16000;
 const SUB_AGENT_RESULT_MAX = 16000;
-const SUB_AGENT_HISTORY_NOTE_MAX = 4000;
-const SUB_AGENT_NOTIFY_MAX = 1200;
 const SUB_AGENT_ACTIVITY_MAX = 24;
 const SUB_AGENT_MAX_PER_GUID = 3;
 const SUB_AGENT_MAX_GLOBAL = 8;
@@ -302,82 +304,39 @@ const buildTaskUserContent = (record: SubAgentRecord) => {
   return `主AI交办的任务：\n${task}${context}`;
 };
 
-/** 任务结束后：按需向会话发通知，并把结果报告投递回主对话 */
-const deliverSubAgentResult = async (record: SubAgentRecord) => {
-  const statusLabel =
-    record.status === "completed"
-      ? "已完成"
-      : record.status === "cancelled"
-        ? "已取消"
-        : "失败";
-  const body = record.result || record.error || "（无内容）";
-
-  if (record.notify && (record.isPrivate ? record.userID : record.spaceId)) {
-    try {
-      const { removePublicIpFromOutput } = await loadAitools();
-      const notifyText = removePublicIpFromOutput(
-        truncateText(
-          `🤖 后台子任务 ${record.id} ${statusLabel}\n任务：${truncateText(record.task, 120)}\n\n${body}`,
-          SUB_AGENT_NOTIFY_MAX,
-        ),
-        record.isMaster,
-      );
-      const direct = MessageDirect.create();
-      const payload = format(Text(notifyText));
-      if (record.isPrivate) {
-        await direct.sendToUser({ OpenID: record.userID, format: payload });
-      } else {
-        await direct.sendToChannel({
-          SpaceId: String(record.spaceId || ""),
-          format: payload,
-        });
-      }
-    } catch (error) {
-      console.error("子agent完成通知发送失败：", error);
+/** 结果回传：完成时防抖合并后由主 AI 起一轮回复；失败/取消只发短通知 */
+const subAgentDelivery = createSubAgentDelivery({
+  startTurn: async (event, output) => {
+    const { CApiReply } = await import("@src/response/zreply/capi");
+    return CApiReply(event, output);
+  },
+  getActiveTurn: (guid, platform) => redisClient.getAIToolLoopState(guid, platform),
+  addGuidance: (guid, data, platform) =>
+    redisClient.addAIGuidanceMessage(guid, data, platform),
+  addHistory: (guid, message) => redisClient.addAIChatHistory(guid, message),
+  sendDirect: async (target, payload) => {
+    const direct = MessageDirect.create();
+    if (target.isPrivate) {
+      return direct.sendToUser({ OpenID: target.userID, format: payload });
     }
-  }
-
-  try {
-    const { removePublicIpFromOutput } = await loadAitools();
-    const reportText = removePublicIpFromOutput(body, record.isMaster);
-    const note = truncateText(
-      [
-        `【后台子任务报告:${record.id}】状态：${statusLabel}`,
-        `任务：${truncateText(record.task, 600)}`,
-        `结果：\n${reportText}`,
-        "这是后台子agent执行完毕后自动写回的报告，用户可能已收到完成通知。如需更多细节可调用 SubAgent action=result 查看。",
-      ].join("\n"),
-      SUB_AGENT_HISTORY_NOTE_MAX,
-    );
-    // 主对话正在工具循环中时走 guidance 队列，由主对话自己择机合并，
-    // 避免两个写入方并发改写同一份聊天历史。
-    const activeTurn = await redisClient.getAIToolLoopState(
-      record.guid,
-      record.platform,
-    );
-    if (activeTurn) {
-      await redisClient.addAIGuidanceMessage(
-        record.guid,
-        {
-          guidance: true,
-          capiMessage: {
-            role: "user",
-            content: note,
-          },
-          createdAt: Date.now(),
-          previewText: `后台子任务${statusLabel}:${truncateText(record.task, 60)}`,
-        },
-        record.platform,
-      );
-      return;
-    }
-    await redisClient.addAIChatHistory(record.guid, {
-      role: "system",
-      content: note,
+    return direct.sendToChannel({
+      SpaceId: String(target.spaceId || ""),
+      format: payload,
+      ...(target.replyId ? { replyId: target.replyId } : {}),
     });
-  } catch (error) {
-    console.error("子agent结果写回对话历史失败：", error);
-  }
+  },
+  text: (value) => Text(value),
+  mention: (userID) => Mention(userID),
+});
+
+const deliverSubAgentResult = async (record: SubAgentRecord) => {
+  const { removePublicIpFromOutput } = await loadAitools();
+  const hide = (text?: string) =>
+    text ? removePublicIpFromOutput(text, record.isMaster) : text;
+  // 完整结果只保留在子agent记录里；回传内容会在投递模块里截断。不等待防抖窗口
+  void subAgentDelivery
+    .deliver({ ...record, result: hide(record.result), error: hide(record.error) })
+    .catch((error) => console.error("子agent结果回传失败：", error));
 };
 
 /** 子agent执行主循环：独立的多轮工具调用会话 */
@@ -571,6 +530,7 @@ export const spawnSubAgent = async (
     userID: ctx.userID,
     platform: ctx.platform,
     spaceId: ctx.spaceId,
+    messageId: ctx.messageId,
     isPrivate: ctx.isPrivate,
     isMaster: ctx.isMaster,
     task: input.task.trim(),
@@ -684,6 +644,7 @@ export const runSubAgentTool = async (args: {
   userID?: string;
   platform?: string;
   spaceId?: string;
+  messageId?: string;
   isPrivate?: boolean;
   isMaster?: boolean;
 }) => {
@@ -697,6 +658,7 @@ export const runSubAgentTool = async (args: {
     userID: String(args.userID || ""),
     platform: args.platform,
     spaceId: args.spaceId,
+    messageId: args.messageId ? String(args.messageId) : undefined,
     isPrivate: args.isPrivate === true,
     isMaster: args.isMaster === true,
   };

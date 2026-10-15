@@ -581,6 +581,7 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
           functionArgs.userID = String(e.UserId || "");
           functionArgs.platform = e.Platform;
           functionArgs.spaceId = e.SpaceId;
+          functionArgs.messageId = (e as any).MessageId;
           functionArgs.isPrivate = e.name === "private.message.create";
         }
 

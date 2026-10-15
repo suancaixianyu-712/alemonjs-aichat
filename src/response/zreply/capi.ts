@@ -458,7 +458,12 @@ export const CApiReply = async (
 
   // 创建消息
   const [message] = outputMessage ? [outputMessage] : useMessage(e);
-  const usermessage = await buildUserMessage(e, cfg);
+  // 内部系统消息（如后台子agent结果）以 system 角色注入，不伪装成用户发言
+  const internalSystemMessage = (e as any).__internalSystemMessage;
+  const usermessage: any =
+    internalSystemMessage?.role === "system"
+      ? { role: "system", content: String(internalSystemMessage.content || "") }
+      : await buildUserMessage(e, cfg);
   const currentImageUrls = Array.isArray((usermessage as any).validImageUrls)
     ? (usermessage as any).validImageUrls
     : [];
@@ -885,6 +890,7 @@ export const CApiReply = async (
             functionArgs.userID = turnUserID;
             functionArgs.platform = e.Platform;
             functionArgs.spaceId = e.SpaceId;
+            functionArgs.messageId = (e as any).MessageId;
             functionArgs.isPrivate = e.name === "private.message.create";
           }
 
