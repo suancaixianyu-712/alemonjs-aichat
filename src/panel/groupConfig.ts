@@ -1,4 +1,9 @@
 import redisClient from "@src/config";
+import {
+  DEEP_THOUGHT_EFFORTS,
+  normalizeDeepThoughtEffort,
+  type DeepThoughtEffort,
+} from "@src/api/deep-thought";
 
 export type PanelGroupSwitchKey =
   | "chatSwitch"
@@ -7,7 +12,6 @@ export type PanelGroupSwitchKey =
   | "toolCallContentSwitch"
   | "complexOutput"
   | "affectionSwitch"
-  | "deepThoughtSwitch"
   | "r18Switch"
   | "atTriggerSwitch"
   | "toolPromptSwitch"
@@ -22,8 +26,12 @@ export type PanelGroupConfigDraft = {
   currentAI: string;
   model: string;
   capiContextLimit: number;
+  deepThoughtEffort: DeepThoughtEffort;
   switches: PanelGroupSwitchState;
 };
+
+export { DEEP_THOUGHT_EFFORTS };
+export type { DeepThoughtEffort };
 
 export const panelGroupSwitchDefinitions: Array<{
   key: PanelGroupSwitchKey;
@@ -44,7 +52,6 @@ export const panelGroupSwitchDefinitions: Array<{
   },
   { key: "complexOutput", label: "复杂输出", desc: "保留更完整的富文本结果" },
   { key: "affectionSwitch", label: "好感度系统", desc: "记录长期会话偏好" },
-  { key: "deepThoughtSwitch", label: "深度思考", desc: "允许模型使用深度思考" },
   { key: "r18Switch", label: "R18开关", desc: "允许当前群启用 R18 内容" },
   { key: "atTriggerSwitch", label: "仅艾特触发", desc: "群聊中只响应艾特消息" },
   { key: "toolPromptSwitch", label: "工具提示", desc: "工具调用时发送提示" },
@@ -72,6 +79,7 @@ const panelGroupPrefixes = [
   "ai:complex_output:",
   "ai:affection:switch:",
   "ai:deep_thought:switch:",
+  "ai:deep_thought:effort:",
   "ai:r18:switch:",
   "ai:at_trigger:switch:",
   "ai:proactive:switch:",
@@ -110,7 +118,7 @@ export const loadPanelGroupConfig = async (
     toolCallContentSwitch,
     complexOutput,
     affectionSwitch,
-    deepThoughtSwitch,
+    deepThoughtEffort,
     r18Switch,
     atTriggerSwitch,
     toolPromptSwitch,
@@ -126,7 +134,7 @@ export const loadPanelGroupConfig = async (
     redisClient.getToolCallContentSwitch(guid),
     redisClient.getComplexOutput(guid),
     redisClient.getAffectionSwitch(guid),
-    redisClient.getDeepThoughtSwitch(guid),
+    redisClient.getDeepThoughtEffort(guid),
     redisClient.getR18Switch(guid),
     redisClient.getAtTriggerSwitch(guid),
     redisClient.getToolPromptSwitch(guid),
@@ -140,6 +148,7 @@ export const loadPanelGroupConfig = async (
     currentAI,
     model: aiConfig.model || "",
     capiContextLimit,
+    deepThoughtEffort: normalizeDeepThoughtEffort(deepThoughtEffort),
     switches: {
       chatSwitch: Boolean(aiConfig.model && aiConfig.model.trim()),
       imageBedSwitch: toBool(imageBedSwitch),
@@ -147,7 +156,6 @@ export const loadPanelGroupConfig = async (
       toolCallContentSwitch: toBool(toolCallContentSwitch),
       complexOutput: toBool(complexOutput),
       affectionSwitch: toBool(affectionSwitch),
-      deepThoughtSwitch: toBool(deepThoughtSwitch),
       r18Switch: toBool(r18Switch),
       atTriggerSwitch: toBool(atTriggerSwitch),
       toolPromptSwitch: toBool(toolPromptSwitch),
@@ -209,6 +217,7 @@ export const updatePanelGroupConfig = async (input: {
   guid: string;
   currentAI?: string;
   capiContextLimit?: number;
+  deepThoughtEffort?: DeepThoughtEffort | string;
   switches: PanelGroupSwitchState;
 }) => {
   const guid = input.guid.trim();
@@ -244,7 +253,10 @@ export const updatePanelGroupConfig = async (input: {
     ),
     redisClient.setComplexOutput(guid, input.switches.complexOutput),
     redisClient.setAffectionSwitch(guid, input.switches.affectionSwitch),
-    redisClient.setDeepThoughtSwitch(guid, input.switches.deepThoughtSwitch),
+    redisClient.setDeepThoughtEffort(
+      guid,
+      normalizeDeepThoughtEffort(input.deepThoughtEffort),
+    ),
     redisClient.setR18Switch(guid, input.switches.r18Switch),
     redisClient.setAtTriggerSwitch(guid, input.switches.atTriggerSwitch),
     redisClient.setToolPromptSwitch(guid, input.switches.toolPromptSwitch),

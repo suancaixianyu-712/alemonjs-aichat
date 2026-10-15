@@ -294,6 +294,7 @@ const handleUpdateGroupConfig = async (ctx: Koa.Context) => {
       guid,
       currentAI,
       capiContextLimit,
+      deepThoughtEffort: await getActionText(ctx, "deepThoughtEffort"),
       switches: {
         chatSwitch: await getActionFlag(ctx, "chatSwitch"),
         imageBedSwitch: await getActionFlag(ctx, "imageBedSwitch"),
@@ -304,7 +305,6 @@ const handleUpdateGroupConfig = async (ctx: Koa.Context) => {
         ),
         complexOutput: await getActionFlag(ctx, "complexOutput"),
         affectionSwitch: await getActionFlag(ctx, "affectionSwitch"),
-        deepThoughtSwitch: await getActionFlag(ctx, "deepThoughtSwitch"),
         r18Switch: await getActionFlag(ctx, "r18Switch"),
         atTriggerSwitch: await getActionFlag(ctx, "atTriggerSwitch"),
         toolPromptSwitch: await getActionFlag(ctx, "toolPromptSwitch"),

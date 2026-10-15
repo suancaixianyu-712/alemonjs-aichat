@@ -1,7 +1,7 @@
 import redisClient from "@src/config";
 import { Text } from "alemonjs";
 import { useMessage } from "@src/utils/command-message";
-import { getOpenAIProxyFetch } from "@src/api/openaiProxy";
+import { fetchProviderModels } from "@src/api/fetch-models";
 import { getAiChatConfigValue } from "@src/config/app";
 import { getLockedAIMessage } from "@src/api/ai-lock";
 
@@ -85,58 +85,19 @@ const writeSession = async (key: string, session: AddAISession) => {
   );
 };
 
-const isOpenAIChatModel = (model: string) => {
-  const id = model.toLowerCase();
-  const excluded = [
-    "embedding",
-    "moderation",
-    "whisper",
-    "transcribe",
-    "tts",
-    "realtime",
-    "audio",
-    "image",
-    "dall-e",
-    "sora",
-    "babbage",
-    "davinci",
-  ];
-  return !excluded.some((value) => id.includes(value));
-};
-
 const fetchModels = async (
   provider: Provider,
   key: string,
 ): Promise<string[]> => {
   const config = PROVIDERS[provider];
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 15_000);
-  try {
-    const requestFetch =
-      getOpenAIProxyFetch(
-        getAiChatConfigValue().httpProxy,
-        false,
-      ) || fetch;
-    const response = await requestFetch(`${config.host}${config.modelsPath}`, {
-      headers: { Authorization: `Bearer ${key}` },
-      signal: controller.signal,
-    });
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
-    }
-    const body = (await response.json()) as {
-      data?: Array<{ id?: unknown }>;
-      models?: Array<{ id?: unknown }>;
-    };
-    const source = provider === "grok" ? body.models : body.data;
-    const models = (Array.isArray(source) ? source : [])
-      .map((item) => (typeof item?.id === "string" ? item.id.trim() : ""))
-      .filter(Boolean)
-      .filter((model) => provider !== "openai" || isOpenAIChatModel(model));
-    return [...new Set(models)].sort((a, b) => a.localeCompare(b));
-  } finally {
-    clearTimeout(timeout);
-  }
+  return fetchProviderModels({
+    host: config.host,
+    modelsPath: config.modelsPath,
+    key,
+    provider,
+    httpProxy: getAiChatConfigValue().httpProxy,
+    useProxy: false,
+  });
 };
 
 const formatModelMenu = (provider: Provider, models: string[]) => {

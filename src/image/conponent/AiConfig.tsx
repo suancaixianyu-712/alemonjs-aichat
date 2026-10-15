@@ -52,20 +52,24 @@ const StatusItem = ({
   value: boolean | string;
   isDeep?: boolean;
 }) => {
-  // 深度思考的特殊处理：默认不是关闭状态
-  let displayValue = value;
-  let isActive = value;
+  // 深度思考：关闭 或具体档位名（medium / high / ...）
+  let displayText: string;
+  let isOn: boolean;
 
   if (isDeep) {
-    displayValue = value === "默认" ? "默认" : value ? "开启" : "关闭";
-    isActive = value === "默认" ? "default" : value;
+    displayText =
+      typeof value === "string" ? value : value ? "开启" : "关闭";
+    isOn = displayText !== "关闭" && displayText !== "none";
+  } else {
+    displayText = value ? "开启" : "关闭";
+    isOn = Boolean(value);
   }
 
   const getStatusStyle = () => {
-    if (isDeep && value === "默认") {
-      return "bg-yellow-500/20 text-yellow-300 border-yellow-500/30";
+    if (isDeep && isOn) {
+      return "bg-green-500/20 text-green-300 border-green-500/30";
     }
-    if (value) {
+    if (!isDeep && value) {
       return "bg-green-500/20 text-green-300 border-green-500/30";
     }
     return "bg-red-500/10 text-red-300 border-red-500/20";
@@ -77,7 +81,7 @@ const StatusItem = ({
       <span
         className={`px-3 py-0.5 rounded-full text-xs font-mono font-medium border ${getStatusStyle()}`}
       >
-        {isDeep && value === "默认" ? "默认" : value ? "开启" : "关闭"}
+        {displayText}
       </span>
     </div>
   );
@@ -92,7 +96,7 @@ export default function App(data: {
   tools: boolean;
   complex: boolean;
   affection: boolean;
-  deep: boolean;
+  deep: boolean | string;
   model: string;
   prompt: string;
   atTrigger: boolean;

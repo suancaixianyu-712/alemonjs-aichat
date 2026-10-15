@@ -1,4 +1,5 @@
 import redisClient from "@src/config";
+import { formatDeepThoughtDisplay } from "@src/api/deep-thought";
 import { formatAIListWithLocks } from "@src/api/ai-lock";
 import { toolSessionController } from "@src/api/tool-session-controller";
 import { loadSkills } from "@src/api/loadSkill";
@@ -226,7 +227,8 @@ export default onResponse(selects, async (e, next) => {
     const complexResponse = (await redisClient.getComplexOutput(e.guid)) || "1"; // 复杂输出
     const affectionIsOpen = await redisClient.getAffectionSwitch(e.guid); // 好感度开关
     const toolsIsOpen = await redisClient.getToolSwitch(e.guid); // 工具开关
-    const deepThinkingIsOpen = await redisClient.getDeepThoughtSwitch(e.guid); // 深度思考开关
+    const deepThoughtEffort = await redisClient.getDeepThoughtEffort(e.guid); // 深度思考档位
+    const deepThinkingDisplay = formatDeepThoughtDisplay(deepThoughtEffort);
     const atTriggerSwitch = await redisClient.getAtTriggerSwitch(e.guid); // 仅艾特触发
     const imageBedSwitch = await redisClient.getImageBedSwitch(e.guid); // 全局图床开关
     const currentAI = await redisClient.getCurrentAI(e.guid); // 当前AI名称
@@ -261,7 +263,7 @@ export default onResponse(selects, async (e, next) => {
           tools: toolsIsOpen == "1",
           complex: complexResponse == "1",
           affection: affectionIsOpen == "1",
-          deep: deepThinkingIsOpen == "1",
+          deep: deepThinkingDisplay,
           model: config.model,
           prompt: config.systemPrompt,
           atTrigger: atTriggerSwitch == "1",
@@ -298,7 +300,7 @@ export default onResponse(selects, async (e, next) => {
             Text(`CAPI上下文长度: ${formatContextLimit(capiContextLimit)}\n`),
             Text(`复杂输出: ${complexResponse == "1" ? "开启" : "关闭"}\n`),
             Text(`好感度开关: ${affectionIsOpen == "1" ? "开启" : "关闭"}\n`),
-            Text(`深度思考: ${deepThinkingIsOpen == "1" ? "默认" : "关闭"}\n`),
+            Text(`深度思考: ${deepThinkingDisplay}\n`),
             Text(`仅艾特触发: ${atTriggerSwitch == "1" ? "开启" : "关闭"}\n`),
             Text(`全局图床开关: ${imageBedSwitch == "1" ? "开启" : "关闭"}\n`),
             Text(`模型: ${config.model || "未设置"}\n`),
@@ -321,7 +323,7 @@ export default onResponse(selects, async (e, next) => {
           Text(`CAPI上下文长度: ${formatContextLimit(capiContextLimit)}\n`),
           Text(`复杂输出: ${complexResponse == "1" ? "开启" : "关闭"}\n`),
           Text(`好感度开关: ${affectionIsOpen == "1" ? "开启" : "关闭"}\n`),
-          Text(`深度思考: ${deepThinkingIsOpen == "1" ? "默认" : "关闭"}\n`),
+          Text(`深度思考: ${deepThinkingDisplay}\n`),
           Text(`仅艾特触发: ${atTriggerSwitch == "1" ? "开启" : "关闭"}\n`),
           Text(`全局图床开关: ${imageBedSwitch == "1" ? "开启" : "关闭"}\n`),
           Text(`模型: ${config.model || "未设置"}\n`),

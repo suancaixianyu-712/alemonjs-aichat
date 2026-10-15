@@ -42,6 +42,11 @@ export const client = new Proxy(
     },
     getCurrentAI: async () => "Test AI",
     getCAPIContextLimit: async () => 4096,
+    getDeepThoughtEffort: async () => values.get("DeepThoughtEffort") ?? "medium",
+    setDeepThoughtEffort: async (...args) => {
+      calls.push(["setDeepThoughtEffort", ...args]);
+      values.set("DeepThoughtEffort", args.at(-1));
+    },
     getPromptList: async () => ["测试提示词"],
     getPrompt: async () => "测试提示词",
     switchAI: async (...args) => {

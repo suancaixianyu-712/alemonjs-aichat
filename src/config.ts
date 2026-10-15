@@ -15,6 +15,12 @@ import {
   type RestartRecoveryTask,
 } from "./api/restart-recovery";
 import { PM2_PROCESS_ID, PROCESS_INSTANCE_ID } from "./api/runtime-instance";
+import {
+  normalizeDeepThoughtEffort,
+  resolveDeepThoughtEffort,
+  effortToSwitch,
+  type DeepThoughtEffort,
+} from "./api/deep-thought";
 export type { RestartRecoveryTask } from "./api/restart-recovery";
 
 export type ScheduledAITask = {
@@ -2561,14 +2567,31 @@ class db {
     await this.redis.set(`ai:proactive:switch:${guid}`, enable ? "1" : "0");
   }
 
-  /** 深度思考 */
-  async getDeepThoughtSwitch(guid: string): Promise<string> {
-    return (await this.redis.get(`ai:deep_thought:switch:${guid}`)) || "0";
+  /** 深度思考档位（优先 effort；无 effort 时按旧 switch 迁移解释） */
+  async getDeepThoughtEffort(guid: string): Promise<DeepThoughtEffort> {
+    const effort = await this.redis.get(`ai:deep_thought:effort:${guid}`);
+    const switchValue = await this.redis.get(`ai:deep_thought:switch:${guid}`);
+    return resolveDeepThoughtEffort({ effort, switchValue });
   }
 
-  /** 设置深度思考开关 */
+  /** 设置深度思考档位，并同步旧 switch：none→0，其它→1 */
+  async setDeepThoughtEffort(
+    guid: string,
+    effort: DeepThoughtEffort,
+  ): Promise<void> {
+    const next = normalizeDeepThoughtEffort(effort);
+    await this.redis.set(`ai:deep_thought:effort:${guid}`, next);
+    await this.redis.set(`ai:deep_thought:switch:${guid}`, effortToSwitch(next));
+  }
+
+  /** 深度思考开关（由 effort 推导，兼容旧调用） */
+  async getDeepThoughtSwitch(guid: string): Promise<string> {
+    return effortToSwitch(await this.getDeepThoughtEffort(guid));
+  }
+
+  /** 设置深度思考开关：开→medium，关→none */
   async setDeepThoughtSwitch(guid: string, enable: boolean): Promise<void> {
-    await this.redis.set(`ai:deep_thought:switch:${guid}`, enable ? "1" : "0");
+    await this.setDeepThoughtEffort(guid, enable ? "medium" : "none");
   }
 
   /** 仅艾特触发 */

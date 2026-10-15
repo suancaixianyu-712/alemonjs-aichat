@@ -10,6 +10,7 @@ import type { PanelChatMessage } from "@src/panel/chat";
 import type { PanelServerStatus } from "@src/panel/lifecycle";
 import {
   panelGroupSwitchDefinitions,
+  DEEP_THOUGHT_EFFORTS,
   type PanelGroupConfigDraft,
 } from "@src/panel/groupConfig";
 
@@ -403,6 +404,11 @@ const ChatConfigPanel = ({
                         name="capiContextLimit"
                         value={String(currentGroupConfig.capiContextLimit)}
                       />
+                      <input
+                        type="hidden"
+                        name="deepThoughtEffort"
+                        value={currentGroupConfig.deepThoughtEffort}
+                      />
                       {panelGroupSwitchDefinitions.map((stateItem) => {
                         const nextEnabled =
                           stateItem.key === item.key
@@ -428,6 +434,55 @@ const ChatConfigPanel = ({
                   );
                 })}
               </div>
+              <PanelForm
+                action="/panel/action/update-group-config"
+                method="post"
+              >
+                <input type="hidden" name="source" value="chat" />
+                <input type="hidden" name="guid" value={chatGuid} />
+                <input type="hidden" name="userId" value={chatUserId} />
+                <input
+                  type="hidden"
+                  name="nickname"
+                  value={currentNicknameLabel}
+                />
+                <input
+                  type="hidden"
+                  name="currentAI"
+                  value={currentGroupConfig.currentAI}
+                />
+                <input
+                  type="hidden"
+                  name="capiContextLimit"
+                  value={String(currentGroupConfig.capiContextLimit)}
+                />
+                {panelGroupSwitchDefinitions.map((stateItem) =>
+                  currentGroupConfig.switches[stateItem.key] ? (
+                    <input
+                      key={`chat-deep-${stateItem.key}`}
+                      type="hidden"
+                      name={stateItem.key}
+                      value="1"
+                    />
+                  ) : null,
+                )}
+                <div className="chat-switch-status enabled" style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                  <span>深度思考</span>
+                  <select
+                    name="deepThoughtEffort"
+                    defaultValue={currentGroupConfig.deepThoughtEffort}
+                  >
+                    {DEEP_THOUGHT_EFFORTS.map((level) => (
+                      <option key={level} value={level}>
+                        {level === "none" ? "关闭 (none)" : level}
+                      </option>
+                    ))}
+                  </select>
+                  <button className="primary" type="submit">
+                    应用
+                  </button>
+                </div>
+              </PanelForm>
             </>
           ) : (
             <div className="empty-state">当前 guid 暂无群配置。</div>
@@ -2100,6 +2155,23 @@ const ConfigPage = ({
                                 defaultValue={String(group.capiContextLimit)}
                               />
                             </div>
+                          </div>
+
+                          <div className="field" style={{ marginBottom: "12px" }}>
+                            <label htmlFor={`group-deep-${group.guid}`}>
+                              深度思考
+                            </label>
+                            <select
+                              id={`group-deep-${group.guid}`}
+                              name="deepThoughtEffort"
+                              defaultValue={group.deepThoughtEffort}
+                            >
+                              {DEEP_THOUGHT_EFFORTS.map((level) => (
+                                <option key={level} value={level}>
+                                  {level === "none" ? "关闭 (none)" : level}
+                                </option>
+                              ))}
+                            </select>
                           </div>
 
                           <div className="switch-list">

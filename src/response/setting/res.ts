@@ -4,6 +4,17 @@ import { useMessage } from "@src/utils/command-message";
 import { log } from "console";
 import { getAiChatConfigValue } from "@src/config/app";
 import { getLockedAIMessage } from "@src/api/ai-lock";
+import {
+  fetchProviderModels,
+  formatModelListMessage,
+  MODEL_LIST_FAIL_TEXT,
+} from "@src/api/fetch-models";
+import {
+  isDeepThoughtEffort,
+  listDeepThoughtEffortsText,
+  normalizeDeepThoughtEffort,
+  type DeepThoughtEffort,
+} from "@src/api/deep-thought";
 const value = getAiChatConfigValue();
 
 const selects = onSelects(["message.create", "private.message.create"]);
@@ -542,6 +553,41 @@ export default onResponse(selects, async (e, next) => {
     return;
   }
 
+  // 拉取当前会话所选 AI 配置的厂商模型列表（仅主人）
+  if (/^(\/|#)模型列表$/i.test(e.msg)) {
+    if (!e.IsMaster) {
+      await message.send(format(Text("该指令仅主人可用")));
+      return;
+    }
+    const config = await redisClient.getAIConfig(e.guid);
+    const host = String(config?.host || "").trim();
+    const key = String(config?.key || "").trim();
+    if (!host || !key) {
+      await message.send(format(Text(MODEL_LIST_FAIL_TEXT)));
+      return;
+    }
+    try {
+      const models = await fetchProviderModels({
+        host,
+        key,
+        provider: config.provider,
+        httpProxy: getAiChatConfigValue().httpProxy,
+        useProxy: redisClient.isAIProxyEnabled(config),
+      });
+      if (!models.length) {
+        await message.send(format(Text(MODEL_LIST_FAIL_TEXT)));
+        return;
+      }
+      const body = formatModelListMessage(models, {
+        title: "当前配置可用模型",
+      });
+      await message.send(format(Text(body)));
+    } catch {
+      await message.send(format(Text(MODEL_LIST_FAIL_TEXT)));
+    }
+    return;
+  }
+
   // 设置识图/OCR 专用 AI（纯文本模型看图时调用）
   if (ocrAICommand.test(e.msg)) {
     const match = e.msg.match(ocrAICommand);
@@ -822,7 +868,7 @@ export default onResponse(selects, async (e, next) => {
     return;
   }
 
-  // 设置深度思考开关
+  // 设置深度思考开关（开启→medium，关闭→none）
   if (/(\/|#)(开启|关闭)深度思考$/i.test(e.msg)) {
     const match = e.msg.match(/(\/|#)(开启|关闭)深度思考$/i);
     if (!match) {
@@ -836,9 +882,60 @@ export default onResponse(selects, async (e, next) => {
       return;
     }
     const [, , action] = match;
-    const enable = action === "开启";
-    await redisClient.setDeepThoughtSwitch(e.guid, enable);
-    message.send(format(Text(`已${enable ? "开启" : "关闭"}深度思考功能 !`)));
+    const effort: DeepThoughtEffort = action === "开启" ? "medium" : "none";
+    await redisClient.setDeepThoughtEffort(e.guid, effort);
+    message.send(
+      format(
+        Text(
+          effort === "none"
+            ? "已关闭深度思考功能 !"
+            : `已开启深度思考功能（${effort}） !`,
+        ),
+      ),
+    );
+    return;
+  }
+
+  // 查询 / 设置思考深度档位（群聊与私聊均可用；改档位仅主人）
+  if (/^(\/|#)思考深度(?:\s+(\S+))?$/i.test(e.msg)) {
+    const match = e.msg.match(/^(\/|#)思考深度(?:\s+(\S+))?$/i);
+    const levelArg = match?.[2]?.trim();
+    if (!levelArg) {
+      const current = await redisClient.getDeepThoughtEffort(e.guid);
+      message.send(
+        format(
+          Text(
+            `当前思考深度：${current}\n合法值：${listDeepThoughtEffortsText()}`,
+          ),
+        ),
+      );
+      return;
+    }
+    if (!e.IsMaster) {
+      await message.send(format(Text("该指令仅主人可用")));
+      return;
+    }
+    if (!isDeepThoughtEffort(levelArg)) {
+      message.send(
+        format(
+          Text(
+            `无效档位。合法值：${listDeepThoughtEffortsText()}`,
+          ),
+        ),
+      );
+      return;
+    }
+    const effort = normalizeDeepThoughtEffort(levelArg);
+    await redisClient.setDeepThoughtEffort(e.guid, effort);
+    message.send(
+      format(
+        Text(
+          effort === "none"
+            ? "已关闭深度思考（none）"
+            : `已设置思考深度：${effort}`,
+        ),
+      ),
+    );
     return;
   }
 
