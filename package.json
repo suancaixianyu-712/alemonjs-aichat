@@ -1,6 +1,6 @@
 {
   "name": "alemonjs-aichat",
-  "version": "1.0.102",
+  "version": "1.0.103",
   "description": "alemonjs-aichat",
   "author": "suancaixianyu",
   "license": "MIT",
@@ -8,7 +8,6 @@
   "type": "module",
   "scripts": {
     "dev": "npx lvy dev",
-    "build": "npx lvy build",
     "test:panel-web": "npm run build && node --experimental-test-module-mocks --test tests/panel-web.test.mjs",
     "test:speech": "npm run build && node --experimental-test-module-mocks --test tests/speech.test.mjs tests/speech-config.test.mjs",
     "test:xianyu-game": "npm run build && node tests/xianyu-game-tool.test.mjs",
@@ -21,17 +20,6 @@
     "stop": "npx pm2 stop pm2.config.cjs",
     "delete": "npx pm2 delete pm2.config.cjs",
     "update": "npm publish"
-  },
-  "devDependencies": {
-    "@alemonjs/bubble": "^2.1.10",
-    "@alemonjs/onebot": "2.1.14",
-    "@types/node": "^22.19.17",
-    "@types/ws": "^8.18.2",
-    "alemonjs": "2.1.92",
-    "cssnano": "^7",
-    "lvyjs": "^0.2.25",
-    "pm2": "^5",
-    "tailwindcss": "3"
   },
   "export": {
     ".": "./lib/index.js",
