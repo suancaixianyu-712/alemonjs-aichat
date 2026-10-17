@@ -1,6 +1,8 @@
 import { Text } from "alemonjs";
 import { useMessage } from "@src/utils/command-message";
+import { sendSpeechToolResult } from "@src/api/speech";
 import {
+  dsTtsSpeak,
   dsTtsStatus,
   formatDsTtsConfigText,
   getDsTtsConfigView,
@@ -10,6 +12,7 @@ import {
 const selects = onSelects(["message.create", "private.message.create"]);
 
 export const isDsTtsCommand = (text: string) =>
+  /^(#|\/)ds说/i.test(text) ||
   /^(#|\/)DS朗读(?:配置|状态)(?:\s|$)/i.test(text);
 
 /**
@@ -33,17 +36,33 @@ export const parseDsTtsConfigArgs = (raw: string): Record<string, unknown> => {
 };
 
 export const handleDsTtsMessage = async (e: any): Promise<boolean> => {
-  const text = String(e.msg || e.MessageText || "").trim();
+  const text = String(e.msg || e.MessageText || "");
   if (!isDsTtsCommand(text)) return false;
   const [message] = useMessage(e);
   const reply = async (value: string) => message.send(format(Text(value)));
+  const speakMatch = text.match(/^(#|\/)ds说([\s\S]*)$/i);
 
-  if (e.IsMaster !== true) {
+  if (!speakMatch && e.IsMaster !== true) {
     await reply("该指令仅主人可用");
     return true;
   }
 
   try {
+    if (speakMatch) {
+      const content = speakMatch[2];
+      if (!content.trim()) {
+        await reply("请提供要说的话，例如：\n#ds说 你好");
+        return true;
+      }
+      const result = await dsTtsSpeak({ text: content });
+      if (!result.ok) {
+        await reply(result.error);
+        return true;
+      }
+      await sendSpeechToolResult(message, result);
+      return true;
+    }
+
     if (/^(#|\/)DS朗读状态\s*$/i.test(text)) {
       const status = await dsTtsStatus();
       await reply(status.text);
@@ -72,7 +91,7 @@ export const handleDsTtsMessage = async (e: any): Promise<boolean> => {
     await reply("格式：\n#DS朗读配置\n#DS朗读配置 voice=mira browserPath=/usr/bin/google-chrome\n#DS朗读状态");
     return true;
   } catch (error) {
-    await reply(error instanceof Error ? error.message : "DS 朗读配置操作失败，请重试。");
+    await reply(error instanceof Error ? error.message : speakMatch ? "DS 语音合成失败，请重试。" : "DS 朗读配置操作失败，请重试。");
     return true;
   }
 };

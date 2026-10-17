@@ -7,6 +7,11 @@ import {
 } from "@src/utils/command-message";
 
 export const commandChildren = [
+  // 优先匹配朗读指令，正文中的其他指令也应作为语音内容。
+  {
+    regular: /^(#|\/)ds说[\s\S]*$/i,
+    handler: lazy(() => import("../response/ds-tts/res")),
+  },
   {
     regular: /^(#|\/)(?:添加语音配置|设置音色|切换语音模型|语音列表)(?:\s+[\s\S]*)?$/,
     handler: lazy(() => import("../response/speech/res")),
