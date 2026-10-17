@@ -4,6 +4,7 @@ import {
   Mention,
   ImageFile,
   ImageURL,
+  Audio,
 } from "alemonjs";
 
 import redisClient from "@src/config";
@@ -36,6 +37,18 @@ const extractImages = (text: string) => {
   return result;
 };
 
+/** 提取 <audio=url> 标签中的音频链接（导出供单测）。 */
+export const extractAudios = (text: string) => {
+  const regex = /<audio=(.*?)>/g;
+  const result: string[] = [];
+  let match;
+  while ((match = regex.exec(text)) !== null) {
+    const url = match[1].trim();
+    if (url) result.push(url);
+  }
+  return result;
+};
+
 const handleAffection = async (text: string, e: any) => {
   const regex = /<([^<>]*?)好感([+-]\d+)>/g;
   let match;
@@ -59,9 +72,10 @@ const handleRevoke = async (text: string, message: any) => {
   }
 };
 
-const cleanMessage = (text: string) => {
+export const cleanMessage = (text: string) => {
   return text
     .replace(/<img=(.*?)>/g, "")
+    .replace(/<audio=(.*?)>/g, "")
     .replace(/<command=(.*?)>/g, "")
     .replace(/<revoke=(.*?)>/g, "")
     .replace(/<at=(.*?)>/g, "")
@@ -114,7 +128,7 @@ export const sendReplyMessages = async (
   message: any,
 ) => {
   for (let i = 0; i < replyMessages.length; i++) {
-    const { text, images, at } = replyMessages[i];
+    const { text, images, audios = [], at } = replyMessages[i];
 
     const components: any[] = i === 0 ? [Mention(e.UserId)] : [];
     components.push(Text(text));
@@ -130,6 +144,13 @@ export const sendReplyMessages = async (
         );
       } else {
         components.push(ImageFile(errorimg));
+      }
+    }
+
+    for (const audioUrl of audios) {
+      const url = String(audioUrl || "").trim();
+      if (/^https?:\/\//.test(url)) {
+        components.push(Audio(url));
       }
     }
 
@@ -169,6 +190,7 @@ export const parseAIReply = async (
     }
     replyMessage = replyMessage.trim();
     const imgUrls = extractImages(replyMessage);
+    const audioUrls = extractAudios(replyMessage);
     const messageAtTargets: string[] = [];
     await handleAffection(replyMessage, e);
     extractCommands(replyMessage, nextCommands);
@@ -181,6 +203,7 @@ export const parseAIReply = async (
     replyMessagesResult.push({
       text: cleanText,
       images: imgUrls,
+      audios: audioUrls,
       at: messageAtTargets,
     });
   }

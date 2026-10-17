@@ -16,6 +16,10 @@ export const commandChildren = [
     handler: lazy(() => import("../response/minimax/res")),
   },
   {
+    regular: /^(#|\/)DS朗读(?:配置|状态)(?:\s+[\s\S]*)?$/i,
+    handler: lazy(() => import("../response/ds-tts/res")),
+  },
+  {
     regular: /^(\/|#)(开启网页(?:\s+.*)?|关闭网页|网页状态|登录面板)$/,
     handler: lazy(() => import("../response/panel/res")),
   },

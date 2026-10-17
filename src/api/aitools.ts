@@ -34,6 +34,7 @@ import { getOpenAIProxyFetch } from "./openaiProxy";
 import { useXianyuGameTool } from "./xianyu-game";
 import { convertToImageUrlContent } from "./image-url-tool";
 import { generateSpeech } from "./speech-tool";
+import { dsTtsSpeak, dsTtsStatus } from "./ds-tts";
 import { runSubAgentTool } from "./sub-agent";
 
 const value = getAiChatConfigValue();
@@ -145,6 +146,46 @@ export const tools: ChatCompletionTool[] = [
           },
         },
         required: ["text"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "DsTtsSpeak",
+      description:
+        "使用 DeepSeek 官方朗读音色（贝壳 mira / 白浪 echo / 海星 stella / 暗潮 tide）把文本合成语音并自动发送。需要本机专用浏览器已登录 chat.deepseek.com（CDP），不是 OpenAI TTS。未命中缓存时会往 DS 会话 echo 投递文本。失败不会自动改用 GenerateSpeech。合成后不要再输出音频标签或链接。",
+      parameters: {
+        type: "object",
+        properties: {
+          text: {
+            type: "string",
+            description: "要朗读的文字（可为 Markdown，会做口播归一化）",
+          },
+          voice: {
+            type: "string",
+            enum: ["mira", "echo", "stella", "tide"],
+            description:
+              "可选。DS 官方音色：mira(贝壳/女)、echo(白浪/男)、stella(海星/女)、tide(暗潮/男)。省略用 #DS朗读配置 里的默认音色",
+          },
+          regenerate: {
+            type: "boolean",
+            description: "可选。true 时跳过缓存强制重新合成（DS 每次声音可能不同）",
+          },
+        },
+        required: ["text"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "DsTtsStatus",
+      description:
+        "诊断内嵌 DS 官方朗读状态：专用浏览器是否连通、是否已登录 chat.deepseek.com、账号是否放行、队列与缓存。DsTtsSpeak 失败时先调它。需要本机浏览器，不是 OpenAI。",
+      parameters: {
+        type: "object",
+        properties: {},
       },
     },
   },
@@ -869,7 +910,7 @@ export const tools: ChatCompletionTool[] = [
     function: {
       name: "AgentUploadFileToR2",
       description:
-        "将项目 public/{guid}/ 目录内的构建产物或媒体文件上传到 R2，返回可公开访问的链接。路径必须是相对 public/{guid}/ 的相对路径；拿到链接后可直接发给用户，图片可用 <img=链接> 发送。",
+        "将项目 public/{guid}/ 目录内的构建产物或媒体文件上传到 R2，返回可公开访问的链接。路径必须是相对 public/{guid}/ 的相对路径；拿到链接后：图片用 <img=链接> 发送，音频/语音用 <audio=链接> 发送（uploadType=audio 时返回的 sendText 已是该标签），普通文件可直接发链接。",
       parameters: {
         type: "object",
         properties: {
@@ -889,8 +930,8 @@ export const tools: ChatCompletionTool[] = [
           uploadType: {
             type: "string",
             description:
-              "上传类型。file 用于普通构建产物/压缩包/音视频等；image 会走图片压缩和格式转换流程",
-            enum: ["file", "image"],
+              "上传类型。file 用于普通构建产物/压缩包等；image 走图片压缩转换；audio 用于语音/音频，成功后应用 <audio=链接> 发出（不要当普通文件链接发）",
+            enum: ["file", "image", "audio"],
             default: "file",
           },
         },
@@ -3455,6 +3496,22 @@ const normalizeMiniMaxTone = (tone: unknown): string[] => {
 export const availableTools = {
   SubAgent: runSubAgentTool,
   GenerateSpeech: generateSpeech,
+  DsTtsSpeak: dsTtsSpeak,
+  DsTtsStatus: async () => {
+    const status = await dsTtsStatus();
+    return {
+      ok: true,
+      text: status.text,
+      browserConnected: status.raw.browser.connected,
+      loggedIn: status.raw.ds.loggedIn,
+      pageFound: status.raw.ds.pageFound,
+      allowed: status.raw.ds.allowed,
+      pending: status.raw.queue.pending,
+      busy: status.raw.queue.active,
+      cacheFiles: status.raw.cache.files,
+      cacheBytes: status.raw.cache.bytes,
+    };
+  },
   ConvertToImageUrl: async ({ address }: { address: string }) =>
     convertToImageUrlContent(address),
 
@@ -5092,7 +5149,7 @@ export const availableTools = {
     guid: string;
     filePath: string;
     fileName?: string;
-    uploadType?: "file" | "image";
+    uploadType?: "file" | "image" | "audio";
   }) => {
     try {
       const { target, relativePath } = resolveAgentPath(guid, filePath);
@@ -5114,7 +5171,12 @@ export const availableTools = {
         fileName: fileName || null,
         uploadType,
         url,
-        sendText: uploadType === "image" ? `<img=${url}>` : `文件链接: ${url}`,
+        sendText:
+          uploadType === "image"
+            ? `<img=${url}>`
+            : uploadType === "audio"
+              ? `<audio=${url}>`
+              : `文件链接: ${url}`,
       };
     } catch (error) {
       return toToolError(error);

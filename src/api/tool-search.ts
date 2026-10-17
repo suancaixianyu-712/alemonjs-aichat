@@ -39,6 +39,8 @@ export const searchToolDefinition = {
 export const TOOL_META: Record<string, { summary: string; aliases: string[] }> = {
   MiniMaxVoice: { summary: "MiniMax 语音合成", aliases: ["语音", "配音", "说话", "音色", "朗读", "tts"] },
   GenerateSpeech: { summary: "OpenAI TTS 合成语音", aliases: ["语音", "说话", "朗读", "配音", "tts", "openai语音", "gpt语音", "自然语音", "gpt-4o-mini-tts"] },
+  DsTtsSpeak: { summary: "DS官方朗读需浏览器", aliases: ["DS朗读", "深度求索语音", "ds朗读", "deepseek朗读", "贝壳", "白浪", "海星", "暗潮", "语音", "朗读", "tts"] },
+  DsTtsStatus: { summary: "DS朗读浏览器状态", aliases: ["DS朗读状态", "ds朗读状态", "深度求索语音状态"] },
   ConvertToImageUrl: { summary: "图片转为可查看链接", aliases: ["图片", "看图", "链接", "直链"] },
   StableDiffusionGenerateImage: { summary: "SD 生成图片", aliases: ["图片", "生图", "画图", "绘画", "sd"] },
   StableDiffusionImageToPrompt: { summary: "SD 动漫图转提示词", aliases: ["图片", "反推", "提示词", "tag"] },

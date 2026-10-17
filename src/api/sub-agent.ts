@@ -72,6 +72,8 @@ const SUB_AGENT_EXCLUDED_TOOLS = new Set([
   "SubscribeNextUserMessage",
   "GenerateSpeech",
   "MiniMaxVoice",
+  "DsTtsSpeak",
+  "DsTtsStatus",
   "ConvertToImageUrl",
   "StableDiffusionGenerateImage",
   "GrokGenerateImage",

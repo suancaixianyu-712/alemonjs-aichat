@@ -1,6 +1,7 @@
 import { emojiMap } from "@src/emoji";
 import { uploadImageToR2 } from "@src/s3";
 import {
+  Audio,
   ImageFile,
   ImageURL,
   Mention,
@@ -151,6 +152,10 @@ ${botName}:画好了<img=https://example.com/landmarks.jpg>
 ${botName}:这是本地图片<img=./localimage.jpg>
 ${botName}:这是网络图片<img=https://example.com/image.jpg>
 注意: 如果有用户问你能不能看动图时, 你要回答只能看到第一帧
+
+发送网络音频:
+你可以使用<audio=网络音频链接>的方式来发送语音/音频, 例如:
+${botName}:听这段<audio=https://example.com/voice.mp3>
 `
     : ""
 }
@@ -681,7 +686,8 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
 
         if (
           functionName === "GenerateSpeech" ||
-          functionName === "MiniMaxVoice"
+          functionName === "MiniMaxVoice" ||
+          functionName === "DsTtsSpeak"
         ) {
           await sendSpeechToolResult(message, functionResult);
         }
@@ -758,7 +764,8 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
     // 提取ai发送的消息有多少条
     const replyMessages = reply.split(new RegExp(`${botName}:`, "g")).slice(1);
 
-    const replymessages: { text: string; images: string[] }[] = [];
+    const replymessages: { text: string; images: string[]; audios: string[] }[] =
+      [];
 
     for (const replyMessage of replyMessages) {
       // 从消息中提取图片
@@ -767,6 +774,14 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
       const imgUrls: string[] = [];
       while ((match = imageRegex.exec(replyMessage)) !== null) {
         imgUrls.push(match[1]);
+      }
+
+      // 从消息中提取音频
+      const audioRegex = /<audio=(.*?)>/g;
+      const audioUrls: string[] = [];
+      while ((match = audioRegex.exec(replyMessage)) !== null) {
+        const url = match[1].trim();
+        if (url) audioUrls.push(url);
       }
 
       // 处理好感度变化（通用和特定用户）
@@ -783,10 +798,15 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
 
       // 组合消息,添加到replymessages数组中
       replymessages.push({
-        text: replyMessage.replace(imageRegex, "").trim(),
+        text: replyMessage
+          .replace(imageRegex, "")
+          .replace(audioRegex, "")
+          .trim(),
         images: imgUrls,
+        audios: audioUrls,
       });
     }
+
     // 记录对话
     await redisClient.addAIChatHistory(e.guid, {
       ...res.choices?.[0].message,
@@ -795,7 +815,7 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
 
     // 处理消息
     for (let i = 0; i < replymessages.length; i++) {
-      const { text, images } = replymessages[i];
+      const { text, images, audios } = replymessages[i];
       const components: any[] = i === 0 ? [Mention(e.UserId)] : [];
 
       components.push(Text(text));
@@ -834,6 +854,13 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
         } else {
           // 上传失败 fallback
           components.push(ImageFile(errorimg));
+        }
+      }
+
+      for (const audioUrl of audios) {
+        const url = String(audioUrl || "").trim();
+        if (/^https?:\/\//.test(url)) {
+          components.push(Audio(url));
         }
       }
 

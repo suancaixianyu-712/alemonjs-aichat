@@ -13,3 +13,4 @@ alemon.config.yaml
 .DS_Store
 /alemonjs-SKILL
 .idea/
+# runtime: data/ds-tts/{cache,browser,config.json,out}（已被 /data 覆盖）

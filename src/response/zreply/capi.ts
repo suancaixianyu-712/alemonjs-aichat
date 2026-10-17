@@ -3,6 +3,7 @@ import {
   Image,
   ImageFile,
   ImageURL,
+  Audio,
   Mention,
   Text,
   useMessage,
@@ -87,6 +88,10 @@ const sendAIReply = async (
           ...(msg.images || []).map((img) => {
             return /^https?:\/\//.test(img) ? ImageURL(img) : ImageFile(img);
           }),
+          ...(msg.audios || [])
+            .map((url: string) => String(url || "").trim())
+            .filter((url: string) => /^https?:\/\//.test(url))
+            .map((url: string) => Audio(url)),
           ...(msg.at || []).map((uid) => Mention(uid)),
         ),
       );
@@ -1032,7 +1037,8 @@ export const CApiReply = async (
             await message.sendToolResult(functionName, functionResult);
           } else if (
             functionName === "GenerateSpeech" ||
-            functionName === "MiniMaxVoice"
+            functionName === "MiniMaxVoice" ||
+            functionName === "DsTtsSpeak"
           ) {
             await sendSpeechToolResult(message, functionResult);
           }
