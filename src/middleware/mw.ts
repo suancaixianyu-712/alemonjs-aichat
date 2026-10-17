@@ -1,6 +1,10 @@
 import { useClient } from "alemonjs";
 import { API } from "@alemonjs/onebot";
 import redisClient from "@src/config";
+import {
+  normalizeLoginInfo,
+  unwrapOneBotData,
+} from "@src/api/onebot-result";
 
 const selects = onSelects(["message.create", "private.message.create"]);
 
@@ -88,23 +92,23 @@ export default onMiddleware(selects, async (event, next) => {
         }; // 机器人信息
         event["botInfoFault"] = true;
       } else {
+        // @alemonjs/onebot send() resolves parsedMessage.data directly
+        // ({ user_id, nickname }), not the old [{ code, data }] wrapper.
         const botInfo = await onebotClient.getLoginInfo();
         console.log("botInfo: ", botInfo);
-
-        if (!botInfo || !botInfo[0] || botInfo[0].code == 4000) {
-          event["ClientError"] =
-            "onebot平台连接错误, 影响:无法发送语音,无法获取自己的信息,无法获取at用户的信息,这是alemonjs的锅";
-          throw new Error("获取机器人信息失败，数据格式不正确");
+        const normalized = normalizeLoginInfo(botInfo);
+        if (!normalized.ok) {
+          // timeout / missing ws / invalid — fallback only; voice is unrelated
+          throw new Error("获取机器人信息失败，数据为空或超时");
         }
-        const loginInfo = botInfo[0].data;
-        if (!loginInfo || !String(loginInfo.nickname || "").trim()) {
+        if (normalized.emptyNickname) {
           event["bot"] = {
             nickname: "小喵酱",
             user_id: event.BotId,
           };
           event["botInfoFault"] = true;
         } else {
-          event["bot"] = loginInfo;
+          event["bot"] = normalized.loginInfo;
         }
       }
     } catch (error) {
@@ -146,14 +150,14 @@ export default onMiddleware(selects, async (event, next) => {
               action: "get_stranger_info",
               params: { user_id: item.data.qq, no_cache: true },
             });
-
-            if (!atInfo || !atInfo[0] || atInfo[0].code == 4000) {
+            const stranger = unwrapOneBotData<{ nickname?: string }>(atInfo);
+            if (!stranger || !String(stranger.nickname || "").trim()) {
               throw new Error("获取QQ昵称失败，数据格式不正确");
             }
 
             return {
               type: "at",
-              data: { qq: item.data.qq, nickname: atInfo[0].data.nickname },
+              data: { qq: item.data.qq, nickname: stranger.nickname },
             };
           } catch (error) {
             console.error(`获取QQ ${item.data.qq} 的昵称失败`, error);
@@ -182,20 +186,20 @@ export default onMiddleware(selects, async (event, next) => {
     );
     if (replyData) {
       event["replyMessageId"] = String(replyData.data.id);
-      const msg = await onebotClient.getMsg({
-        message_id: Number(replyData.data.id),
-      });
-
       try {
-        if (!msg || !msg[0] || msg[0].code == 4000) {
+        const msg = await onebotClient.getMsg({
+          message_id: Number(replyData.data.id),
+        });
+        const replyPayload = unwrapOneBotData<{
+          sender?: { user_id?: string | number };
+        }>(msg);
+        if (!replyPayload) {
           throw new Error("获取回复消息失败，数据格式不正确");
         }
-        console.log("msg[0].data;", JSON.stringify(msg[0].data, null, 2));
-        if (msg && msg[0] && msg[0].data) {
-          event["reply"] = msg[0].data;
-          if (msg[0].data.sender.user_id == event.BotId) {
-            event["atBot"] = true;
-          }
+        console.log("replyPayload;", JSON.stringify(replyPayload, null, 2));
+        event["reply"] = replyPayload;
+        if (replyPayload.sender?.user_id == event.BotId) {
+          event["atBot"] = true;
         }
       } catch (error) {
         console.error("获取回复消息失败，数据格式不正确", error);
