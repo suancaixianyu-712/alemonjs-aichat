@@ -7,7 +7,7 @@ mock.module("alemonjs", { namedExports: {
   Audio: (value) => ({ type: "Audio", value }),
   Text: (value) => ({ type: "Text", value }),
 } });
-const { createSpeechAudio, getSpeechVoices, sendSpeechToolResult } = await import("../lib/api/speech.js");
+const { createSpeechAudio, getSpeechVoices, sendSpeechToolResult, validateSpeechModel, OPENAI_SPEECH_MODELS, listOpenAISpeechModelsText, speechModelSupportsInstructions } = await import("../lib/api/speech.js");
 
 globalThis.format = (...items) => items;
 const requests = [];
@@ -68,4 +68,28 @@ test("空音频不会进入上传和发送流程", async () => {
   emptyResponse = true;
   try { await assert.rejects(createSpeechAudio(base), /空音频/); }
   finally { emptyResponse = false; }
+});
+
+test("可选 speed 写入请求；越界在请求前拒绝", async () => {
+  await createSpeechAudio({ ...base, speed: 1.5 });
+  assert.equal(requests.at(-1).body.speed, 1.5);
+  const count = requests.length;
+  await assert.rejects(createSpeechAudio({ ...base, speed: 0.1 }), /0\.25/);
+  await assert.rejects(createSpeechAudio({ ...base, speed: 4.1 }), /4\.0/);
+  assert.equal(requests.length, count);
+});
+
+test("一键 TTS 模型白名单与 SDK SpeechModel 对齐，拒绝 realtime", async () => {
+  assert.deepEqual([...OPENAI_SPEECH_MODELS], [
+    "tts-1",
+    "tts-1-hd",
+    "gpt-4o-mini-tts",
+    "gpt-4o-mini-tts-2025-12-15",
+  ]);
+  assert.equal(validateSpeechModel("gpt-4o-mini-tts"), "gpt-4o-mini-tts");
+  assert.equal(speechModelSupportsInstructions("gpt-4o-mini-tts"), true);
+  assert.equal(speechModelSupportsInstructions("tts-1"), false);
+  await assert.rejects(createSpeechAudio({ ...base, model: "gpt-4o-realtime-preview" }), /不支持的语音模型/);
+  assert.throws(() => validateSpeechModel("gpt-4o-mini-realtime-preview"), /可用/);
+  assert.match(listOpenAISpeechModelsText(), /gpt-4o-mini-tts/);
 });

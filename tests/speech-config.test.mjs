@@ -12,6 +12,10 @@ const aiConfigs = new Map([
 ]);
 const sent = [];
 const writes = [];
+// 避免本机 export 的临时密钥污染回退到 AI 配置的用例
+delete process.env.OPENAI_TTS_API_KEY;
+delete process.env.OPENAI_TTS_BASE_URL;
+
 mock.module("alemonjs", { namedExports: {
   Audio: (value) => ({ type: "Audio", value }),
   Text: (value) => ({ type: "Text", value }),
@@ -59,6 +63,16 @@ const { generateSpeech } = await import("../lib/api/speech-tool.js");
 const event = { Platform: "onebot", guid: "group-1", UserId: "user-1" };
 const command = (msg, overrides = {}) => handleSpeechMessage({ ...event, ...overrides, msg });
 const latestText = () => sent.at(-1).map((item) => item.value).join("");
+
+let status = 200;
+const server = createServer((req, res) => {
+  req.resume();
+  if (status === 200) { res.writeHead(200, { "content-type": "audio/mpeg" }); res.end("ID3speech"); }
+  else { res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify({ error: { message: "key: updated-test-key" } })); }
+});
+server.listen(0, "127.0.0.1");
+await once(server, "listening");
+after(() => { server.closeAllConnections(); server.close(); });
 
 test("添加指令选择已有配置，隔离用户会话并设置十分钟过期", async () => {
   await command("#添加语音配置 gpt-4o-mini-tts");
@@ -132,16 +146,6 @@ test("工具代理开启后，语音配置即使所属 AI 直连也会走代理"
   }
 });
 
-let status = 200;
-const server = createServer((req, res) => {
-  req.resume();
-  if (status === 200) { res.writeHead(200, { "content-type": "audio/mpeg" }); res.end("ID3speech"); }
-  else { res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify({ error: { message: "key: updated-test-key" } })); }
-});
-server.listen(0, "127.0.0.1");
-await once(server, "listening");
-after(() => { server.closeAllConnections(); server.close(); });
-
 test("语音工具上传二进制音频，成功及上传失败都清理临时文件", async () => {
   Object.assign(aiConfigs.get("openai/gpt-test"), { host: `http://127.0.0.1:${server.address().port}/v1`, useProxy: false });
   const result = await generateSpeech({ text: "你好" });
@@ -199,4 +203,95 @@ test("连接失败时返回可排查的原因，而不是裸的 Connection error
     finally {
         Object.assign(target, { host: originalHost });
     }
+});
+
+test("优先使用 OPENAI_TTS_API_KEY 与 OPENAI_TTS_BASE_URL，不读 AI 列表密钥", async () => {
+  process.env.OPENAI_TTS_API_KEY = "sk-env-test-key";
+  process.env.OPENAI_TTS_BASE_URL = `http://127.0.0.1:${server.address().port}/v1/`;
+  try {
+    const resolved = await config.resolveSpeechRuntimeConfig({
+      model: "tts-1",
+      voice: "nova",
+    });
+    assert.equal(resolved.keySource, "env");
+    assert.equal(resolved.key, "sk-env-test-key");
+    assert.equal(resolved.host, `http://127.0.0.1:${server.address().port}/v1`);
+    assert.equal(resolved.model, "tts-1");
+    assert.equal(resolved.voice, "nova");
+
+    const result = await generateSpeech({
+      text: "环境密钥",
+      model: "tts-1",
+      voice: "alloy",
+      speed: 1.25,
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.model, "tts-1");
+    assert.equal(result.voice, "alloy");
+    assert.equal(result.url, "https://example.invalid/speech.mp3");
+  } finally {
+    delete process.env.OPENAI_TTS_API_KEY;
+    delete process.env.OPENAI_TTS_BASE_URL;
+  }
+});
+
+test("无环境密钥且无语音配置时 GenerateSpeech 返回可操作错误", async () => {
+  delete process.env.OPENAI_TTS_API_KEY;
+  delete process.env.OPENAI_TTS_BASE_URL;
+  const current = await redis.get("ai:speech:current");
+  const models = new Map(hashes.get("ai:speech:models") || []);
+  await redis.del("ai:speech:current");
+  hashes.set("ai:speech:models", new Map());
+  try {
+    const result = await generateSpeech({ text: "你好" });
+    assert.equal(result.ok, false);
+    assert.match(result.error, /尚未添加语音配置|OPENAI_TTS_API_KEY|语音/);
+  } finally {
+    if (current) await redis.set("ai:speech:current", current);
+    hashes.set("ai:speech:models", models);
+  }
+});
+
+test("环境密钥路径下可覆盖 voice/model，缺省回退全局语音配置", async () => {
+  process.env.OPENAI_TTS_API_KEY = "sk-env-only";
+  process.env.OPENAI_TTS_BASE_URL = "https://api.openai.com/v1";
+  try {
+    const withDefaults = await config.resolveSpeechRuntimeConfig();
+    assert.equal(withDefaults.keySource, "env");
+    assert.equal(withDefaults.model, "gpt-4o-mini-tts"); // 来自已添加的当前模型
+    assert.equal(withDefaults.voice, "nova");
+    const overridden = await config.resolveSpeechRuntimeConfig({
+      model: "tts-1-hd",
+      voice: "echo",
+    });
+    assert.equal(overridden.model, "tts-1-hd");
+    assert.equal(overridden.voice, "echo");
+  } finally {
+    delete process.env.OPENAI_TTS_API_KEY;
+    delete process.env.OPENAI_TTS_BASE_URL;
+  }
+});
+
+test("GenerateSpeech 拒绝不在白名单的 model（含 realtime）", async () => {
+  process.env.OPENAI_TTS_API_KEY = "sk-env-test-key";
+  process.env.OPENAI_TTS_BASE_URL = `http://127.0.0.1:${server.address().port}/v1`;
+  try {
+    const bad = await generateSpeech({
+      text: "你好",
+      model: "gpt-4o-realtime-preview",
+      voice: "alloy",
+    });
+    assert.equal(bad.ok, false);
+    assert.match(bad.error, /不支持的语音模型|可用/);
+    const ok = await generateSpeech({
+      text: "你好",
+      model: "gpt-4o-mini-tts",
+      voice: "alloy",
+    });
+    assert.equal(ok.ok, true);
+    assert.equal(ok.model, "gpt-4o-mini-tts");
+  } finally {
+    delete process.env.OPENAI_TTS_API_KEY;
+    delete process.env.OPENAI_TTS_BASE_URL;
+  }
 });

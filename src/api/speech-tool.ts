@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { APIConnectionError, APIConnectionTimeoutError } from "openai";
 import { createSpeechAudio, type SpeechToolResult } from "./speech";
-import { resolveSpeechConfig } from "./speech-config";
+import { resolveSpeechRuntimeConfig } from "./speech-config";
 import { uploadMediaToR2 } from "@src/s3";
 const CONNECTION_ERROR_PATTERN =
   /connection error|fetch failed|socket hang up|timed? ?out|ECONN(?:REFUSED|RESET|ABORTED)|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|EPROTO|EPIPE|UND_ERR|CONNECT_TIMEOUT/i;
@@ -42,21 +42,40 @@ const redactSecrets = (value: string, apiKey: string) => {
   return masked.replace(/sk-[A-Za-z0-9_-]{6,}/g, "sk-******");
 };
 
-
-export const generateSpeech = async ({ text, model, instructions }: {
+export const generateSpeech = async ({
+  text,
+  model,
+  voice,
+  instructions,
+  speed,
+}: {
   text: string;
   model?: string;
+  voice?: string;
   instructions?: string;
+  speed?: number;
 }): Promise<SpeechToolResult | { ok: false; error: string }> => {
   let apiKey = "";
   let useProxy = false;
   let httpProxy = "";
+  let keySource: "env" | "ai-config" = "ai-config";
   try {
-    const config = await resolveSpeechConfig(model);
+    const config = await resolveSpeechRuntimeConfig({ model, voice });
     apiKey = config.key;
     useProxy = config.useProxy;
     httpProxy = config.httpProxy || "";
-    const audio = await createSpeechAudio({ ...config, text, instructions });
+    keySource = config.keySource;
+    const audio = await createSpeechAudio({
+      host: config.host,
+      key: config.key,
+      model: config.model,
+      voice: config.voice,
+      text,
+      instructions,
+      speed,
+      useProxy: config.useProxy,
+      httpProxy: config.httpProxy,
+    });
     const directory = await mkdtemp(path.join(tmpdir(), "aichat-speech-"));
     const file = path.join(directory, "speech.mp3");
     try {
@@ -74,8 +93,12 @@ export const generateSpeech = async ({ text, model, instructions }: {
     const cause = redactSecrets(extractErrorCause(error), apiKey).trim().slice(0, 200);
     // 已开启代理却没配置全局 httpProxy 时，SDK 会静默退回直连，是连接失败最常见的诱因。
     const proxyHint = useProxy && !httpProxy.trim() ? "（已开启代理但未配置全局 httpProxy，当前为直连）" : "";
-    const errorMessage = status === 401 ? "语音接口认证失败，请检查所选 AI 配置的密钥。"
-      : status === 403 ? "当前 AI 配置没有语音模型的访问权限。"
+    const authHint =
+      keySource === "env"
+        ? "请检查环境变量 OPENAI_TTS_API_KEY（及可选 OPENAI_TTS_BASE_URL）。"
+        : "请检查所选 AI 配置的密钥。";
+    const errorMessage = status === 401 ? `语音接口认证失败，${authHint}`
+      : status === 403 ? "语音接口拒绝访问（可能是密钥权限、模型未开通或地区限制）。"
       : status === 404 ? "语音模型或 /audio/speech 接口不存在，请检查模型 ID 与接口地址。"
       : status === 429 ? "语音接口额度不足或请求过于频繁，请稍后重试。"
       : status ? "语音接口调用失败（HTTP " + status + "），请检查模型、音色和接口权限。"
