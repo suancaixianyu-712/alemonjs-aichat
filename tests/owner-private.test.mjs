@@ -7,18 +7,6 @@ import { CredentialVault, redactCredentialValues } from "../lib/api/credential-v
 import { bindOwnerPrivateToolCall, credentialOwnerFromEvent, toolCallForDisplay, redactSavedCredentialContext } from "../lib/api/owner-private.js";
 
 const owner = { IsMaster: true, name: "private.message.create", UserId: "owner-1", Platform: "test", guid: "private-owner" };
-const fakeStore = () => {
-  const records = new Map();
-  return {
-    get: async (key) => records.get(key),
-    set: async (key, value) => { records.set(key, value); },
-    eval: async (_script, _count, key, token) => {
-      if (records.get(key) !== token) return 0;
-      records.delete(key);
-      return 1;
-    },
-  };
-};
 
 test("凭据加密持久化、跨实例复用、身份隔离、替换及删除", (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "aichat-vault-test-"));
@@ -70,35 +58,35 @@ test("密文损坏和密钥丢失时停止，不覆盖旧凭据", (t) => {
 test("真实私聊身份覆盖伪造参数，群聊和普通用户无法管理或使用凭据", async () => {
   for (const event of [{ ...owner, IsMaster: false }, { ...owner, name: "message.create" }]) {
     const args = { ownerPrivate: true, credentialOwner: "forged", isMaster: true };
-    await assert.rejects(bindOwnerPrivateToolCall(event, "ManageCredentials", args, fakeStore()), /仅主人私聊/);
+    await assert.rejects(bindOwnerPrivateToolCall(event, "ManageCredentials", args), /仅主人私聊/);
     assert.equal(args.ownerPrivate, false);
     assert.equal(args.credentialOwner, "");
-    await assert.rejects(bindOwnerPrivateToolCall(event, "RunServerCommand", { credentialEnv: {} }, fakeStore()), /仅主人私聊/);
+    await assert.rejects(bindOwnerPrivateToolCall(event, "RunServerCommand", { credentialEnv: {} }), /仅主人私聊/);
   }
   const args = { credentialOwner: "forged" };
-  await bindOwnerPrivateToolCall(owner, "ManageCredentials", args, fakeStore());
+  await bindOwnerPrivateToolCall(owner, "ManageCredentials", args);
   assert.equal(args.credentialOwner, credentialOwnerFromEvent(owner));
   assert.notEqual(credentialOwnerFromEvent(owner), credentialOwnerFromEvent({ ...owner, Platform: "another-platform" }));
 });
 
-test("危险操作确认绑定命令、用户和会话，不能伪造、替换或重放", async () => {
-  const store = fakeStore();
-  const args = () => ({ command: "systemctl restart example", workingDirectory: "/tmp" });
-  let challenge;
-  await assert.rejects(bindOwnerPrivateToolCall(owner, "RunServerCommand", args(), store), (error) => {
-    challenge = /确认执行 ([a-f0-9]{12})/.exec(error.message)[1];
-    return true;
-  });
-  const confirmed = { ...owner, msg: `确认执行 ${challenge}` };
-  await assert.rejects(bindOwnerPrivateToolCall(confirmed, "RunServerCommand", { ...args(), command: "systemctl restart other" }, store), /需要主人确认/);
-  await assert.rejects(bindOwnerPrivateToolCall({ ...confirmed, UserId: "other" }, "RunServerCommand", args(), store), /需要主人确认/);
-  await assert.rejects(bindOwnerPrivateToolCall({ ...confirmed, guid: "other" }, "RunServerCommand", args(), store), /需要主人确认/);
-  await assert.rejects(bindOwnerPrivateToolCall({ ...confirmed, __background: true }, "RunServerCommand", args(), store), /需要主人确认/);
-  await bindOwnerPrivateToolCall(confirmed, "RunServerCommand", args(), store);
-  await assert.rejects(bindOwnerPrivateToolCall(confirmed, "RunServerCommand", args(), store), /需要主人确认/);
-  await bindOwnerPrivateToolCall(owner, "RunServerCommand", { command: "hostname" }, store);
-  for (const command of ["Restart-Computer -Force", "shutdown.exe /r /t 0", "ssh server reboot"]) {
-    await assert.rejects(bindOwnerPrivateToolCall(owner, "RunServerCommand", { command }, store), /需要主人确认/);
+test("主人完全访问及后台任务直接继承身份，不因否定措辞或参数改写要求确认", async () => {
+  const task = "通过 SSH 连接社区服务器，只读取系统状态，不删除文件、不重启服务";
+  const background = { ...owner, __background: true };
+  for (const event of [owner, background]) {
+    for (const [name, args] of [
+      ["SubAgent", { action: "spawn", task }],
+      ["SubAgent", { action: "spawn", task: task + "，汇总负载和磁盘使用率" }],
+      ["RunCodex", { prompt: task }],
+      ["RunOpencode", { prompt: task }],
+      ["RunServerCommand", { command: "hostname" }],
+      ["RunServerCommand", { command: "systemctl restart example" }],
+      ["AgentDeleteFile", { filePath: "example.txt" }],
+    ]) {
+      await bindOwnerPrivateToolCall(event, name, args);
+      assert.equal(args.ownerPrivate, true);
+      assert.equal(args.isMaster, true);
+      assert.equal(args.credentialOwner, credentialOwnerFromEvent(owner));
+    }
   }
 });
 

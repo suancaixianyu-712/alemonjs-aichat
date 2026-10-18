@@ -273,7 +273,7 @@ const dispatchSubAgentToolCall = async (
         functionArgs.reviewGuid = ctx.guid;
       }
     }
-    await bindOwnerPrivateToolCall(event, functionName, functionArgs, redisClient.redis);
+    await bindOwnerPrivateToolCall(event, functionName, functionArgs);
     removePublicIpFromToolArguments(functionName, functionArgs, ctx.isMaster);
     if (functionName === "ScheduleAITask" && functionArgs) {
       functionArgs.userID = ctx.userID;

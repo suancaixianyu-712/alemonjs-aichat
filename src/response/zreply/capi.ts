@@ -999,7 +999,7 @@ export const CApiReply = async (
                   functionArgs.isMaster = e.IsMaster === true;
                   functionArgs.groupFullAccess = groupFullAccess;
                 }
-                await bindOwnerPrivateToolCall(e, functionName, functionArgs, redisClient.redis);
+                await bindOwnerPrivateToolCall(e, functionName, functionArgs);
                 // 公共知识库仅映射工作目录；审核配置仍绑定真实会话。
                 if (functionArgs && typeof functionArgs === "object") {
                   functionArgs.guid = toolGuid;

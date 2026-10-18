@@ -1,5 +1,3 @@
-import { createHash, randomBytes } from "node:crypto";
-import { isOwnerOnlyOperation } from "./group-full-access";
 import { redactCredentialValues } from "./credential-vault";
 
 export const isOwnerPrivateEvent = (event: any) =>
@@ -33,20 +31,11 @@ export const redactSavedCredentialContext = async (name: string, args: any, resu
   await historyClient.setAIChatHistory(guid, history);
 };
 
-const stableJson = (value: any): string => {
-  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
-  if (value && typeof value === "object") {
-    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(",")}}`;
-  }
-  return JSON.stringify(value) ?? "null";
-};
-
-/** 每次派发都覆盖真实身份；确认码绑定用户、会话、工具及全部操作参数。 */
+/** 每次派发都覆盖真实身份；主人私聊及其后台任务不额外要求确认码。 */
 export const bindOwnerPrivateToolCall = async (
   event: any,
   functionName: string,
   args: any,
-  store: any,
 ) => {
   if (!args || typeof args !== "object" || Array.isArray(args)) throw new Error("工具参数必须是对象");
   args.ownerPrivate = isOwnerPrivateEvent(event);
@@ -56,31 +45,4 @@ export const bindOwnerPrivateToolCall = async (
   if (functionName === "ManageCredentials" || args.credentialEnv !== undefined) {
     if (!args.credentialOwner) throw new Error("凭据管理和使用仅主人私聊可用");
   }
-  if (!args.ownerPrivate) return;
-  const needsConfirmation = functionName === "AgentDeleteFile" ||
-    (["RunServerCommand", "AgentProjectCommand"].includes(functionName) && isOwnerOnlyOperation(String(args.command || ""))) ||
-    (["RunCodex", "RunOpencode", "SubAgent"].includes(functionName) && isOwnerOnlyOperation(String(args.prompt || args.task || "")));
-  if (!needsConfirmation) return;
-  const operation = { ...args };
-  for (const key of ["isMaster", "ownerPrivate", "credentialOwner", "groupFullAccess", "reviewGuid", "guid"]) delete operation[key];
-  const digest = createHash("sha256").update(stableJson([args.credentialOwner, event.guid, functionName, operation])).digest("hex");
-  const key = `data:aiChat:owner-confirm:${digest}`;
-  const text = typeof event.msg === "string" ? event.msg.trim() : "";
-  const confirmation = /^(?:确认执行|確認執行)\s+([a-f0-9]{12})$/i.exec(text);
-  // 后台任务不能把上下文或模型参数伪装成新收到的主人确认。
-  if (confirmation && !event.heartbeat && !event.followupJudgement && !event.__background) {
-    const consumed = await store.eval(
-      "if redis.call('GET', KEYS[1]) == ARGV[1] then redis.call('DEL', KEYS[1]); return 1 end; return 0",
-      1, key, confirmation[1].toLowerCase(),
-    );
-    if (Number(consumed) === 1) return;
-  }
-  let token = await store.get(key);
-  if (!token) {
-    const candidate = randomBytes(6).toString("hex");
-    await store.set(key, candidate, "EX", 600, "NX");
-    token = await store.get(key);
-    if (!token) throw new Error("无法创建操作确认，请稍后重试");
-  }
-  throw new Error(`此删除或服务操作需要主人确认。请说明具体目标和影响，并请主人在私聊回复「确认执行 ${token}」（10 分钟内有效）。收到后以完全相同的工具和操作参数执行；不得自行确认或改用其他工具。`);
 };
