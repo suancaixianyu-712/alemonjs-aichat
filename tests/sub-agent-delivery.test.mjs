@@ -44,7 +44,7 @@ mock.module(moduleUrl("response/zreply/getChatConfig"), { namedExports: {
   shouldSkipAIReply: async () => false,
   buildUserMessage: async () => { throw new Error("内部报告回合不应构建用户消息"); },
 } });
-const realOpenAI = await import("openai");
+const { default: _realOpenAIDefault, ...realOpenAI } = await import("openai");
 mock.module("openai", { namedExports: { ...realOpenAI }, defaultExport: class {
   constructor() {
     this.chat = { completions: { create: async (params) => {

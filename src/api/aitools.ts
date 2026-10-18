@@ -36,6 +36,7 @@ import { convertToImageUrlContent } from "./image-url-tool";
 import { generateSpeech } from "./speech-tool";
 import { dsTtsSpeak, dsTtsStatus } from "./ds-tts";
 import { runSubAgentTool } from "./sub-agent";
+import { credentialVault, redactCredentialValues, type CredentialEnv } from "./credential-vault";
 
 const value = getAiChatConfigValue();
 
@@ -63,6 +64,22 @@ const getPrompt = async (text: string): Promise<string> => {
 };
 
 export const tools: ChatCompletionTool[] = [
+  {
+    type: "function",
+    function: {
+      name: "ManageCredentials",
+      description: "仅框架主人私聊可用。主人要求保存账号、密码、Token、SSH 信息等敏感内容时，使用 save 加密保存到专用凭据文件，不要写入普通记忆、公共知识库、源码或聊天回复。list 只返回名称和字段名；delete 删除指定凭据。save 会替换同名凭据的全部字段。后续通过 RunServerCommand.credentialEnv 按名称使用，无需取出或复述原文。",
+      parameters: {
+        type: "object",
+        properties: {
+          action: { type: "string", enum: ["save", "list", "delete"] },
+          name: { type: "string", description: "凭据名称，例如 production_ssh、github、部署服务器" },
+          fields: { type: "object", additionalProperties: { type: "string" }, description: "action=save 必填，例如 host、username、password、token、private_key 等字段；仅保存主人提供或授权保存的信息" },
+        },
+        required: ["action"],
+      },
+    },
+  },
   {
     type: "function",
     function: {
@@ -506,7 +523,7 @@ export const tools: ChatCompletionTool[] = [
     function: {
       name: "RunServerCommand",
       description:
-        "直接在服务器上执行运维指令，可用于查看状态、管理服务、Docker、PM2、日志和部署流程。普通用户执行前必须通过本地基础拦截和 AI 自动审核；框架确认当前用户是主人且当前会话已开启 agent 时，可在任意服务器目录执行任意 Shell 指令，不再受项目路径和命令审核限制。主人身份由框架注入，不能由参数伪造。普通用户的命令和输出仍会隐藏公网 IP、密码、令牌、密钥等敏感信息。不要用它操作 public/{guid} 项目文件，常规项目文件操作仍优先使用 Agent* 工具。",
+        "在服务器执行命令、管理文件和服务、安装软件、部署项目，也可使用 SSH 管理主人授权的远程服务器。框架主人私聊直接拥有完整服务器管理能力，无需开启 agent；其他会话沿用原权限。删除目录、重启或停止服务等操作须按工具返回的确认码等待主人确认，再以相同参数调用。凭据请用 credentialEnv 注入环境变量，命令中仅引用变量，不要拼接密码原文。主人身份由框架注入，模型不能伪造。",
       parameters: {
         type: "object",
         properties: {
@@ -514,6 +531,16 @@ export const tools: ChatCompletionTool[] = [
             type: "string",
             description:
               "要执行的服务器指令，例如 systemctl status nginx、docker ps、pm2 list、tail -n 100 app.log",
+          },
+          credentialEnv: {
+            type: "object",
+            description: "仅主人私聊：将已保存凭据注入本次命令的环境变量。例如 {GITHUB_TOKEN:{name:'github',field:'token'}}。Linux 用 $GITHUB_TOKEN，PowerShell 用 $env:GITHUB_TOKEN；不要打印变量。",
+            additionalProperties: {
+              type: "object",
+              properties: { name: { type: "string" }, field: { type: "string" } },
+              required: ["name", "field"],
+              additionalProperties: false,
+            },
           },
           workingDirectory: {
             type: "string",
@@ -1323,7 +1350,22 @@ export const tools: ChatCompletionTool[] = [
     type: "function",
     function: {
       name: "XianyuGame",
-      description: "咸鱼游戏插件：查询状态、开始/结束扫雷、读取五子棋/扫雷棋盘，或在系统派发的游戏任务中操作。\n- status：插件、可用游戏与当前会话 AI 对手状态\n- gobang_snapshot：五子棋棋盘，按 board[y-1][x-1] 读，x 横 y 纵，从 1 开始\n- gobang_move：仅在系统要求处理五子棋 AI 回合时调用；先读棋盘再落空位，必须传 x、y 且不得交换；不能用于普通聊天代走\n- minesweeper_start：用户要开始/重开或让你全程玩扫雷时调用，自己选难度（简单/中等/困难，缺省简单）不反问；返回 alreadyRunning=true 时不要重复开始\n- minesweeper_exit：用户结束/放弃，或只能瞎猜且用户未要求继续时调用\n- minesweeper_snapshot：可见棋盘（不含雷），按 board[y][x] 读，坐标用 A0 形式\n- minesweeper_open/mark/unmark：仅在用户要求操作或自动玩时使用，cells 传 A0 坐标数组，持续操作至结束；只问建议时不得改棋盘\n- session/guid 由系统注入，不要填写或猜测",
+      description: `检查同一 AlemonJS 宿主中是否已加载咸鱼游戏插件，并按当前真实玩家作用域读取或操作五子棋、扫雷、24 点、推箱子、中国象棋和斗兽棋。
+
+【使用要求】
+- action=status：查询插件是否可用、可用游戏和当前会话的 AI 对手状态。
+- action=gobang_snapshot：读取当前会话五子棋的结构化棋盘。棋盘数组必须按 board[y-1][x-1] 读取：x 是从左到右的横坐标，y 是从上到下的纵坐标，均从 1 开始。
+- action=gobang_move：仅在系统明确要求处理咸鱼五子棋 AI 回合时调用，先读取棋盘，再选择空位落子。必须传 x（横坐标）和 y（纵坐标），不得交换。系统会绑定当前会话和回合令牌，不能用于普通聊天代走。
+- action=minesweeper_start：当用户要求开始或重开扫雷、或要求你全程玩一局扫雷时调用，由你直接选择难度，不要反问用户。difficulty 只接受 简单、中等、困难，缺省为 简单。当前会话已有进行中的扫雷时会返回 alreadyRunning=true 和当前棋盘，此时不要重复开始。开始前如需先看局面，可先调用 minesweeper_snapshot。
+- action=minesweeper_exit：随时结束当前会话中的扫雷。用户要求结束、放弃时，或你判断这局已无法继续（剩余未知格只能靠瞎猜且用户没有要求继续猜）时调用。
+- action=minesweeper_snapshot：读取当前会话的扫雷可见棋盘，可用于自动游玩或普通聊天中给建议。快照只含已翻开数字、旗标和未知格，不含雷区答案；数组按 board[y][x] 读取，指令坐标使用 A0 形式。
+- action=minesweeper_open/minesweeper_mark/minesweeper_unmark：当用户明确要求 Aichat 操作或自动玩扫雷时使用；cells 传 A0 形式的坐标数组，可批量操作，并应持续读取结果直至游戏结束。用户只询问建议时不得修改棋盘。
+- 24 点：points24_snapshot/start/action/exit。开始后读取 cards，action 的 expression 必须恰好使用四张牌各一次并算出 24；用户要求你代答时直接提交表达式。
+- 推箱子：sokoban_snapshot/start/action/exit。start 可传从 1 开始的 level；action 的 operation 为 move 或 undo，move 时 directions 只传 wasd。每次操作后看返回快照，按用户要求继续推进。
+- 中国象棋：chinese_chess_snapshot/start/action/exit。start 发起或加入对局；action 的 move 传 A1 A2 坐标或合法棋谱。只有当前玩家可走棋，先看快照和 current，再按用户要求代走。
+- 斗兽棋：animal_chess_snapshot/start/action/exit。start 发起或加入对局；action 的 move 传 A0 B0 格式。只有当前玩家可走棋，先看快照和 current，再按用户要求代走。
+- 用户只是询问局面或建议时只用 snapshot；仅在用户明确要求开始、操作、接管或结束时调用会修改对局的动作。棋类游戏遵守插件的参与者和回合限制，不伪造另一位玩家。
+- 会话作用域由系统覆盖式注入（session 字段），不要自己填写或猜测 session、guid。`,
       parameters: {
         type: "object",
         properties: {
@@ -1339,6 +1381,22 @@ export const tools: ChatCompletionTool[] = [
               "minesweeper_open",
               "minesweeper_mark",
               "minesweeper_unmark",
+              "points24_snapshot",
+              "points24_start",
+              "points24_action",
+              "points24_exit",
+              "sokoban_snapshot",
+              "sokoban_start",
+              "sokoban_action",
+              "sokoban_exit",
+              "chinese_chess_snapshot",
+              "chinese_chess_start",
+              "chinese_chess_action",
+              "chinese_chess_exit",
+              "animal_chess_snapshot",
+              "animal_chess_start",
+              "animal_chess_action",
+              "animal_chess_exit",
             ],
             description: "要执行的咸鱼游戏操作",
           },
@@ -1362,6 +1420,31 @@ export const tools: ChatCompletionTool[] = [
             enum: ["简单", "中等", "困难"],
             description:
               "扫雷难度，由你自己选择；仅 minesweeper_start 需要，缺省为简单。简单 9×9/10 雷，中等 16×16/40 雷，困难 25×25/99 雷",
+          },
+          expression: {
+            type: "string",
+            description: "24 点表达式；仅 points24_action 需要，必须使用本局四张牌各一次",
+          },
+          level: {
+            type: "number",
+            description: "推箱子关卡编号，从 1 开始；仅 sokoban_start 使用",
+          },
+          operation: {
+            type: "string",
+            enum: ["move", "undo"],
+            description: "推箱子操作；仅 sokoban_action 使用",
+          },
+          directions: {
+            type: "string",
+            description: "推箱子移动方向，只能由 wasd 组成；sokoban_action 且 operation=move 时使用",
+          },
+          move: {
+            type: "string",
+            description: "棋类走法：中国象棋如 A1 A2，斗兽棋如 A0 B0；仅对应棋类 action 使用",
+          },
+          nickname: {
+            type: "string",
+            description: "棋类发起或加入对局时显示的昵称；可省略",
           },
           session: {
             type: "object",
@@ -1665,6 +1748,9 @@ const AGENT_WORKSPACE_TOOL_NAMES = new Set(
 
 // 同一套文件和 Git 工具复用两种目录范围，不允许模型指定其他会话的 guid。
 for (const tool of tools) {
+  if (tool.type === "function" && AGENT_TOOL_NAMES.has(tool.function.name)) {
+    tool.function.description += " 框架主人私聊无需开启 agent 即可使用本工具；删除及服务操作仍需主人明确确认。";
+  }
   if (
     tool.type !== "function" ||
     !AGENT_WORKSPACE_TOOL_NAMES.has(tool.function.name)
@@ -1683,14 +1769,14 @@ for (const tool of tools) {
       enum: ["session", "public", "root"],
       default: "session",
       description:
-        "session（默认）当前会话项目；public 为共享 public/knowledge/；root 为服务器 /root（Windows 为盘根），仅限主人开启当前会话 agent 后使用。路径参数均相对所选目录。",
+        "session（默认）当前会话项目；public 为共享 public/knowledge/；root 为服务器 /root（Windows 为盘根）。主人私聊直接可用，其他会话按原权限及 agent 开关判断。路径参数均相对所选目录。",
     },
   };
   parameters.required = (parameters.required as string[]).filter(
     (name) => name !== "guid",
   );
   tool.function.description +=
-    " scope=public 时 public/{guid}/ 指 public/knowledge/ 公共知识库；scope=root 时路径相对服务器 /root（Windows 为盘根），仅限主人开启当前会话 agent 后使用。";
+    " scope=public 时 public/{guid}/ 指 public/knowledge/ 公共知识库；scope=root 时路径相对服务器 /root（Windows 为盘根），主人私聊直接可用，其他会话按原权限及 agent 开关判断。";
 }
 
 export const assertAgentEnabled = async (guid?: string) => {
@@ -1707,7 +1793,9 @@ export const assertAgentToolAccess = async (
   scope?: unknown,
   isMaster?: boolean,
   groupFullAccess = false,
+  isPrivate = false,
 ) => {
+  const ownerPrivate = isMaster === true && isPrivate;
   const isWorkspaceTool = AGENT_WORKSPACE_TOOL_NAMES.has(functionName);
   if (isWorkspaceTool) {
     if (
@@ -1722,7 +1810,7 @@ export const assertAgentToolAccess = async (
       if (isMaster !== true && !groupFullAccess) {
         throw new Error("服务器 root 目录仅主人可访问");
       }
-      if (!groupFullAccess) await assertAgentEnabled(guid);
+      if (!groupFullAccess && !ownerPrivate) await assertAgentEnabled(guid);
       return SERVER_ROOT_GUID;
     }
     if (scope === "public") {
@@ -1733,7 +1821,7 @@ export const assertAgentToolAccess = async (
           );
         }
         // 开关属于真实会话，不能读取 knowledge 这个目录名对应的开关。
-        if (!groupFullAccess) await assertAgentEnabled(guid);
+        if (!groupFullAccess && !ownerPrivate) await assertAgentEnabled(guid);
       }
       return PUBLIC_KNOWLEDGE_GUID;
     }
@@ -1750,7 +1838,7 @@ export const assertAgentToolAccess = async (
     isAgentTool(functionName) &&
     !READ_ONLY_AGENT_TOOL_NAMES.has(functionName)
   ) {
-    if (!groupFullAccess) await assertAgentEnabled(guid);
+    if (!groupFullAccess && !ownerPrivate) await assertAgentEnabled(guid);
   }
   return guid;
 };
@@ -3048,12 +3136,16 @@ const runServerShellCommand = ({
   command,
   cwd,
   timeoutMs,
+  env,
+  secrets = [],
 }: {
   command: string;
   cwd: string;
   timeoutMs: number;
+  env?: Record<string, string>;
+  secrets?: string[];
 }) => {
-  return new Promise<{ output: string; exitCode: number }>(
+  return new Promise<{ output: string; exitCode: number; redacted: boolean }>(
     (resolve, reject) => {
       const powershellCommand = [
         "chcp 65001 | Out-Null",
@@ -3075,12 +3167,21 @@ const runServerShellCommand = ({
               ],
             }
           : { file: "sh", args: ["-lc", command] };
-      const child = spawn(shell.file, shell.args, { cwd });
+      const child = spawn(shell.file, shell.args, { cwd, env: { ...process.env, ...env }, windowsHide: true });
       let output = "";
-      const appendOutput = (data: Buffer) => {
+      let redacted = false;
+      const maxBuffer = PROJECT_COMMAND_MAX_OUTPUT + Math.max(0, ...secrets.map((secret) => Math.max(secret.length, encodeURIComponent(secret).length, JSON.stringify(secret).length)));
+      const hideCredentials = (text: string) => {
+        const safe = redactCredentialValues(text, secrets);
+        redacted ||= safe !== text;
+        return safe;
+      };
+      const appendOutput = (data: Buffer | string) => {
         output += data.toString();
-        if (output.length > PROJECT_COMMAND_MAX_OUTPUT) {
-          output = output.slice(-PROJECT_COMMAND_MAX_OUTPUT);
+        // 保留最长凭据的尾部余量，以处理跨 stdout/stderr 数据块的凭据。
+        output = hideCredentials(output);
+        if (output.length > maxBuffer) {
+          output = output.slice(-maxBuffer);
         }
       };
       const timeout = setTimeout(() => {
@@ -3088,8 +3189,8 @@ const runServerShellCommand = ({
         reject(new Error("服务器指令执行超时"));
       }, timeoutMs);
 
-      child.stdout.on("data", appendOutput);
-      child.stderr.on("data", appendOutput);
+      child.stdout.setEncoding("utf8").on("data", appendOutput);
+      child.stderr.setEncoding("utf8").on("data", appendOutput);
       child.on("error", (error: NodeJS.ErrnoException) => {
         clearTimeout(timeout);
         reject(new Error(`服务器指令启动失败: ${error.message}`));
@@ -3097,8 +3198,9 @@ const runServerShellCommand = ({
       child.on("close", (exitCode: number | null) => {
         clearTimeout(timeout);
         resolve({
-          output: trimProjectCommandOutput(output.trim()),
+          output: trimProjectCommandOutput(hideCredentials(output).trim()),
           exitCode: exitCode ?? -1,
+          redacted,
         });
       });
     },
@@ -3494,6 +3596,23 @@ const normalizeMiniMaxTone = (tone: unknown): string[] => {
 };
 
 export const availableTools = {
+  ManageCredentials: async ({ action, name, fields, isMaster, ownerPrivate, credentialOwner }: {
+    action: "save" | "list" | "delete";
+    name?: string;
+    fields?: Record<string, string>;
+    isMaster?: boolean;
+    ownerPrivate?: boolean;
+    credentialOwner?: string;
+  }) => {
+    try {
+      if (isMaster !== true || ownerPrivate !== true || !credentialOwner) throw new Error("凭据管理和使用仅主人私聊可用");
+      if (action === "list") return { success: true, credentials: credentialVault.list(credentialOwner) };
+      if (!name) throw new Error("凭据名称不能为空");
+      if (action === "save") return { success: true, credential: credentialVault.save(credentialOwner, name, fields!), instruction: "凭据已加密保存；仅告知名称和字段名，不要复述原文。后续用 RunServerCommand.credentialEnv 按名称使用。" };
+      if (action === "delete") return { success: true, ...credentialVault.delete(credentialOwner, name) };
+      throw new Error("不支持的凭据操作");
+    } catch (error) { return toToolError(error); }
+  },
   SubAgent: runSubAgentTool,
   GenerateSpeech: generateSpeech,
   DsTtsSpeak: dsTtsSpeak,
@@ -3522,6 +3641,12 @@ export const availableTools = {
     y,
     cells,
     difficulty,
+    expression,
+    level,
+    operation,
+    directions,
+    move,
+    nickname,
     session,
     progressReporter,
   }) =>
@@ -3532,6 +3657,12 @@ export const availableTools = {
       y,
       cells,
       difficulty,
+      expression,
+      level,
+      operation,
+      directions,
+      move,
+      nickname,
       session,
       progressReporter,
     }),
@@ -4459,6 +4590,9 @@ export const availableTools = {
     reviewGuid,
     isMaster,
     groupFullAccess,
+    ownerPrivate,
+    credentialOwner,
+    credentialEnv,
     timeoutSeconds = SERVER_COMMAND_DEFAULT_TIMEOUT_SECONDS,
   }: {
     command: string;
@@ -4466,10 +4600,16 @@ export const availableTools = {
     reviewGuid: string;
     isMaster?: boolean;
     groupFullAccess?: boolean;
+    ownerPrivate?: boolean;
+    credentialOwner?: string;
+    credentialEnv?: CredentialEnv;
     timeoutSeconds?: number;
   }) => {
     try {
-      if (!groupFullAccess) await assertAgentEnabled(reviewGuid);
+      if (!(isMaster === true && ownerPrivate === true) && !groupFullAccess) await assertAgentEnabled(reviewGuid);
+      if (credentialEnv !== undefined && !(isMaster === true && ownerPrivate === true && credentialOwner)) {
+        throw new Error("凭据管理和使用仅主人私聊可用");
+      }
       if (!reviewGuid?.trim()) {
         throw new Error("reviewGuid 必填，请传入当前群号");
       }
@@ -4500,10 +4640,13 @@ export const availableTools = {
         };
       }
 
+      const credentials = credentialEnv === undefined ? undefined : credentialVault.resolveEnv(credentialOwner!, credentialEnv);
       const result = await runServerShellCommand({
         command,
         cwd,
         timeoutMs,
+        env: credentials?.env,
+        secrets: credentials?.secrets,
       });
       const safeCommand =
         isMaster === true
@@ -4519,7 +4662,7 @@ export const availableTools = {
         workingDirectory: cwd,
         review,
         output: safeOutput.text,
-        outputRedacted: safeCommand.redacted || safeOutput.redacted,
+        outputRedacted: safeCommand.redacted || safeOutput.redacted || result.redacted,
         exitCode: result.exitCode,
         error: result.exitCode === 0 ? undefined : "服务器指令执行失败",
       };

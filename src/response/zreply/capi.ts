@@ -45,6 +45,7 @@ import { buildXianyuGameSession } from "@src/api/xianyu-game";
 import { getLockedAIMessage } from "@src/api/ai-lock";
 import { annotatePermissionBoundary } from "@src/api/user-permission";
 import { isEmptyAtBotMessage } from "@src/api/empty-at";
+import { bindOwnerPrivateToolCall, isOwnerPrivateEvent, toolCallForDisplay, redactSavedCredentialContext } from "@src/api/owner-private";
 import {
   MAX_TOOL_ROUNDS,
   createTurnToolState,
@@ -474,7 +475,7 @@ export const CApiReply = async (
     : [];
   const describedCurrentImageUrls = new Set<string>();
   const generatedCurrentImageUrls = new Set<string>();
-  console.log("发送给AI的当前消息:\n", JSON.stringify(usermessage, null, 2));
+  if (!isOwnerPrivateEvent(e)) console.log("发送给AI的当前消息:\n", JSON.stringify(usermessage, null, 2));
 
   const turnUserID = String(e.UserId || "");
   const acquiredTurnLock = await redisClient.acquireAIToolLoop(
@@ -687,7 +688,8 @@ export const CApiReply = async (
       return;
     }
 
-    await redisClient.addAIChatHistory(e.guid, usermessage);
+    let userMessagePersisted = !isOwnerPrivateEvent(e);
+    if (userMessagePersisted) await redisClient.addAIChatHistory(e.guid, usermessage);
 
     // 检查是否有工具调用需要处理
     const toolRounds = turnTools.rounds;
@@ -749,14 +751,14 @@ export const CApiReply = async (
           role: "assistant",
           tool_calls: normalizedToolCalls,
         };
-        log("AI返回工具调用，内容：-----", responseMessage);
+        log("AI返回工具调用：", responseMessage.tool_calls.map((call) => toolCallForDisplay(call, false)));
 
         const toolCallDisplayContent =
           toolRound === 1
             ? fullContent
             : getToolCallDisplayContent(responseMessage);
         if (
-          cfg.toolConfig.toolCallContentSwitch === "1" &&
+          !isOwnerPrivateEvent(e) && cfg.toolConfig.toolCallContentSwitch === "1" &&
           toolCallDisplayContent.trim() !== ""
         ) {
           const summary = removePublicIpFromOutput(
@@ -777,11 +779,11 @@ export const CApiReply = async (
         }
         messages.push(responseMessage);
 
-        log("模型决定调用工具：", responseMessage.tool_calls);
+        log("模型决定调用工具：", responseMessage.tool_calls.map((call) => toolCallForDisplay(call, false)));
 
         if (cfg.toolConfig.toolPromptSwitch === "1") {
           const useToolsMessage = responseMessage.tool_calls.map((toolCall) => {
-            return `工具调用: ${toolCall.function.name}(${cfg.toolConfig.toolPromptArgsSwitch === "1" ? toolCall.function.arguments : ""})`;
+            return toolCallForDisplay(toolCall, !isOwnerPrivateEvent(e) && cfg.toolConfig.toolPromptArgsSwitch === "1");
           });
           const toolPrompt = useToolsMessage.join("\n");
           if (!(await progress.append(toolPrompt, "tool"))) {
@@ -821,7 +823,7 @@ export const CApiReply = async (
               ? JSON.parse(toolCall.function.arguments)
               : {};
           } catch (err) {
-            console.error(`工具参数解析失败：${functionName}`, err);
+            console.error(`工具参数解析失败：${functionName}`, functionName === "ManageCredentials" ? "[参数已隐藏]" : err);
             functionArgs = {};
           }
 
@@ -981,6 +983,7 @@ export const CApiReply = async (
                 functionArgs?.scope,
                 e.IsMaster === true,
                 groupFullAccess,
+                isOwnerPrivateEvent(e),
               );
               if (
                 (await redisClient.getToolStatus(e.guid, functionName)) === "1"
@@ -996,6 +999,7 @@ export const CApiReply = async (
                   functionArgs.isMaster = e.IsMaster === true;
                   functionArgs.groupFullAccess = groupFullAccess;
                 }
+                await bindOwnerPrivateToolCall(e, functionName, functionArgs, redisClient.redis);
                 // 公共知识库仅映射工作目录；审核配置仍绑定真实会话。
                 if (functionArgs && typeof functionArgs === "object") {
                   functionArgs.guid = toolGuid;
@@ -1018,6 +1022,7 @@ export const CApiReply = async (
                   aiTurn.signal,
                 );
                 throwIfAITurnAborted(aiTurn.signal);
+                await redactSavedCredentialContext(functionName, functionArgs, functionResult, [messages, responseMessage, usermessage], redisClient, e.guid);
                 await turnTools.afterToolExecuted(functionName, functionResult);
               }
             } catch (err: any) {
@@ -1070,9 +1075,11 @@ export const CApiReply = async (
         }
 
         await redisClient.addAIChatHistoryBatch(e.guid, [
+          ...(!userMessagePersisted ? [usermessage] : []),
           responseMessage,
           ...toolMessages,
         ]);
+        userMessagePersisted = true;
 
         const guidanceMessages = await appendPendingGuidanceMessages(
           e.guid,
@@ -1159,6 +1166,7 @@ export const CApiReply = async (
     }
     const assistantMessage = res.choices?.[0]?.message;
     if (assistantMessage) {
+      if (!userMessagePersisted) await redisClient.addAIChatHistory(e.guid, usermessage);
       await redisClient.addAIChatHistory(e.guid, {
         ...assistantMessage,
         content: reply,

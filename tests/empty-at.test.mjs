@@ -28,7 +28,7 @@ mock.module(moduleUrl("redis"), { namedExports: { redis: {} } });
 mock.module(moduleUrl("s3"), { namedExports: { uploadImageToR2: async (u) => u, uploadMediaToR2: async () => "" } });
 mock.module(moduleUrl("api/tool-session-controller"), { namedExports: { toolSessionController: { getCurrentTool: async () => null, getPermission: async () => null } } });
 mock.module("@alemonjs/onebot", { namedExports: { API: class {} } });
-const realOpenAI = await import("openai");
+const { default: _realOpenAIDefault, ...realOpenAI } = await import("openai");
 mock.module("openai", { namedExports: { ...realOpenAI }, defaultExport: class {
   constructor() {
     this.chat = { completions: { create: async () => { state.modelCalls += 1; throw new Error("stop"); } } };

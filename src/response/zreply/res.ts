@@ -41,6 +41,7 @@ import {
 import { toolSessionController } from "@src/api/tool-session-controller";
 import { isEmptyAtBotMessage } from "@src/api/empty-at";
 import { MAX_TOOL_ROUNDS, createTurnToolState } from "@src/api/tool-search";
+import { bindOwnerPrivateToolCall, isOwnerPrivateEvent, toolCallForDisplay, redactSavedCredentialContext } from "@src/api/owner-private";
 
 const value = getAiChatConfigValue();
 
@@ -219,7 +220,7 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
     return;
   }
 
-  console.log("e.reply", e.reply);
+  if (!isOwnerPrivateEvent(e)) console.log("e.reply", e.reply);
 
   // 发消息的人是机器人自己, 则不处理
   if (e.UserId == e.bot.user_id) {
@@ -370,7 +371,7 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
     },
   );
 
-  console.log("处理后的消息内容:\n", rawMessage);
+  if (!isOwnerPrivateEvent(e)) console.log("处理后的消息内容:\n", rawMessage);
 
   const senderName = e.nickname || e.UserName || "用户";
   const usermessage = {
@@ -394,7 +395,7 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
     ],
   };
 
-  console.log("处理后的消息", JSON.stringify(usermessage, null, 2));
+  if (!isOwnerPrivateEvent(e)) console.log("处理后的消息", JSON.stringify(usermessage, null, 2));
   console.log("好感度列表", affections);
 
   try {
@@ -522,7 +523,8 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
       return;
     }
 
-    await redisClient.addAIChatHistory(e.guid, usermessage);
+    let userMessagePersisted = !isOwnerPrivateEvent(e);
+    if (userMessagePersisted) await redisClient.addAIChatHistory(e.guid, usermessage);
 
     // 检查是否有工具调用需要处理
     while (res.choices[0].message?.tool_calls?.length) {
@@ -545,9 +547,9 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
       // 先处理对话
       messages.push(responseMessage);
 
-      console.log("模型决定调用工具：", responseMessage.tool_calls);
+      console.log("模型决定调用工具：", responseMessage.tool_calls.map((call) => toolCallForDisplay(call, false)));
       const useToolsMessage = responseMessage.tool_calls.map((toolCall) => {
-        return `工具调用: ${toolCall.function.name}(${toolCall.function.arguments})`;
+        return toolCallForDisplay(toolCall, !isOwnerPrivateEvent(e));
       });
       const msgId = await message.send(
         format(
@@ -574,7 +576,7 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
             ? JSON.parse(toolCall.function.arguments)
             : {};
         } catch (err) {
-          console.error(`工具参数解析失败：${functionName}`, err);
+          console.error(`工具参数解析失败：${functionName}`, functionName === "ManageCredentials" ? "[参数已隐藏]" : err);
           functionArgs = {};
         }
 
@@ -640,6 +642,7 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
               functionArgs?.scope,
               e.IsMaster === true,
               groupFullAccess,
+              isOwnerPrivateEvent(e),
             );
             if (
               (await redisClient.getToolStatus(e.guid, functionName)) === "1"
@@ -655,6 +658,7 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
                 functionArgs.isMaster = e.IsMaster === true;
                 functionArgs.groupFullAccess = groupFullAccess;
               }
+              await bindOwnerPrivateToolCall(e, functionName, functionArgs, redisClient.redis);
               // 公共知识库仅映射工作目录；审核配置仍绑定真实会话。
               if (functionArgs && typeof functionArgs === "object") {
                 functionArgs.guid = toolGuid;
@@ -673,6 +677,7 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
                 e.IsMaster === true,
               );
               functionResult = await functionToCall(functionArgs);
+              await redactSavedCredentialContext(functionName, functionArgs, functionResult, [messages, responseMessage, usermessage], redisClient, e.guid);
               await turnTools.afterToolExecuted(functionName, functionResult);
             }
           } catch (err: any) {
@@ -722,9 +727,11 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
       }
 
       await redisClient.addAIChatHistoryBatch(e.guid, [
+        ...(!userMessagePersisted ? [usermessage] : []),
         responseMessage,
         ...toolMessages,
       ]);
+      userMessagePersisted = true;
 
       messages = redisClient.sanitizeChatMessages(messages);
 
@@ -808,6 +815,7 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
     }
 
     // 记录对话
+    if (!userMessagePersisted) await redisClient.addAIChatHistory(e.guid, usermessage);
     await redisClient.addAIChatHistory(e.guid, {
       ...res.choices?.[0].message,
       content: reply,

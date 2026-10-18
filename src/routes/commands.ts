@@ -1,5 +1,6 @@
 import { defineRouter, lazy } from "alemonjs";
 import { Regular } from "alemonjs/utils";
+import { HELP_COMMAND_PATTERN } from "@src/utils/help-menu";
 import {
   COMMAND_OUTPUT_CAPTURE,
   resolveCommandOutput,
@@ -30,7 +31,7 @@ export const commandChildren = [
   },
   // help
   {
-    regular: /(\/|#)(ai)?(指令|帮助|菜单|功能)$/i,
+    regular: HELP_COMMAND_PATTERN,
     handler: lazy(() => import("../response/help/res")),
   },
 

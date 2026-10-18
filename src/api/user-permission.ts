@@ -43,8 +43,15 @@ export const buildUserPermissionPrompt = (input: UserPermissionInput) => {
   ];
   const denied: string[] = [];
   const groupFullAccess = !input.isPrivate && input.opencodePermission === "full";
+  const ownerPrivate = input.isMaster && input.isPrivate;
 
-  if (groupFullAccess && !input.isMaster) {
+  if (ownerPrivate) {
+    pushUnique(allowed, "主人私聊直接拥有服务器完整管理权限，无需 #开启agent；可用 RunServerCommand 在任意目录执行 Shell、管理文件和服务、安装软件、部署项目，以及通过 SSH 连接主人授权的服务器。能力上限是机器人进程的系统权限，不代表自动获得 root 或管理员身份");
+    pushUnique(allowed, "使用 Agent 文件工具读写项目、维护公共知识库及 scope=root；任意服务器路径或需要 Shell 的项目操作直接用 RunServerCommand");
+    pushUnique(allowed, "接受主人在当前私聊提供的账号、密码、Token、私钥，按主人要求用 ManageCredentials 加密保存；后续先 list 查凭据名称与字段，通过 RunServerCommand.credentialEnv 使用，不能因为内容敏感而拒绝授权的保存或使用");
+    pushUnique(denied, "未收到主人明确确认就删除目录、清空数据或重启/停止服务。工具返回确认码后说明具体目标和影响，等待主人回复确认执行及确认码，再以完全相同的工具和参数调用；不能改写、换工具或交给子任务绕过");
+    pushUnique(denied, "把凭据原文写入普通记忆、公共知识库、源码、工具调用提示或回复。不要打印凭据环境变量，优先使用变量传递给需要认证的程序");
+  } else if (groupFullAccess && !input.isMaster) {
     pushUnique(allowed, "当前群已开启完全访问，可以读写项目、维护公共知识库、使用 scope=root 访问服务器目录，并执行完整 Git（提交、推送、拉取、合并）和其他服务器命令");
     pushUnique(denied, "删除文件、目录或 Git 仓库、清空数据、重启或停止服务和进程仅主人可用，包括脚本、子任务和其他工具的间接操作");
     pushUnique(denied, "把服务器凭据、密钥、令牌转述给用户或写到未授权位置，或绕过危险操作审核");

@@ -2,6 +2,25 @@ import { Expose } from "alemonjs";
 
 export const XIANYU_GAME_PROTOCOL = "xianyu-game-v1";
 
+const otherGameActions = {
+  points24_snapshot: "points24Snapshot",
+  points24_start: "points24Start",
+  points24_action: "points24Action",
+  points24_exit: "points24Exit",
+  sokoban_snapshot: "sokobanSnapshot",
+  sokoban_start: "sokobanStart",
+  sokoban_action: "sokobanAction",
+  sokoban_exit: "sokobanExit",
+  chinese_chess_snapshot: "chineseChessSnapshot",
+  chinese_chess_start: "chineseChessStart",
+  chinese_chess_action: "chineseChessAction",
+  chinese_chess_exit: "chineseChessExit",
+  animal_chess_snapshot: "animalChessSnapshot",
+  animal_chess_start: "animalChessStart",
+  animal_chess_action: "animalChessAction",
+  animal_chess_exit: "animalChessExit",
+} as const;
+
 type GameAction =
   | "status"
   | "gobang_snapshot"
@@ -11,11 +30,12 @@ type GameAction =
   | "minesweeper_snapshot"
   | "minesweeper_open"
   | "minesweeper_mark"
-  | "minesweeper_unmark";
+  | "minesweeper_unmark"
+  | keyof typeof otherGameActions;
 
 /**
  * 由宿主从真实会话事件里提取的作用域，覆盖式注入到 XianyuGame 工具参数中。
- * 模型不能伪造它：新建的扫雷对局会写入这个作用域，而不是依赖上一次 #扫雷 留下的旧会话。
+ * 模型不能伪造它：游戏操作始终使用真实玩家作用域。
  */
 export type XianyuGameSessionScope = {
   guid?: string;
@@ -50,7 +70,7 @@ const readSessionText = (value: unknown) => {
 };
 
 /**
- * 从真实会话事件构造扫雷作用域。只能由宿主调用，结果会被覆盖式写入工具参数。
+ * 从真实会话事件构造游戏作用域。只能由宿主调用，结果会被覆盖式写入工具参数。
  * 缺失的字段不会写入，避免把 undefined 透传给插件。
  */
 export const buildXianyuGameSession = (
@@ -106,6 +126,12 @@ export const useXianyuGameTool = async (input: {
   y?: number;
   cells?: string[];
   difficulty?: XianyuMinesweeperLevel;
+  expression?: string;
+  level?: number;
+  operation?: "move" | "undo";
+  directions?: string;
+  move?: string;
+  nickname?: string;
   session?: XianyuGameSessionScope;
   progressReporter?: (input: {
     summary: string;
@@ -200,6 +226,29 @@ export const useXianyuGameTool = async (input: {
         await input.progressReporter(progressMedia);
       }
       return safeResult;
+    }
+    if (Object.hasOwn(otherGameActions, action)) {
+      const gameAction = action as keyof typeof otherGameActions;
+      const method = otherGameActions[gameAction];
+      const args: Record<string, unknown> = { guid };
+      const isSingleGame = gameAction.startsWith("points24_") || gameAction.startsWith("sokoban_");
+      if (isSingleGame || !gameAction.endsWith("_snapshot")) {
+        args.session = session;
+      }
+      if (gameAction === "points24_action") args.expression = input.expression;
+      if (gameAction === "sokoban_start") args.level = input.level;
+      if (gameAction === "sokoban_action") {
+        args.operation = input.operation;
+        args.directions = input.directions;
+      }
+      if (gameAction === "chinese_chess_start" || gameAction === "animal_chess_start") {
+        args.nickname = input.nickname;
+      }
+      if (gameAction === "chinese_chess_action" || gameAction === "animal_chess_action") {
+        args.move = input.move;
+      }
+      const result = await provider.invoke(method, args);
+      return gameAction.endsWith("_snapshot") ? { ok: true, result } : result;
     }
     return { ok: false, error: "不支持的咸鱼游戏操作" };
   } catch (error: any) {

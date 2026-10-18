@@ -21,7 +21,10 @@ const server = createServer(async (req, res) => {
 });
 server.listen(0, "127.0.0.1");
 await once(server, "listening");
-after(() => { server.closeAllConnections(); server.close(); });
+after(async () => {
+  server.closeAllConnections();
+  await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+});
 const base = {
   host: `http://127.0.0.1:${server.address().port}/v1`,
   key: "test-speech-key", model: "gpt-4o-mini-tts", voice: "alloy", text: "你好",

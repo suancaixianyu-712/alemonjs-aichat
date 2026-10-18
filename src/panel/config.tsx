@@ -2,6 +2,7 @@ import React from "react";
 import { defineConfig } from "jsxp";
 import { existsSync, readdirSync } from "fs";
 import Help from "@src/image/conponent/help";
+import { getHelpView } from "@src/utils/help-menu";
 import AiConfig from "@src/image/conponent/AiConfig";
 import PanelPreview from "@src/image/conponent/PanelPreview";
 import redisClient from "@src/config";
@@ -302,7 +303,13 @@ export default defineConfig({
   statics,
   routes: {
     "/": {
-      component: <Help />,
+      element: Help,
+      propsCall: (ctx?: any) => {
+        const category = getPanelQueryText(ctx, "category");
+        const page = getPanelQueryText(ctx, "page");
+        const view = getHelpView(category ? `${category}${page ? ` ${page}` : ""}` : "");
+        return { view: view.kind === "error" ? { kind: "home" as const } : view };
+      },
     },
     "/panel": {
       element: PanelPreview,

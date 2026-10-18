@@ -31,11 +31,44 @@ const progressMedia = {
   final: false,
 };
 
+const otherGameActions = {
+  points24_snapshot: "points24Snapshot",
+  points24_start: "points24Start",
+  points24_action: "points24Action",
+  points24_exit: "points24Exit",
+  sokoban_snapshot: "sokobanSnapshot",
+  sokoban_start: "sokobanStart",
+  sokoban_action: "sokobanAction",
+  sokoban_exit: "sokobanExit",
+  chinese_chess_snapshot: "chineseChessSnapshot",
+  chinese_chess_start: "chineseChessStart",
+  chinese_chess_action: "chineseChessAction",
+  chinese_chess_exit: "chineseChessExit",
+  animal_chess_snapshot: "animalChessSnapshot",
+  animal_chess_start: "animalChessStart",
+  animal_chess_action: "animalChessAction",
+  animal_chess_exit: "animalChessExit",
+};
+const otherProviderActions = Object.fromEntries(
+  Object.values(otherGameActions).map((method) => [
+    method,
+    {
+      handler: (input) => {
+        invocations.push([method, input]);
+        return method.endsWith("Snapshot")
+          ? { game: method, guid: input.guid }
+          : { ok: true, method };
+      },
+    },
+  ]),
+);
+
 registerExpose("xianyu-plugin-test", [
   {
     name: XIANYU_GAME_PROTOCOL,
     description: "测试用咸鱼游戏服务",
     actions: {
+      ...otherProviderActions,
       status: {
         handler: () => ({ protocol: XIANYU_GAME_PROTOCOL, games: [] }),
       },
@@ -120,6 +153,55 @@ test("XianyuGame 工具声明了扫雷开始与结束动作", () => {
   assert.ok(tool.function.parameters.properties.session, "session 必须声明为系统注入参数");
   assert.ok(tool.function.description.includes("minesweeper_start"));
   assert.ok(tool.function.description.includes("minesweeper_exit"));
+});
+
+test("XianyuGame 声明四款游戏的完整操作与参数", () => {
+  const tool = tools.find((item) => item.function.name === "XianyuGame");
+  const params = tool.function.parameters.properties;
+  for (const action of Object.keys(otherGameActions)) {
+    assert.ok(params.action.enum.includes(action), `${action} 未暴露给模型`);
+  }
+  for (const key of ["expression", "level", "operation", "directions", "move", "nickname"]) {
+    assert.ok(params[key], `${key} 参数未声明`);
+  }
+});
+
+test("四款游戏的快照、开始、操作、退出均转发到同一玩家作用域", async () => {
+  const guid = "group-1";
+  const session = { guid, UserId: "user-1", IsPrivate: false };
+  const values = {
+    expression: "(8-2)*(7-3)",
+    level: 2,
+    operation: "move",
+    directions: "wasd",
+    move: "A0 B0",
+    nickname: "玩家一",
+  };
+  for (const [action, method] of Object.entries(otherGameActions)) {
+    invocations.length = 0;
+    const result = await useXianyuGameTool({ action, guid, session, ...values });
+    const expected = { guid };
+    if (!action.endsWith("_snapshot") || /^(points24|sokoban)_/.test(action)) {
+      expected.session = session;
+    }
+    if (action === "points24_action") expected.expression = values.expression;
+    if (action === "sokoban_start") expected.level = values.level;
+    if (action === "sokoban_action") {
+      expected.operation = values.operation;
+      expected.directions = values.directions;
+    }
+    if (action === "chinese_chess_start" || action === "animal_chess_start") {
+      expected.nickname = values.nickname;
+    }
+    if (action === "chinese_chess_action" || action === "animal_chess_action") {
+      expected.move = values.move;
+    }
+    assert.deepEqual(invocations, [[method, expected]], action);
+    assert.equal(result.ok, true, action);
+    if (action.endsWith("_snapshot")) {
+      assert.deepEqual(result.result, { game: method, guid }, action);
+    }
+  }
 });
 
 test("minesweeper_start 透传会话作用域与难度并转发进度图片", async () => {

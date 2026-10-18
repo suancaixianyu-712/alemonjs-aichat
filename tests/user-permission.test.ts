@@ -49,6 +49,15 @@ test("普通用户开启 agent 后仍然受审核限制", () => {
   assert.doesNotMatch(prompt, /任意目录执行 Shell/);
 });
 
+test("主人私聊无需 agent 即可管理服务器并保存和使用凭据", () => {
+  const prompt = buildUserPermissionPrompt(base({ isMaster: true, isPrivate: true }));
+  assert.match(prompt, /无需 #开启agent/);
+  assert.match(prompt, /ManageCredentials/);
+  assert.match(prompt, /credentialEnv/);
+  assert.match(prompt, /确认码/);
+  assert.doesNotMatch(prompt, /这些要等主人发送/);
+});
+
 test("OpenCode 自动审核会写明拒绝后不能换操作重试", () => {
   const prompt = buildUserPermissionPrompt(
     base({

@@ -8,6 +8,7 @@ import { PROCESS_INSTANCE_ID } from "./runtime-instance";
 import { buildUserPermissionPrompt } from "./user-permission";
 import { requestRapiCompletion } from "@src/response/zreply/rapi";
 import { createSubAgentDelivery } from "./sub-agent-delivery";
+import { bindOwnerPrivateToolCall } from "./owner-private";
 
 /**
  * 后台子agent：主 AI 通过 SubAgent 工具把耗时任务派给独立的后台会话执行，
@@ -67,6 +68,7 @@ const SUB_AGENT_RECORD_TTL_SECONDS = 48 * 60 * 60;
 /** 需要真实活动事件绑定，或只能向主对话输出多媒体的工具，不进入子agent工具集 */
 const SUB_AGENT_EXCLUDED_TOOLS = new Set([
   "SubAgent",
+  "ManageCredentials",
   "ExecuteAlemonCommand",
   "XianyuGame",
   "SubscribeNextUserMessage",
@@ -244,7 +246,7 @@ const dispatchSubAgentToolCall = async (
       return { ok: false, error: `工具被禁用：${functionName}` };
     }
     // 与主对话相同：完全访问群的非主人身份保留“仅主人”边界
-    const event = { guid: ctx.guid, IsMaster: ctx.isMaster };
+    const event = { guid: ctx.guid, IsMaster: ctx.isMaster, name: ctx.isPrivate ? "private.message.create" : "message.create", UserId: ctx.userID, Platform: ctx.platform, __background: true };
     const groupFullAccess = await assertGroupFullToolAccess(
       event,
       functionName,
@@ -256,6 +258,7 @@ const dispatchSubAgentToolCall = async (
       functionArgs?.scope,
       ctx.isMaster,
       groupFullAccess,
+      ctx.isPrivate,
     );
     if (functionArgs && typeof functionArgs === "object") {
       functionArgs.isMaster = ctx.isMaster;
@@ -270,6 +273,7 @@ const dispatchSubAgentToolCall = async (
         functionArgs.reviewGuid = ctx.guid;
       }
     }
+    await bindOwnerPrivateToolCall(event, functionName, functionArgs, redisClient.redis);
     removePublicIpFromToolArguments(functionName, functionArgs, ctx.isMaster);
     if (functionName === "ScheduleAITask" && functionArgs) {
       functionArgs.userID = ctx.userID;
