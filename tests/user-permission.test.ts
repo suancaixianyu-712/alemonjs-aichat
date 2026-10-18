@@ -55,6 +55,8 @@ test("主人私聊无需 agent 即可管理服务器并保存和使用凭据", (
   assert.match(prompt, /ManageCredentials/);
   assert.match(prompt, /credentialEnv/);
   assert.match(prompt, /不额外索要确认或确认码/);
+  assert.match(prompt, /私聊优先在当前对话直接完成任务/);
+  assert.match(prompt, /几次工具调用也不要默认派子agent/);
   assert.doesNotMatch(prompt, /回复确认执行|相同的工具和参数调用/);
   assert.doesNotMatch(prompt, /这些要等主人发送/);
 });

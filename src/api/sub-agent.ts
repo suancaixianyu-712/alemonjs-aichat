@@ -1,14 +1,16 @@
 import { randomUUID } from "node:crypto";
 import OpenAI from "openai";
-import { MessageDirect, Mention, Text } from "alemonjs";
+import { MessageDirect, Mention, Text, ResultCode } from "alemonjs";
 import redisClient from "@src/config";
 import { getAiChatConfigValue } from "@src/config/app";
 import { getOpenAIProxyFetch } from "./openaiProxy";
 import { PROCESS_INSTANCE_ID } from "./runtime-instance";
 import { buildUserPermissionPrompt } from "./user-permission";
 import { requestRapiCompletion } from "@src/response/zreply/rapi";
-import { createSubAgentDelivery } from "./sub-agent-delivery";
+import { createOriginOutput, createSubAgentDelivery, type DirectTarget } from "./sub-agent-delivery";
 import { bindOwnerPrivateToolCall } from "./owner-private";
+import { createSubAgentProgress, type SubAgentProgressEvent } from "./sub-agent-progress";
+import { getDeepThoughtReasoning } from "./deep-thought";
 
 /**
  * 后台子agent：主 AI 通过 SubAgent 工具把耗时任务派给独立的后台会话执行，
@@ -206,7 +208,7 @@ const buildSubAgentSystemPrompt = async (ctx: SubAgentContext) => {
             ? "manual"
             : "readonly",
   });
-  return `你是主AI派出的后台子agent，负责独立完成主AI交办的任务。你的执行过程不会展示给用户，最终报告会回传给主AI，并可能转告用户。
+  return `你是主AI派出的后台子agent，负责独立完成主AI交办的任务。系统会展示执行阶段、工具名与耗时，不展示工具参数或思考原文。最终报告会回传给主AI，并可能转告用户。
 
 执行要求：
 - 直接开始执行任务，不要问候、确认或闲聊
@@ -214,6 +216,7 @@ const buildSubAgentSystemPrompt = async (ctx: SubAgentContext) => {
 - 工具失败时可以调整方式重试，但同一失败不要重复超过2次；被权限或审核拒绝是最终拒绝，不要改写命令、换工具或拆步骤再试
 - 无法继续时，仍然输出报告：说明原因和已获得的部分结果
 - 完成任务后直接输出最终报告（不要再调用工具）：第一行给结论，然后列出关键细节（做了什么、改了哪些文件、发现了什么、还剩什么没做）
+- 你就是执行任务的子agent，不存在再次派后台的步骤。不能把“已派后台执行”当作最终报告，没有执行检查时不能声称已查过
 - 报告必须自包含、简洁、准确，包含必要的文件路径、命令和数据；禁止包含服务器凭据、密钥等敏感信息
 
 ${permissionPrompt}`;
@@ -236,8 +239,8 @@ const dispatchSubAgentToolCall = async (
     functionArgs = toolCall?.function?.arguments
       ? JSON.parse(toolCall.function.arguments)
       : {};
-  } catch (err) {
-    console.error(`子agent工具参数解析失败：${functionName}`, err);
+  } catch {
+    console.error("子agent工具参数解析失败（参数已隐藏）");
     functionArgs = {};
   }
 
@@ -294,7 +297,7 @@ const dispatchSubAgentToolCall = async (
     }
     return await functionToCall(functionArgs);
   } catch (err: any) {
-    console.error(`子agent工具执行失败：${functionName}`, err);
+    console.error("子agent工具执行失败（参数与异常正文已隐藏）");
     return {
       ok: false,
       error: err?.message || String(err) || "工具执行失败",
@@ -310,6 +313,19 @@ const buildTaskUserContent = (record: SubAgentRecord) => {
   return `主AI交办的任务：\n${task}${context}`;
 };
 
+const sendSubAgentDirect = async (target: DirectTarget, payload: any[]) => {
+  const direct = MessageDirect.create();
+  const result = target.isPrivate
+    ? await direct.sendToUser({ OpenID: target.userID, format: payload })
+    : await direct.sendToChannel({
+    SpaceId: String(target.spaceId || ""), format: payload,
+    ...(target.replyId ? { replyId: target.replyId } : {}),
+  });
+  const results = Array.isArray(result) ? result : [result];
+  if (!results.some((item) => item?.code === ResultCode.Ok)) throw new Error("后台任务消息发送失败");
+  return result;
+};
+
 /** 结果回传：完成时防抖合并后由主 AI 起一轮回复；失败/取消只发短通知 */
 const subAgentDelivery = createSubAgentDelivery({
   startTurn: async (event, output) => {
@@ -320,17 +336,7 @@ const subAgentDelivery = createSubAgentDelivery({
   addGuidance: (guid, data, platform) =>
     redisClient.addAIGuidanceMessage(guid, data, platform),
   addHistory: (guid, message) => redisClient.addAIChatHistory(guid, message),
-  sendDirect: async (target, payload) => {
-    const direct = MessageDirect.create();
-    if (target.isPrivate) {
-      return direct.sendToUser({ OpenID: target.userID, format: payload });
-    }
-    return direct.sendToChannel({
-      SpaceId: String(target.spaceId || ""),
-      format: payload,
-      ...(target.replyId ? { replyId: target.replyId } : {}),
-    });
-  },
+  sendDirect: sendSubAgentDirect,
   text: (value) => Text(value),
   mention: (userID) => Mention(userID),
 });
@@ -351,14 +357,30 @@ const runSubAgentLoop = async (
   ctx: SubAgentContext,
 ) => {
   let settled = false;
+  const output = createOriginOutput(record, { sendDirect: sendSubAgentDirect, text: Text, mention: Mention });
+  const progress = createSubAgentProgress({
+    id: record.id,
+    notify: record.notify,
+    send: (text) => output.sendText(text),
+    log: (text) => console.info(text),
+    onActivity: (text) => pushActivity(record, text),
+  });
+  const reportProgress = async (event: SubAgentProgressEvent) => {
+    progress.emit(event);
+    await saveRecord(record).catch(() => undefined);
+  };
+  progress.emit({ type: "started" });
   const finish = async (patch: Partial<SubAgentRecord>) => {
     if (settled) return;
     settled = true;
     Object.assign(record, patch);
     record.finishedAt = Date.now();
     liveRuns.delete(record.id);
+    progress.emit({ type: record.status === "running" ? "failed" : record.status });
     await saveRecord(record).catch(() => undefined);
-    await deliverSubAgentResult(record);
+    await progress.finish(record.status === "running" ? "failed" : record.status);
+    // 进度层已发失败/取消状态，回传层继续保留记录，避免重复通知。
+    await deliverSubAgentResult({ ...record, notify: record.status === "completed" && record.notify });
   };
 
   try {
@@ -406,7 +428,9 @@ const runSubAgentLoop = async (
       { role: "system", content: await buildSubAgentSystemPrompt(ctx) },
       { role: "user", content: buildTaskUserContent(record) },
     ];
+    const deepThoughtEffort = await redisClient.getDeepThoughtEffort(ctx.guid);
     let nudged = false;
+    let executedTools = 0;
 
     for (let round = 1; round <= SUB_AGENT_MAX_ROUNDS; round += 1) {
       if (signal?.aborted) {
@@ -419,7 +443,8 @@ const runSubAgentLoop = async (
       }
 
       record.rounds = round;
-      const params: any = { model: aiConfig.model, messages };
+      await reportProgress({ type: "thinking", round });
+      const params: any = { model: aiConfig.model, messages, ...getDeepThoughtReasoning({ config: aiConfig, deepThoughtEffort }) };
       if (toolDefs.length) {
         params.tools = toolDefs;
         params.tool_choice = "auto";
@@ -448,25 +473,28 @@ const runSubAgentLoop = async (
       if (Array.isArray(choice.tool_calls) && choice.tool_calls.length) {
         assistantMessage.tool_calls = choice.tool_calls;
       }
+      if (Array.isArray(choice._rapiOutput)) assistantMessage._rapiOutput = choice._rapiOutput;
       messages.push(assistantMessage);
 
       if (!assistantMessage.tool_calls) {
         const report = String(assistantMessage.content || "").trim();
-        if (!report && !nudged) {
+        const noReport = !report || /^(?:\[\]|NO_ACTION)$/i.test(report);
+        const onlyAcknowledged = executedTools === 0 && /(?:已派|已交给|已转交|已安排|已提交).{0,12}(?:后台|子agent|子任务)/i.test(report);
+        if ((noReport || onlyAcknowledged) && !nudged) {
           nudged = true;
           messages.push({
             role: "user",
             content:
-              "请直接输出最终报告：第一行结论，然后列出关键细节。不要再调用工具。",
+              executedTools === 0 ? "你就是负责执行任务的子agent，不能再次派后台或只回复开始。现在直接使用工具执行原任务，完成后报告实际结果；无法执行时明确说明原因。" : "请直接输出最终报告：第一行结论，然后列出关键细节。不要再调用工具。",
           });
           continue;
         }
         await finish({
-          status: report ? "completed" : "failed",
-          result: report
+          status: !noReport && !onlyAcknowledged ? "completed" : "failed",
+          result: !noReport && !onlyAcknowledged
             ? truncateText(report, SUB_AGENT_RESULT_MAX)
             : undefined,
-          error: report ? undefined : "子agent未生成报告",
+          error: onlyAcknowledged ? "子agent未执行任务，仅返回后台派遣话术" : noReport ? "子agent未生成报告" : undefined,
         });
         return;
       }
@@ -474,12 +502,13 @@ const runSubAgentLoop = async (
       for (const toolCall of assistantMessage.tool_calls) {
         if (signal?.aborted) break;
         const name = String(toolCall?.function?.name || "未知工具");
-        const argsDigest = truncateText(
-          String(toolCall?.function?.arguments || "").replace(/\s+/g, " "),
-          120,
-        );
-        pushActivity(record, `[第${round}轮] ${name}(${argsDigest})`);
+        const displayName = toolDefs.some((tool) => tool.function?.name === name) ? name : "未知工具";
+        await reportProgress({ type: "tool_start", round, tool: displayName });
+        const toolStartedAt = Date.now();
         const result = await dispatchSubAgentToolCall(toolCall, ctx);
+        executedTools += 1;
+        await reportProgress({ type: "tool_finish", round, tool: displayName, durationMs: Date.now() - toolStartedAt,
+          success: result?.ok !== false && result?.success !== false && result?.allowed !== false && result?.permissionDenied !== true && !result?.error });
         const content = truncateText(
           JSON.stringify(result ?? { ok: true, result: null }),
           SUB_AGENT_TOOL_CONTENT_MAX,
@@ -504,7 +533,6 @@ const runSubAgentLoop = async (
       await finish({ status: "cancelled", error: "任务已被手动取消" });
       return;
     }
-    console.error(`子agent任务执行失败：${record.id}`, error);
     await finish({
       status: "failed",
       error: error?.message || String(error) || "任务执行失败",
@@ -727,7 +755,7 @@ export const runSubAgentTool = async (args: {
       success: true,
       taskID: record.id,
       notify: record.notify,
-      message: `子agent已启动（taskID:${record.id}）。它会在后台自主执行任务，完成后结果会自动回传到本对话${record.notify ? "并通知会话" : ""}。期间可用 action=status 查看、action=cancel 随时关闭。你现在可以继续回复用户。`,
+      message: `子agent已启动（taskID:${record.id}）。${record.notify ? "执行进度会自动发送到本对话，长时间等待也会报告状态。" : "执行进度只记录终端日志。"}完成结果会主动送达，无需用户追问。可用 action=status 查看、action=cancel 随时关闭。你现在可以继续回复用户。`,
     };
   } catch (error: any) {
     return { success: false, error: error?.message || String(error) };

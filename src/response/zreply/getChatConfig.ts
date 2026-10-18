@@ -7,9 +7,6 @@ import { Events } from "alemonjs";
 import { emojiMap } from "@src/emoji";
 import { uploadImageToR2 } from "@src/s3";
 import { shouldDisableLocalSearchTool } from "./provider-tools";
-import {
-  getDeepThoughtReasoning,
-} from "@src/api/deep-thought";
 export { getDeepThoughtReasoning } from "@src/api/deep-thought";
 
 /**
@@ -352,7 +349,7 @@ export const getChatConfig = async (
   const heartbeatPrompt = (e as any).heartbeat
     ? `
   ## AI 心跳
-  这是一次定时心跳，不是用户刚刚发来的普通消息。你可以自主检查当前会话和用户的长期状态，选择发送一条主动消息、调用合适的工具完成有价值的事情，或在确实没有必要行动时只输出 NO_ACTION。不要为了完成心跳而强行打扰用户。需要主动发送时，直接按正常回复格式输出内容，系统会主动投递给当前用户或群聊。需要执行耗时或要多步工具调用的任务时，优先用 SubAgent 派后台子agent执行，派遣后即可结束本轮，报告会写回对话供下次处理。
+  这是一次定时心跳，不是用户刚刚发来的普通消息。你可以自主检查当前会话和用户的长期状态，选择发送一条主动消息、调用合适的工具完成有价值的事情，或在确实没有必要行动时只输出 NO_ACTION。不要为了完成心跳而强行打扰用户。需要主动发送时，直接按正常回复格式输出内容，系统会主动投递给当前用户或群聊。私聊优先直接完成操作，仅长时间或明确需要后台运行的任务再用 SubAgent，完成后结果会自动送达。
   `
     : "";
   let followupPrompt = "";
@@ -420,10 +417,13 @@ export const getChatConfig = async (
   ## AlemonJS 框架指令（高优先级）
   用户要求查看/修改配置、切换模型、开关功能等需要帮忙时，必须调用 ExecuteAlemonCommand 工具来操作
   ## 后台子agent（高优先级）
-  凡是"干活"类的任务——需要检索/读写文件、执行命令、编码调试、克隆仓库、批量处理、多步分析，或预计要连续调用多次工具——必须调用 SubAgent(action=spawn) 派后台子agent执行，不要自己在对话里连续调用工具把对话占住。
+  ${e.name === "private.message.create" || (e as any).Name === "private.message.create"
+    ? "当前是私聊，优先在当前对话直接使用工具并及时回复。查看服务器状态、SSH 连接、读取目录或少量文件、解释代码等，即使需要连续几次工具调用，也直接完成，不要一律派子agent。只有用户明确要求后台执行，或任务确实长时间运行、批量处理、需要独立并行执行时，才用 SubAgent。"
+    : "群聊中的长时间任务、批量处理或独立并行工作可以使用 SubAgent；快速操作直接调用对应工具，不必为了调用多次工具而一律派后台。"}
   - spawn 的 task 写清目标、范围、期望产出和验收标准；任务需要的背景信息（相关路径、之前的结论、用户的特殊要求）写进 context，子agent看不到当前聊天记录
+  - 默认保持 notify=true，让用户自动收到进度；仅在用户明确要求静默执行时才设为 false
   - 派遣成功后立即按正常格式回复用户"已派后台执行"，不要等待任务完成，更不要自己再调用工具做同一件事
-  - 子agent完成后系统会把报告自动写回对话；收到【后台子任务报告】后，基于报告向用户转达结果；报告显示失败或权限拒绝时，不要原样重复派遣
+  - 子agent完成后系统会自动回传报告；收到内部后台任务结果时必须主动转达实际结果，不能输出 []、NO_ACTION、只重复“已派后台执行”或等待用户追问。报告显示失败或权限拒绝时，不要原样重复派遣
   - 用户询问进度时用 action=status 查看并转告；用户要求中止、放弃任务时立即 action=cancel
   - 例外：单次快速工具调用就能完成的（看图、画图、查配置、搜网页、查记忆等），直接调用对应工具，不要绕道子agent
   ## 下一条发言订阅（高优先级）

@@ -106,6 +106,19 @@ test("内部措辞被去除：任务ID、整理给主对话即可、子任务报
   assert.match(msg.content, /结果 OK/);
 });
 
+test("完成回传后主 AI 沉默或报错时，结果仍自动送达，不需要用户追问", async () => {
+  for (const startTurn of [async () => undefined, async () => { throw new Error("simulated failure"); }]) {
+    const { deps, log } = makeDeps({ startTurn });
+    await delivery.createSubAgentDelivery(deps).deliver(privateRecord({ result: "检查完成，磁盘剩余 42 GB。" }));
+    assert.equal(log.sent.length, 1);
+    assert.match(log.sent[0].payload.map((item) => item.value).join(""), /磁盘剩余 42 GB/);
+    assert.deepEqual(log.sent[0].target, { isPrivate: true, userID: "u2" });
+  }
+  const { deps, log } = makeDeps({ startTurn: async (_event, output) => output.send([{ type: "Text", value: "已派后台执行" }]) });
+  await delivery.createSubAgentDelivery(deps).deliver(privateRecord({ result: "检查完成，磁盘剩余 42 GB。" }));
+  assert.match(log.sent.at(-1).payload.map((item) => item.value).join(""), /磁盘剩余 42 GB/);
+});
+
 test("报告写入历史前截断到 ≤2000 字符（含截断标记），完整结果仍在记录里", () => {
   const full = "x".repeat(5000);
   const record = groupRecord({ result: full });
@@ -125,6 +138,15 @@ test("运行中：写入 guidance（system 角色），不额外起一轮", asyn
   assert.equal(log.guidance.length, 1);
   assert.equal(log.guidance[0].guid, "group-A");
   assert.equal(log.guidance[0].data.capiMessage.role, "system");
+});
+
+test("私聊主回合忙碌时完成结果仍立即送达，并标记已投递避免重复", async () => {
+  const { deps, log } = makeDeps({ getActiveTurn: async () => ({ userID: "u2" }) });
+  await delivery.createSubAgentDelivery(deps).deliver(privateRecord({ result: "系统检查完成，负载正常。" }));
+  assert.equal(log.turns.length, 0);
+  assert.equal(log.sent.length, 1);
+  assert.match(log.sent[0].payload.map((item) => item.value).join(""), /系统检查完成/);
+  assert.match(log.guidance[0].data.capiMessage.content, /已直接送达用户/);
 });
 
 test("失败 / 取消：notify 只发一行短通知，不起主 AI 回合", async () => {

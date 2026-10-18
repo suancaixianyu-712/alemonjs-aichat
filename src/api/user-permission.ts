@@ -44,6 +44,9 @@ export const buildUserPermissionPrompt = (input: UserPermissionInput) => {
   const denied: string[] = [];
   const groupFullAccess = !input.isPrivate && input.opencodePermission === "full";
   const ownerPrivate = input.isMaster && input.isPrivate;
+  if (input.isPrivate) {
+    pushUnique(allowed, "私聊优先在当前对话直接完成任务并及时回复。查看服务器状态、SSH 连接、读目录和少量文件，即使需要几次工具调用也不要默认派子agent；仅用户指定后台或任务确实长时间运行、批量处理、需要独立并行时才派遣");
+  }
 
   if (ownerPrivate) {
     pushUnique(allowed, "主人私聊直接拥有服务器完整管理权限，无需 #开启agent；可用 RunServerCommand 在任意目录执行 Shell、管理文件和服务、安装软件、部署项目，以及通过 SSH 连接主人授权的服务器。能力上限是机器人进程的系统权限，不代表自动获得 root 或管理员身份");

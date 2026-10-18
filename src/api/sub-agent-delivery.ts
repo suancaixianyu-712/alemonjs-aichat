@@ -70,6 +70,7 @@ export const buildSubAgentReportMessage = (
       "[内部消息·后台任务结果] 以下是你之前派出的后台任务的执行结果，不是用户发言。",
       "请直接用简短自然的话把结果总结给发起这个任务的用户。",
       "回复里不要提及任务编号、子agent、内部报告或转交流程等内部措辞，只说结果本身。",
+      "这是需要主动送达的完成结果，必须回复实际结论，不能输出 []、NO_ACTION 或只重复已派后台执行，也不能等待用户追问。",
       "",
       content,
     ].join("\n"),
@@ -95,6 +96,7 @@ export const createSubAgentTurnEvent = (origin: SubAgentOrigin, systemMessage: {
   atBot: false,
   regexTriggered: true,
   subAgentReport: true,
+  __allowedToolNames: [],
   __internalSystemMessage: systemMessage,
   msg: "后台任务结果",
   MessageText: "后台任务结果",
@@ -121,6 +123,13 @@ export type SubAgentDeliveryDeps = {
 
 const originKey = (o: SubAgentOrigin) =>
   [o.platform || "default", o.guid, o.isPrivate ? "p" : o.spaceId || "", o.userID].join(":");
+
+const outputText = (payload: any): string => {
+  if (typeof payload === "string") return payload;
+  if (Array.isArray(payload)) return payload.map(outputText).join("\n");
+  if (!payload || typeof payload !== "object") return "";
+  return [payload.text, payload.value, payload.content, payload.format].map(outputText).filter(Boolean).join("\n");
+};
 
 /** 回到发起会话：群聊首条消息引用原消息并 @ 发起人，私聊直接发给发起人 */
 export const createOriginOutput = (origin: SubAgentOrigin, deps: Pick<SubAgentDeliveryDeps, "sendDirect" | "mention" | "text">) => {
@@ -159,25 +168,49 @@ export const createSubAgentDelivery = (deps: SubAgentDeliveryDeps) => {
     const records = batch.records;
     const origin = records[0];
     const systemMessage = buildSubAgentReportMessage(records, deps.sanitize);
-    const toGuidance = () =>
+    const toGuidance = (alreadyDelivered = false) =>
       deps.addGuidance(
         origin.guid,
-        { guidance: true, capiMessage: systemMessage, createdAt: Date.now(), previewText: "后台任务结果" },
+        { guidance: true, capiMessage: alreadyDelivered ? { ...systemMessage, content: `${systemMessage.content}\n这份结果已直接送达用户，本轮只在有新信息时补充，不要重复发送相同结果。` } : systemMessage, createdAt: Date.now(), previewText: "后台任务结果" },
         origin.platform,
       );
+    const output = createOriginOutput(origin, deps);
+    let sent = false;
+    const send = async (payload: any) => {
+      await output.send(payload);
+      const text = outputText(payload).trim();
+      if (text && !/^(?:\[\]|NO_ACTION)$/i.test(text) &&
+          !/(?:已派|已交给|已转交|已安排|已提交).{0,12}(?:后台|子agent|子任务)/i.test(text)) sent = true;
+    };
+    const fallback = async () => {
+      if (sent) return;
+      const body = records.map((record) => (deps.sanitize ?? ((text: string) => text))(
+        stripInternalPhrases(record.result || "任务已完成"), record.isMaster,
+      )).join("\n\n");
+      const content = truncateReport(body);
+      await send([deps.text(content)]);
+      sent = true;
+      await deps.addHistory(origin.guid, { role: "assistant", content });
+    };
     try {
       if (await deps.getActiveTurn(origin.guid, origin.platform)) {
-        await toGuidance();
+        if (origin.isPrivate) await fallback();
+        await toGuidance(origin.isPrivate);
         return;
       }
       const result = await deps.startTurn(
         createSubAgentTurnEvent(origin, systemMessage),
-        createOriginOutput(origin, deps),
+        { ...output, send, sendText: (text: string) => send([deps.text(text)]) },
       );
       // 空闲判断后、抢锁前有用户消息开了新回合：并入该回合，不另起一轮
-      if (result && (result as any).busy) await toGuidance();
-    } catch (error) {
-      console.error("子agent结果回传主对话失败：", error);
+      if (result && (result as any).busy) {
+        if (origin.isPrivate) await fallback();
+        await toGuidance(origin.isPrivate);
+      }
+      else await fallback();
+    } catch {
+      console.error("子agent结果回传主对话失败，尝试直接送达结果");
+      await fallback().catch(() => console.error("子agent完成结果送达失败"));
     }
   };
 
