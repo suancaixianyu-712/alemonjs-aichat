@@ -2,6 +2,7 @@
  * aichat 内嵌 DeepSeek 官方朗读：合成 → 缓存文件 → 上传 R2 → SpeechToolResult。
  * 与 GenerateSpeech / MiniMaxVoice 并列，失败不降级 OpenAI。
  */
+import { randomUUID } from "node:crypto";
 import { mkdtemp, readFile, unlink, rmdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -103,9 +104,9 @@ export async function dsTtsSpeak(options: {
     };
   }
 
-  const hit = await readCache(cacheDirPath(), result.id);
-  let audioPath = hit?.path;
-  let ext = result.ext;
+  const hit = await readCache(cacheDirPath(), result.id, [result.ext]);
+  const audioPath = hit?.path;
+  const ext = result.ext;
   if (!audioPath) {
     // 缓存未写时兜底：不应常态发生（默认 cacheEnabled）
     return {
@@ -115,15 +116,16 @@ export async function dsTtsSpeak(options: {
     };
   }
 
+  // 唯一对象路径避免 CDN 复用旧音频，不依赖查询参数是否参与缓存键。
+  const fileName = `ds-tts-${result.id}-${randomUUID()}.${ext}`;
   let directory = "";
   try {
     const bytes = await readFile(audioPath);
     directory = await mkdtemp(join(tmpdir(), "aichat-ds-tts-"));
-    const fileName = `ds-tts.${ext === "mp3" || ext === "opus" ? ext : "wav"}`;
     const file = join(directory, fileName);
     await writeFile(file, bytes);
     const { uploadMediaToR2 } = await import("@src/s3");
-    const url = await uploadMediaToR2(file);
+    const url = await uploadMediaToR2(file, fileName);
     return {
       ok: true,
       type: "audio",
@@ -142,7 +144,7 @@ export async function dsTtsSpeak(options: {
     };
   } finally {
     if (directory) {
-      const file = join(directory, `ds-tts.${ext === "mp3" || ext === "opus" ? ext : "wav"}`);
+      const file = join(directory, fileName);
       await unlink(file).catch(() => undefined);
       await rmdir(directory).catch(() => undefined);
     }

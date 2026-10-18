@@ -411,7 +411,8 @@ export class TtsEngine {
     const voice = request.voice !== undefined && request.voice !== '' ? request.voice : cfg.voice
     const format: DsTtsFormat = request.format ?? cfg.format
     const regenerate = request.regenerate === true
-    const id = cacheId([voice, format, text])
+    // 旧缓存生成前未切换账号音色，不能继续按请求音色信任它们。
+    const id = cacheId(['voice-v2', voice, format, text])
     const dir = cacheDirPath()
 
     void this.maybePrune(cfg, dir)
@@ -469,6 +470,14 @@ export class TtsEngine {
         if (!tokenResult.ok) return this.toError(tokenResult)
         const token = tokenResult.token
 
+        // DS 合成使用账号级音色；切换必须与合成一起串行，避免并发请求串音色。
+        const selected = await dsSetVoice(token, voice, {
+          signal,
+          timeoutMs: Math.min(20000, Math.max(1, deadline - Date.now())),
+        })
+        if (!selected.ok) return this.toError(selected)
+        await this.deps.config.setRuntime({ voicesCache: null })
+
         const attempt = async (mode: DsTtsResolvedMode): Promise<AttemptOutcome> =>
           await this.runAttempt(
             client,
@@ -492,6 +501,15 @@ export class TtsEngine {
         if (!outcome.ok) return this.toError(outcome)
         if (outcome.sessionId !== live.chatSessionId) {
           await this.deps.config.setRuntime({ chatSessionId: outcome.sessionId })
+        }
+
+        if (outcome.audio.voiceId !== '' && outcome.audio.voiceId !== voice) {
+          return {
+            ok: false,
+            code: 'SYNTH_FAILED',
+            error: 'DS 返回的音色与请求不一致，请重试',
+            detail: `请求音色 ${voice}，实际音色 ${outcome.audio.voiceId}`,
+          } satisfies SynthesizeResult
         }
 
         // 内容校验：能拿到正文时，确认要朗读的确实是预期文本（否则可能读错消息）；
