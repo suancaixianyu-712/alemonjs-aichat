@@ -7,6 +7,7 @@ import {
 } from "@src/response/zreply/getChatConfig";
 import { toolSessionController } from "@src/api/tool-session-controller";
 import { getLockedAIMessage } from "@src/api/ai-lock";
+import { collectFileMedia } from "@src/api/fileMessage";
 
 const selects = onSelects(["message.create", "private.message.create"]);
 
@@ -119,7 +120,9 @@ const canPassReplyTriggerGate = async (event: any) => {
   }
 
   if (!event.msg) {
-    return false;
+    if (!collectFileMedia(event).length || (await redisClient.getFileMessageSwitch(event.guid)) === "0") {
+      return false;
+    }
   }
 
   const isGroup = event.name !== "private.message.create";

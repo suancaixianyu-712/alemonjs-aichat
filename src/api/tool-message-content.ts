@@ -1,7 +1,7 @@
 import path from "node:path";
 import mime from "mime-types";
 import {
-  extractFilesFromReplySegments,
+  collectFileMedia,
   formatFileBlock,
   resolveFileContent,
   type FileMediaItem,
@@ -23,8 +23,9 @@ export type ToolMessageContent = {
 
 const mediaItems = (event: any): FileMediaItem[] =>
   [
-    ...(Array.isArray(event.MessageMedia) ? event.MessageMedia : []),
-    ...extractFilesFromReplySegments(event.reply?.message),
+    ...(Array.isArray(event.MessageMedia) ? event.MessageMedia : []).filter((item: any) =>
+      ["image", "sticker", "animation"].includes(String(item?.Type).toLowerCase())),
+    ...collectFileMedia(event),
   ].filter((item) => item && typeof item === "object");
 
 export const hasToolMessageAttachments = (event: any) =>

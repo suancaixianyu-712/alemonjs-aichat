@@ -36,7 +36,7 @@ export default onMiddleware(selects, async (event, next) => {
   // 新增字段
   event["Xianyu"] = true; // 默认继续执行后续的处理函数
   event["user_id"] = event.UserId; // 用户QQ号
-  event["msg"] = event.MessageText; // 消息内容
+  event["msg"] = String(event.MessageText || ""); // 纯附件事件也保证文本字段可用
   event["guid"] = event.ChannelId ?? event.UserId; // 群号或用户QQ号
   event["uidkey"] = `${event["guid"]}:${event.UserName}(${event.UserId})`; // 唯一标识
   event["nickname"] =

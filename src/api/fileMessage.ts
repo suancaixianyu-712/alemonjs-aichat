@@ -3,7 +3,8 @@ import os from "os";
 import path from "path";
 import { API } from "@alemonjs/onebot";
 import { useClient } from "alemonjs";
-import { uploadMediaToR2 } from "@src/s3";
+import { uploadImageToR2, uploadMediaToR2 } from "@src/s3";
+import { unwrapOneBotData } from "@src/api/onebot-result";
 
 /** 文件大小上限（超过则拒绝下载处理） */
 const MAX_FILE_SIZE = 50 * 1024 * 1024;
@@ -48,6 +49,23 @@ export type FileMediaItem = {
   FileId?: string;
   FileName?: string;
   FileSize?: number;
+  MimeType?: string;
+};
+
+/** 框架媒体为准，兼容旧适配器消息段及引用附件。 */
+export const collectFileMedia = (event: any): FileMediaItem[] => {
+  const candidates = [
+    ...(Array.isArray(event.MessageMedia) ? event.MessageMedia : []),
+    ...extractFilesFromReplySegments(event.value?.message),
+    ...extractFilesFromReplySegments(event.reply?.message),
+  ].filter((item) => item && ["file", "audio", "record", "video"].includes(String(item.Type).toLowerCase()));
+  const seen = new Set<string>();
+  return candidates.filter((item) => {
+    const key = item.FileId ? `id:${item.FileId}` : item.Url ? `url:${item.Url}` : `name:${item.FileName}:${item.FileSize}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 };
 
 export const formatFileSize = (size?: number): string => {
@@ -99,10 +117,18 @@ const fetchOneBotFile = async (
   if (e?.Platform !== "onebot") return null;
   try {
     const [client] = useClient(e, API);
-    const data = (await client.send({
+    let data = unwrapOneBotData<any>(await client.send({
       action: "get_file",
       params: { file_id: fileId },
-    })) as any;
+    }).catch(() => null));
+    if (!data?.file && !data?.base64 && !data?.url) {
+      data = unwrapOneBotData<any>(await client.send({
+        action: e.ChannelId ? "get_group_file_url" : "get_private_file_url",
+        params: e.ChannelId
+          ? { group_id: Number(e.ChannelId), file_id: fileId, busid: e.value?.file?.busid }
+          : { user_id: Number(e.UserId), file_id: fileId },
+      }));
+    }
     if (!data) return null;
     return {
       filePath: typeof data?.file === "string" ? data.file : undefined,
@@ -110,14 +136,39 @@ const fetchOneBotFile = async (
       url: typeof data?.url === "string" ? data.url : undefined,
     };
   } catch (error) {
-    console.error("[fileMessage] get_file 失败:", error);
+    console.error("[fileMessage] 获取文件失败");
     return null;
   }
 };
 
-/**
- * 获取文件 Buffer，返回 null 表示无法获取
- */
+const downloadFile = async (url: string): Promise<Buffer | null> => {
+  const response = await fetch(url, { signal: AbortSignal.timeout(30_000) });
+  if (!response.ok || Number(response.headers.get("content-length")) > MAX_FILE_SIZE) {
+    await response.body?.cancel();
+    return null;
+  }
+  if (!response.body) return null;
+  const reader = response.body.getReader();
+  const chunks: Buffer[] = [];
+  let size = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.length;
+      if (size > MAX_FILE_SIZE) {
+        await reader.cancel();
+        return null;
+      }
+      chunks.push(Buffer.from(value));
+    }
+    return Buffer.concat(chunks, size);
+  } finally {
+    reader.releaseLock();
+  }
+};
+
+/** 获取文件 Buffer，返回 null 表示无法获取。 */
 const fetchFileBuffer = async (
   item: FileMediaItem,
   e: any,
@@ -125,17 +176,10 @@ const fetchFileBuffer = async (
   // 1. 直接 URL 下载
   if (item.Url && /^https?:\/\//.test(item.Url)) {
     try {
-      const response = await fetch(item.Url);
-      if (response.ok) {
-        const buffer = Buffer.from(await response.arrayBuffer());
-        if (buffer.length <= MAX_FILE_SIZE) return buffer;
-        console.error(
-          `[fileMessage] 文件过大(${formatFileSize(buffer.length)}): ${item.FileName}`,
-        );
-        return null;
-      }
+      const buffer = await downloadFile(item.Url);
+      if (buffer) return buffer;
     } catch (error) {
-      console.error("[fileMessage] URL 下载失败:", error);
+      console.error("[fileMessage] URL 下载失败");
     }
   }
 
@@ -148,21 +192,19 @@ const fetchFileBuffer = async (
     }
     if (oneBotFile?.filePath) {
       try {
+        if ((await fs.stat(oneBotFile.filePath)).size > MAX_FILE_SIZE) return null;
         const buffer = await fs.readFile(oneBotFile.filePath);
         if (buffer.length <= MAX_FILE_SIZE) return buffer;
       } catch (error) {
-        console.error("[fileMessage] 读取本地文件失败:", error);
+        console.error("[fileMessage] 读取本地文件失败");
       }
     }
     if (oneBotFile?.url && /^https?:\/\//.test(oneBotFile.url)) {
       try {
-        const response = await fetch(oneBotFile.url);
-        if (response.ok) {
-          const buffer = Buffer.from(await response.arrayBuffer());
-          if (buffer.length <= MAX_FILE_SIZE) return buffer;
-        }
+        const buffer = await downloadFile(oneBotFile.url);
+        if (buffer) return buffer;
       } catch (error) {
-        console.error("[fileMessage] get_file url 下载失败:", error);
+        console.error("[fileMessage] get_file url 下载失败");
       }
     }
   }
@@ -223,12 +265,19 @@ export const resolveFileContent = async (
   };
 
   try {
-    // 图片：交给现有图片管线（复用 e.img 的处理方式）
-    if (isImageFile(fileName)) {
+    if (fileSize && fileSize > MAX_FILE_SIZE) {
+      return { ...baseInfo, error: "文件超过 50 MB 处理上限" };
+    }
+    // 图片文件也必须解析 FileId；不能只告诉模型“已提供图片”。
+    if (isImageFile(fileName) || item.MimeType?.startsWith("image/")) {
+      const buffer = await fetchFileBuffer(item, e);
+      if (!buffer) return { ...baseInfo, error: "无法获取图片文件内容" };
+      const source = `data:${item.MimeType || "image/" + (getExtension(fileName) === "jpg" ? "jpeg" : getExtension(fileName))};base64,${buffer.toString("base64")}`;
+      const url = await uploadImageToR2(source).catch(() => source);
       return {
         ...baseInfo,
         kind: "image",
-        url: item.Url && /^https?:\/\//.test(item.Url) ? item.Url : undefined,
+        url,
       };
     }
 
@@ -308,14 +357,14 @@ export const formatFileBlock = (file: ResolvedFile): string => {
   const lines: string[] = [];
   const sizeText = formatFileSize(file.fileSize);
   lines.push(`[文件] ${file.fileName} (${sizeText})`);
-  if (file.url) {
+  if (file.url && !file.url.startsWith("data:")) {
     lines.push(`下载链接: ${file.url}`);
   }
-  if (file.kind === "image") {
+  if (file.kind === "image" && file.url) {
     lines.push("（图片文件，内容以图片形式提供）");
     return lines.join("\n");
   }
-  if (file.kind === "text" && file.textContent) {
+  if (file.kind === "text" && typeof file.textContent === "string") {
     lines.push("文件内容:");
     lines.push("```");
     lines.push(file.textContent);

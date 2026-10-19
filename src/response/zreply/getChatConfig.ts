@@ -6,6 +6,7 @@ import redisClient from "@src/config";
 import { Events } from "alemonjs";
 import { emojiMap } from "@src/emoji";
 import { uploadImageToR2 } from "@src/s3";
+import { collectFileMedia, formatFileBlock, resolveFileContent } from "@src/api/fileMessage";
 import { shouldDisableLocalSearchTool } from "./provider-tools";
 export { getDeepThoughtReasoning } from "@src/api/deep-thought";
 
@@ -241,6 +242,7 @@ export const getChatConfig = async (
   const config = await redisClient.getAIConfig(e.guid);
   /** 复杂输出开关 */
   const complexOutputIsOpen = await redisClient.getComplexOutput(e.guid);
+  const fileMessageSwitch = await redisClient.getFileMessageSwitch(e.guid);
   /** 好感度开关 */
   const affectionIsOpen = await redisClient.getAffectionSwitch(e.guid);
   /** R18开关 */
@@ -498,6 +500,7 @@ export const getChatConfig = async (
     config,
     /** 复杂输出开关 */
     complexOutputIsOpen,
+    fileMessageSwitch,
     /** 好感度开关 */
     affectionIsOpen,
     /** R18开关 */
@@ -554,8 +557,8 @@ export const shouldSkipAIReply = async (
 
   // 如果是命令则跳过
   if (
-    e.msg.startsWith("/") ||
-    e.msg.startsWith("#") ||
+    String(e.msg || "").startsWith("/") ||
+    String(e.msg || "").startsWith("#") ||
     e.UserId == e.bot.user_id
   ) {
     return true;
@@ -607,7 +610,7 @@ export const buildUserMessage = async (
   cfg: any,
 ) => {
   const imgs: string[] = [];
-  let rawMessage = e.value.raw_message || e.raw_message || e.msg;
+  let rawMessage = String(e.value?.raw_message || e.raw_message || e.msg || e.MessageText || "");
   const textOnlyImages = isNonVisionModel(cfg?.config?.model);
 
   // =========================
@@ -660,6 +663,17 @@ export const buildUserMessage = async (
     const url = validImageUrls[index++];
     return url ? url : "[图片]";
   });
+
+  if (cfg.fileMessageSwitch !== "0") {
+    const files = await Promise.all(collectFileMedia(e).map((item) => resolveFileContent(item, e)));
+    for (const file of files) {
+      if (!file) continue;
+      rawMessage += `\n\n${formatFileBlock(file)}`;
+      if (file.kind === "image" && file.url && !validImageUrls.includes(file.url)) {
+        validImageUrls.push(file.url);
+      }
+    }
+  }
 
   // 无法看图的模型：正文补全未写入文本的图片链接（e.img / 回复图等）
   if (textOnlyImages) {
