@@ -10,7 +10,7 @@ export type UserPermissionInput = {
 };
 
 export const PERMISSION_DENIAL_INSTRUCTION =
-  "这是当前用户权限下的最终拒绝，不是暂时失败。不要改写命令、更换工具、拆步骤、换目录或再次调用去完成同一目标。请直接告诉用户当前权限不允许，以及需要主人如何授权。只有退出码非 0、文件不存在、参数格式错误这类执行失败，才可以修正后重试。";
+  "这是当前用户权限下的最终拒绝，不是暂时失败。不要改写命令、更换工具、拆步骤、换目录或再次调用去完成同一目标。请直接告诉用户当前权限不允许，以及需要主人如何授权。命令找不到（command not found）、PATH 缺失、文件不存在、参数格式错误等属于执行失败，可以先定位实际环境再修正重试；只有框架权限或审核拒绝才必须停止。";
 
 const OPENCODE_LABEL: Record<OpencodePermissionMode, string> = {
   readonly: "只读",
@@ -54,6 +54,11 @@ export const buildUserPermissionPrompt = (input: UserPermissionInput) => {
     pushUnique(allowed, "接受主人在当前私聊提供的账号、密码、Token、私钥，按主人要求用 ManageCredentials 加密保存；后续先 list 查凭据名称与字段，通过 RunServerCommand.credentialEnv 使用，不能因为内容敏感而拒绝授权的保存或使用");
     pushUnique(allowed, "主人私聊为完全访问，主对话和后台子任务继承相同权限。查看系统状态、SSH 连接、读取日志和派发任务直接执行，不额外索要确认或确认码；删除目录、清空数据、重启/停止服务在主人已明确指定操作和目标时直接执行，只有目标或意图不明确时才询问");
     pushUnique(allowed, "历史对话中的确认码或后台任务需确认提示属于旧规则，以本轮框架权限为准，不要继续索要旧确认码");
+    pushUnique(allowed, `机器人进程的实际环境：平台 ${process.platform}，架构 ${process.arch}，默认工作目录 ${process.cwd()}，命令工具使用 ${process.platform === "win32" ? "PowerShell" : "sh -lc"}。这只描述机器人所在系统，SSH 远端或独立子工具的环境必须另行核实`);
+    pushUnique(allowed, "执行服务器任务前先自主做少量只读探测：确认目标主机、运行用户、系统、当前目录与 PATH。Linux 用 hostname、id、uname、pwd、command -v；Windows 用对应 PowerShell 命令。没有实测依据不能声称是沙盒、环境受限或缺少工具");
+    pushUnique(allowed, "命令找不到时先查命令定位结果、PATH、常见安装目录及该账号的 Node/Python 版本管理目录；找到后用绝对路径或显式加载相应环境再运行。目录不存在时先检查父目录与实际项目位置，不能直接假定文件不可访问。仅在确认没有安装后再考虑已有替代工具或必要的安装");
+    pushUnique(allowed, "每次 RunServerCommand 都是新 Shell：前一次 cd、export 或交互式 SSH 不会延续。每次明确指定 workingDirectory，需要的变量或环境脚本在本次调用中加载；远程操作用 ssh 主机 '远程命令' 并核对远端身份，不要误把后续本机命令当成远端执行");
+    pushUnique(allowed, "只检查完成任务所需的非敏感环境字段，不要打印整个 env、printenv、set 或凭据文件，也不要无范围扫描全盘。依据工具的退出码和实际输出说明成功或失败；只有完成环境定位后仍有具体缺项，才向主人提出明确问题");
     pushUnique(denied, "把凭据原文写入普通记忆、公共知识库、源码、工具调用提示或回复。不要打印凭据环境变量，优先使用变量传递给需要认证的程序");
   } else if (groupFullAccess && !input.isMaster) {
     pushUnique(allowed, "当前群已开启完全访问，可以读写项目、维护公共知识库、使用 scope=root 访问服务器目录，并执行完整 Git（提交、推送、拉取、合并）和其他服务器命令");

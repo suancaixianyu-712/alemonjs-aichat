@@ -57,6 +57,10 @@ test("主人私聊无需 agent 即可管理服务器并保存和使用凭据", (
   assert.match(prompt, /不额外索要确认或确认码/);
   assert.match(prompt, /私聊优先在当前对话直接完成任务/);
   assert.match(prompt, /几次工具调用也不要默认派子agent/);
+  assert.ok(prompt.includes(`平台 ${process.platform}`));
+  assert.ok(prompt.includes(`默认工作目录 ${process.cwd()}`));
+  assert.match(prompt, /先自主做少量只读探测/);
+  assert.match(prompt, /每次 RunServerCommand 都是新 Shell/);
   assert.doesNotMatch(prompt, /回复确认执行|相同的工具和参数调用/);
   assert.doesNotMatch(prompt, /这些要等主人发送/);
 });
@@ -120,4 +124,6 @@ test("审核拒绝会标记为不可重试，普通执行失败保持原样", ()
     (executionFailure as { permissionDenied?: boolean }).permissionDenied,
     undefined,
   );
+  const missingCommand = annotatePermissionBoundary({ success: false, error: "node: command not found", exitCode: 127 });
+  assert.equal((missingCommand as { doNotRetry?: boolean }).doNotRetry, undefined);
 });
