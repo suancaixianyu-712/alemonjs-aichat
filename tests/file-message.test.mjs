@@ -69,7 +69,7 @@ globalThis.onResponse = (_selects, handler) => handler;
 globalThis.onSelects = (selects) => selects;
 globalThis.format = (...items) => items;
 
-const { collectFileMedia, resolveFileContent, formatFileBlock } = await import(moduleUrl("api/fileMessage"));
+const { collectFileMedia, resolveFileContent, formatFileBlock, fetchFileBuffer, normalizeFileResponse } = await import(moduleUrl("api/fileMessage"));
 const { buildUserMessage } = await import(moduleUrl("response/zreply/getChatConfig"));
 const { convertCapiMessagesToRapiInput } = await import(moduleUrl("response/zreply/rapi"));
 const { default: handleMessage } = await import(moduleUrl("response/ai-chat/res"));
@@ -250,4 +250,72 @@ test("真实 CAPI 工具循环向模型提供附件解析结果，并覆盖伪�
     assert.equal(parsed.ok, true);
     assert.equal(parsed.entries[0].path, "sss-tools/index.js");
   } finally { state.tools = undefined; state.nextTool = null; }
+});
+
+test("NapCat 容器返回本地路径与 Base64 时，压缩包可从收到消息一路解析到源码", async () => {
+  const bytes = gzipSync(makeTar([{ name: "after-the-rain/index.js", data: Buffer.from("export const result = 42;") }]));
+  state.api = {
+    get_private_file_url: { status: "failed", retcode: 200, data: null },
+    get_file: [{ code: 2000, data: { status: "ok", retcode: 0, data: {
+      file: "/napcat-container/QQ/received/archive.tar.gz", url: "/napcat-container/QQ/received/archive.tar.gz", base64: bytes.toString("base64"),
+    } } }],
+  };
+  const input = event([{ Type: "file", FileName: "after-the-rain-scores.tar.gz", FileId: "private-file" }]);
+  const file = await resolveFileContent(input.MessageMedia[0], input);
+  assert.equal(file.error, undefined);
+  const result = await readChatFile({ action: "inspect", attachmentId: file.attachmentId, attachmentEvent: input });
+  assert.equal(result.entries[0].path, "after-the-rain/index.js");
+  const content = await readChatFile({ action: "read", attachmentId: file.attachmentId, attachmentEvent: input, entryPath: result.entries[0].path });
+  assert.match(content.content, /result = 42/);
+});
+
+test("NapCat 仅提供不可读容器路径时明确提示配置，不能误报解压失败", async () => {
+  state.api = { get_file: { file: "/missing-napcat-container/archive.tar.gz", url: "/missing-napcat-container/archive.tar.gz" } };
+  const file = await resolveFileContent({ Type: "file", FileId: "private-file", FileName: "a.tar.gz" }, event([]));
+  assert.match(file.error, /enableLocalFile2Url/);
+  const result = await availableTools.ReadChatFile({ action: "inspect", attachmentId: file.attachmentId, attachmentEvent: event([]) });
+  assert.match(result.error, /enableLocalFile2Url/);
+  assert.doesNotMatch(result.error, /请重新发送/);
+});
+
+test("文件 ID 别名和原始通知补齐框架缺失字段，同名不同 ID 附件不合并", () => {
+  const files = collectFileMedia(event([{ Type: "file", FileName: "a.zip" }], {
+    value: { file: { id: "file-123", name: "a.zip", size: 12, url: `${url}/text` } },
+  }));
+  assert.equal(files.length, 1);
+  assert.equal(files[0].FileId, "file-123");
+  assert.equal(collectFileMedia(event([{ type: "file", name: "a.zip", fid: "one" }, { Type: "file", FileName: "a.zip", FileId: "two" }])).length, 2);
+});
+
+test("文件响应支持嵌套 envelope、字符串链接、file URL、file_path 和拒绝失败响应", () => {
+  assert.equal(normalizeFileResponse([{ code: 2000, data: { status: "ok", retcode: 0, data: { file: `${url}/text` } } }]).url, `${url}/text`);
+  assert.equal(normalizeFileResponse({ status: "ok", retcode: 0, data: `${url}/text` }).url, `${url}/text`);
+  assert.equal(normalizeFileResponse({ file_path: "/shared/a.txt" }).filePath, "/shared/a.txt");
+  assert.equal(normalizeFileResponse({ url: "/shared/a.txt" }).filePath, "/shared/a.txt");
+  assert.equal(normalizeFileResponse({ status: "failed", data: { file: "/etc/passwd" } }), null);
+});
+
+test("HTTP 失败原因保留，不在终端输出下载地址、文件 ID 或接口错误正文", async () => {
+  const logs = [];
+  const logger = mock.method(console, "log", (...items) => logs.push(items.join(" ")));
+  state.api = { get_file: { status: "failed", message: "secretToken" } };
+  try {
+    const diagnostics = [];
+    assert.equal(await fetchFileBuffer({ Url: `${url}/missing`, FileId: "secretFileId" }, event([]), diagnostics), null);
+    assert.ok(diagnostics.includes("HTTP 404"));
+    assert.doesNotMatch(logs.join("\n"), /secretToken|secretFileId|attachment.example/);
+  } finally { logger.mock.restore(); }
+});
+
+test("消息中伪造的本地路径 URL 不会被当作本地附件读取", async () => {
+  const secretPath = path.join(attachmentDir, "local-secret.txt");
+  await fs.writeFile(secretPath, "do-not-read");
+  assert.equal(await fetchFileBuffer({ Url: secretPath }, event([])), null);
+});
+
+test("XMind 的 ZIP 容器取得真实字节后可列目录和读取 content.json", () => {
+  const bytes = makeZip("content.json", Buffer.from('[{"rootTopic":{"title":"思维导图"}}]'));
+  const listing = parseChatFileBuffer(bytes, "空白思维导图.xmind", { action: "inspect" });
+  assert.equal(listing.entries[0].path, "content.json");
+  assert.match(parseChatFileBuffer(bytes, "空白思维导图.xmind", { action: "read", entryPath: "content.json" }).content, /思维导图/);
 });

@@ -55,8 +55,9 @@ export const readChatFile = async (args: ChatFileArgs) => {
   if (!args.attachmentId) throw new Error("请提供消息中的附件 ID，或先调用 list");
   const { record, buffer: cached } = await loadAttachment(scope, args.attachmentId);
   if (record.source.FileSize && record.source.FileSize > 50 * 1024 * 1024) throw new Error("附件超过 50 MB");
-  const buffer = cached || await fetchFileBuffer(record.source, args.attachmentEvent);
-  if (!buffer) throw new Error("已收到附件记录，但平台未提供可下载内容或下载失败。请重新发送文件；这不是缺少解压命令。");
+  const diagnostics: string[] = [];
+  const buffer = cached || await fetchFileBuffer(record.source, args.attachmentEvent, diagnostics);
+  if (!buffer) throw new Error(`附件内容尚未下载，无法解压。具体阶段：${diagnostics.join("；") || "未取得有效文件来源"}。先修复下载／NapCat 配置，不要反复让用户重新上传。`);
   if (!cached) await cacheAttachmentBuffer(scope, record.id, buffer);
   return parseChatFileBuffer(buffer, record.fileName, args, record.source.MimeType);
 };
