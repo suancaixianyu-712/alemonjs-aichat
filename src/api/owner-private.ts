@@ -42,6 +42,7 @@ export const bindOwnerPrivateToolCall = async (
   args.credentialOwner = credentialOwnerFromEvent(event);
   // 模型传入的身份字段一律覆盖，包括非主人和群聊。
   args.isMaster = event?.IsMaster === true;
+  if (functionName === "ReadChatFile") args.attachmentEvent = event;
   if (functionName === "ManageCredentials" || args.credentialEnv !== undefined) {
     if (!args.credentialOwner) throw new Error("凭据管理和使用仅主人私聊可用");
   }

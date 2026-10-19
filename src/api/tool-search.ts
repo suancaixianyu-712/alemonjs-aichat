@@ -3,7 +3,7 @@
 export const SEARCH_TOOL_NAME = "search_tools";
 export const SEARCH_TOOL_LIMIT_PER_TURN = 3;
 export const MAX_TOOL_ROUNDS = 30;
-export const ALWAYS_ON_TOOL_NAMES = ["LocalBrowser", "RunServerCommand"];
+export const ALWAYS_ON_TOOL_NAMES = ["LocalBrowser", "RunServerCommand", "ReadChatFile"];
 export const TOOL_DISABLED_REASON = "当前已关闭，无法使用";
 export const TOOL_UNAVAILABLE_REASON = "当前会话不可用";
 export const TOOL_ROUND_LIMIT_FALLBACK = "已达工具轮次上限，请缩小问题后重试";
@@ -66,6 +66,7 @@ export const TOOL_META: Record<string, { summary: string; aliases: string[] }> =
   AgentSearchFiles: { summary: "按名称和内容搜文件", aliases: ["搜索文件", "查找", "grep", "代码搜索"] },
   AgentUploadFileToR2: { summary: "上传文件到 R2 拿链接", aliases: ["上传", "r2", "外链", "分享文件", "发布文件"] },
   ReadRemoteFile: { summary: "按 URL 读取远程文件", aliases: ["读取文件", "下载", "附件", "远程文件", "url"] },
+  ReadChatFile: { summary: "解析聊天附件、图片、代码与压缩包", aliases: ["文件", "附件", "图片", "压缩包", "解压", "zip", "tar", "gz", "目录", "读取文件"] },
   GetCommand: { summary: "获取框架指令列表", aliases: ["指令列表", "帮助", "命令列表", "菜单"] },
   LocalBrowser: { summary: "本机浏览器搜索/访问网页", aliases: ["搜索", "联网", "上网", "网页", "浏览器", "百度", "谷歌", "新闻"] },
   ExecuteAlemonCommand: { summary: "执行 AlemonJS 指令", aliases: ["执行指令", "指令", "配置", "切换"] },

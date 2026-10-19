@@ -28,6 +28,7 @@ export const MATCH_CASES = [
   ["玩扫雷", ["XianyuGame"]],
   ["让codex写代码", ["RunCodex"]],
   ["读取附件链接", ["ReadRemoteFile"]],
+  ["解析压缩包", ["ReadChatFile"]],
   ["派一个后台子代理", ["SubAgent"]],
 ];
 
@@ -93,13 +94,13 @@ test("getTurnTools: full 模式全量，dynamic 模式常驻 + 已加载，并�
   assert.ok(!full.some((t) => t.function.name === "search_tools"));
 
   const dyn = ts.buildTurnTools({ mode: "dynamic", availableTools: available, loadedToolNames: new Set(["ScheduleAITask"]) });
-  assert.deepEqual(dyn.map((t) => t.function.name), ["search_tools", "LocalBrowser", "RunServerCommand", "ScheduleAITask"]);
+  assert.deepEqual(dyn.map((t) => t.function.name), ["search_tools", "LocalBrowser", "ReadChatFile", "RunServerCommand", "ScheduleAITask"]);
   assert.deepEqual(dyn[0], ts.searchToolDefinition);
 
   const noBrowser = available.filter((t) => t.function.name !== "LocalBrowser");
   assert.deepEqual(
     ts.buildTurnTools({ mode: "dynamic", availableTools: noBrowser }).map((t) => t.function.name),
-    ["search_tools", "RunServerCommand"],
+    ["search_tools", "ReadChatFile", "RunServerCommand"],
   );
   const allowed = ts.buildTurnTools({ mode: "dynamic", availableTools: available, allowedToolNames: new Set(["LocalBrowser"]) });
   assert.deepEqual(allowed.map((t) => t.function.name), ["search_tools", "LocalBrowser"]);
@@ -123,7 +124,7 @@ test("只有成功执行且非 search_tools 才计数", () => {
 test("常驻集合按名字稳定排序，按需加载只追加在后面", () => {
   const a = ts.buildTurnTools({ mode: "dynamic", availableTools: tools, autoToolNames: ["XianyuGame", "MemoryOperation"], loadedToolNames: ["SubAgent", "AgentWriteFile"] });
   const b = ts.buildTurnTools({ mode: "dynamic", availableTools: [...tools].reverse(), autoToolNames: ["MemoryOperation", "XianyuGame"], loadedToolNames: ["SubAgent", "AgentWriteFile"] });
-  const order = ["search_tools", "LocalBrowser", "MemoryOperation", "RunServerCommand", "XianyuGame", "SubAgent", "AgentWriteFile"];
+  const order = ["search_tools", "LocalBrowser", "MemoryOperation", "ReadChatFile", "RunServerCommand", "XianyuGame", "SubAgent", "AgentWriteFile"];
   assert.deepEqual(a.map((t) => t.function.name), order);
   assert.deepEqual(b.map((t) => t.function.name), order);
 });
@@ -135,7 +136,7 @@ test("缓存的自动常驻/已加载工具被关闭后，下一次请求立即�
   assert.ok(before.some((t) => t.function.name === "XianyuGame"));
   const live = tools.filter((t) => !["XianyuGame", "SubAgent"].includes(t.function.name));
   const after = ts.buildTurnTools({ mode: "dynamic", availableTools: live, autoToolNames: cachedAuto, loadedToolNames: cachedLoaded });
-  assert.deepEqual(after.map((t) => t.function.name), ["search_tools", "LocalBrowser", "RunServerCommand"]);
+  assert.deepEqual(after.map((t) => t.function.name), ["search_tools", "LocalBrowser", "ReadChatFile", "RunServerCommand"]);
 });
 
 test("工具轮数：只调用 search_tools 不计轮；超限强制 tool_choice none", () => {
@@ -166,7 +167,7 @@ test("共享回合状态（capi/res 共用）：搜索加载持久化、上限�
     guid: "g", store, mode: "dynamic", toolSwitch: "1",
     availableTools: live, allTools: tools, disabledToolNames: ["RunCodex"],
   });
-  assert.deepEqual(state.getTurnTools().map((t) => t.function.name), ["search_tools", "LocalBrowser", "RunServerCommand", "XianyuGame"]);
+  assert.deepEqual(state.getTurnTools().map((t) => t.function.name), ["search_tools", "LocalBrowser", "ReadChatFile", "RunServerCommand", "XianyuGame"]);
   assert.deepEqual(store.data.auto, ["XianyuGame"]);
   assert.equal(state.handles("search_tools"), true);
   const res = await state.runSearchTools({ query: "定时" });

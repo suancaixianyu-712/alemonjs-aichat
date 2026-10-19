@@ -1,10 +1,10 @@
 import fs from "fs/promises";
-import os from "os";
 import path from "path";
 import { API } from "@alemonjs/onebot";
 import { useClient } from "alemonjs";
-import { uploadImageToR2, uploadMediaToR2 } from "@src/s3";
+import { uploadImageToR2 } from "@src/s3";
 import { unwrapOneBotData } from "@src/api/onebot-result";
+import { attachmentScope, cacheAttachmentBuffer, saveAttachment } from "@src/api/attachment-store";
 
 /** 文件大小上限（超过则拒绝下载处理） */
 const MAX_FILE_SIZE = 50 * 1024 * 1024;
@@ -41,6 +41,7 @@ export type ResolvedFile = {
   textContent?: string;
   truncated?: boolean;
   error?: string;
+  attachmentId?: string;
 };
 
 export type FileMediaItem = {
@@ -55,7 +56,11 @@ export type FileMediaItem = {
 /** 框架媒体为准，兼容旧适配器消息段及引用附件。 */
 export const collectFileMedia = (event: any): FileMediaItem[] => {
   const candidates = [
-    ...(Array.isArray(event.MessageMedia) ? event.MessageMedia : []),
+    ...(Array.isArray(event.MessageMedia) ? event.MessageMedia : []).map((item: FileMediaItem) => {
+      const rawFile = event.value?.file;
+      if (item.Type !== "file" || !rawFile || (rawFile.name && rawFile.name !== item.FileName)) return item;
+      return { ...item, FileId: item.FileId || rawFile.id || rawFile.file_id, Url: item.Url || rawFile.url };
+    }),
     ...extractFilesFromReplySegments(event.value?.message),
     ...extractFilesFromReplySegments(event.reply?.message),
   ].filter((item) => item && ["file", "audio", "record", "video"].includes(String(item.Type).toLowerCase()));
@@ -113,11 +118,12 @@ const looksLikeBinary = (buffer: Buffer): boolean => {
 const fetchOneBotFile = async (
   fileId: string,
   e: any,
+  urlOnly = false,
 ): Promise<{ filePath?: string; base64?: string; url?: string } | null> => {
   if (e?.Platform !== "onebot") return null;
   try {
     const [client] = useClient(e, API);
-    let data = unwrapOneBotData<any>(await client.send({
+    let data = urlOnly ? null : unwrapOneBotData<any>(await client.send({
       action: "get_file",
       params: { file_id: fileId },
     }).catch(() => null));
@@ -169,7 +175,7 @@ const downloadFile = async (url: string): Promise<Buffer | null> => {
 };
 
 /** 获取文件 Buffer，返回 null 表示无法获取。 */
-const fetchFileBuffer = async (
+export const fetchFileBuffer = async (
   item: FileMediaItem,
   e: any,
 ): Promise<Buffer | null> => {
@@ -207,6 +213,14 @@ const fetchFileBuffer = async (
         console.error("[fileMessage] get_file url 下载失败");
       }
     }
+    // OneBot 可能在另一台机器或容器中，get_file 返回的本地路径不能直接读取。
+    if (!oneBotFile?.url) {
+      const remote = await fetchOneBotFile(item.FileId, e, true);
+      if (remote?.url && /^https?:\/\//.test(remote.url)) {
+        const buffer = await downloadFile(remote.url).catch(() => null);
+        if (buffer) return buffer;
+      }
+    }
   }
 
   return null;
@@ -229,29 +243,7 @@ const extractTextContent = (
   return { content: text, truncated: false };
 };
 
-/**
- * 将 Buffer 写入临时文件并返回路径
- */
-const writeTempFile = async (buffer: Buffer, fileName: string): Promise<string> => {
-  const safeName = (fileName || "file").replace(/[\\/:*?"<>|]+/g, "_");
-  const tempDir = path.join(os.tmpdir(), "alemon-file-message");
-  await fs.mkdir(tempDir, { recursive: true });
-  const tempPath = path.join(tempDir, `${Date.now()}-${Math.random().toString(36).slice(2, 8)}-${safeName}`);
-  await fs.writeFile(tempPath, buffer);
-  return tempPath;
-};
-
-const cleanupTempFile = async (tempPath?: string): Promise<void> => {
-  if (!tempPath) return;
-  await fs.rm(tempPath, { force: true }).catch(() => {});
-};
-
-/**
- * 解析单个文件媒体项：
- * - 图片 → 上传 R2（走图片压缩管线）
- * - 文本类 → 提取内容 + 上传 R2
- * - 音视频/二进制 → 上传 R2 仅给元数据
- */
+/** 解析附件并缓存原始内容，后续通过 ReadChatFile 继续读取。 */
 export const resolveFileContent = async (
   item: FileMediaItem,
   e: any,
@@ -265,12 +257,17 @@ export const resolveFileContent = async (
   };
 
   try {
+    baseInfo.attachmentId = await saveAttachment(e, item);
     if (fileSize && fileSize > MAX_FILE_SIZE) {
       return { ...baseInfo, error: "文件超过 50 MB 处理上限" };
     }
+    const buffer = await fetchFileBuffer(item, e);
+    if (buffer) {
+      await cacheAttachmentBuffer(attachmentScope(e), baseInfo.attachmentId, buffer);
+      baseInfo.fileSize = buffer.length;
+    }
     // 图片文件也必须解析 FileId；不能只告诉模型“已提供图片”。
     if (isImageFile(fileName) || item.MimeType?.startsWith("image/")) {
-      const buffer = await fetchFileBuffer(item, e);
       if (!buffer) return { ...baseInfo, error: "无法获取图片文件内容" };
       const source = `data:${item.MimeType || "image/" + (getExtension(fileName) === "jpg" ? "jpeg" : getExtension(fileName))};base64,${buffer.toString("base64")}`;
       const url = await uploadImageToR2(source).catch(() => source);
@@ -281,7 +278,6 @@ export const resolveFileContent = async (
       };
     }
 
-    const buffer = await fetchFileBuffer(item, e);
     if (!buffer) {
       // 无法获取内容：URL 可用时仅提供链接
       return {
@@ -292,33 +288,14 @@ export const resolveFileContent = async (
       };
     }
 
-    const tempPath = await writeTempFile(buffer, fileName);
-    try {
-      // 文本类文件：提取内容
-      if (isTextLikeFile(fileName)) {
-        const extracted = extractTextContent(buffer);
-        if (extracted) {
-          const url = await uploadMediaToR2(tempPath, fileName).catch(() => null);
-          return {
-            ...baseInfo,
-            kind: "text",
-            url: url || undefined,
-            textContent: extracted.content,
-            truncated: extracted.truncated,
-          };
-        }
-      }
-
-      // 其他文件：上传 R2 提供下载链接
-      const url = await uploadMediaToR2(tempPath, fileName).catch(() => null);
-      return {
-        ...baseInfo,
-        kind: "media",
-        url: url || undefined,
+    if (isTextLikeFile(fileName)) {
+      const extracted = extractTextContent(buffer);
+      if (extracted) return {
+        ...baseInfo, kind: "text", url: item.Url || undefined,
+        textContent: extracted.content, truncated: extracted.truncated,
       };
-    } finally {
-      await cleanupTempFile(tempPath);
     }
+    return { ...baseInfo, kind: "media", url: item.Url || undefined };
   } catch (error: any) {
     console.error(`[fileMessage] 处理文件失败: ${fileName}`, error);
     return {
@@ -357,6 +334,9 @@ export const formatFileBlock = (file: ResolvedFile): string => {
   const lines: string[] = [];
   const sizeText = formatFileSize(file.fileSize);
   lines.push(`[文件] ${file.fileName} (${sizeText})`);
+  if (file.attachmentId) {
+    lines.push(`附件 ID: ${file.attachmentId}。使用 ReadChatFile 的 inspect 查看内容／压缩包目录，read 配合 entryPath 读取包内指定文件；list 可查当前会话附件。不要只凭文件名判断内容。`);
+  }
   if (file.url && !file.url.startsWith("data:")) {
     lines.push(`下载链接: ${file.url}`);
   }
@@ -370,18 +350,20 @@ export const formatFileBlock = (file: ResolvedFile): string => {
     lines.push(file.textContent);
     lines.push("```");
     if (file.truncated) {
-      lines.push("(内容过长已截断，可通过 ReadRemoteFile 工具按下载链接获取完整内容)");
+      lines.push("(内容过长已截断，可用 ReadChatFile 的 read、offset、maxChars 继续读取)");
     }
     return lines.join("\n");
   }
-  if (file.url) {
+  if (file.error) {
+    lines.push(`(文件内容不可用: ${file.error})`);
+  } else if (file.attachmentId) {
+    lines.push("(正文尚未解析，请调用 ReadChatFile inspect；压缩包无需命令行即可查看目录与指定文件)");
+  } else if (file.url) {
     lines.push(
       "(无法直接读取该文件内容, 如需处理可调用 ReadRemoteFile 工具按下载链接获取)",
     );
-  } else if (file.error) {
-    lines.push(`(文件内容不可用: ${file.error})`);
   } else {
-    lines.push("(无法读取该文件内容)");
+    lines.push("(正文尚未解析，请调用 ReadChatFile inspect；压缩包无需命令行即可查看目录与指定文件)");
   }
   return lines.join("\n");
 };

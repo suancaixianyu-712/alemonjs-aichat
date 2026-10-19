@@ -1,18 +1,32 @@
 import assert from "node:assert/strict";
-import { mock, test } from "node:test";
+import { after, mock, test } from "node:test";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { gzipSync } from "node:zlib";
+import { makeTar, makeZip } from "./helpers/archive-fixtures.mjs";
+
+const attachmentDir = await fs.mkdtemp(path.join(os.tmpdir(), "aichat-attachment-test-"));
+process.env.AICHAT_ATTACHMENT_DIR = attachmentDir;
+after(async () => {
+  assert.ok(path.resolve(attachmentDir).startsWith(path.resolve(os.tmpdir()) + path.sep));
+  await fs.rm(attachmentDir, { recursive: true, force: true });
+});
 
 const moduleUrl = (name) => new URL(`../lib/${name}.js`, import.meta.url).href;
 const state = { switch: "1", history: [], requests: [], actions: [], api: {}, uploadFails: false };
 const overrides = {
-  getAIConfig: async () => ({ host: "http://model", key: "test", model: "gpt-4o", systemPrompt: "" }),
+  redis: { get: async () => null },
+  getAIConfig: async () => ({ host: "http://model", key: "test", model: state.model || "gpt-4o", systemPrompt: "" }),
+  getOCRAIConfig: async () => state.ocr,
   getFileMessageSwitch: async () => state.switch,
   getAIChatHistory: async () => [...state.history],
   addAIChatHistory: async (_g, message) => state.history.push(message),
   addAIChatHistoryBatch: async (_g, messages) => state.history.push(...messages),
   getAffectionLevelAll: async () => ({}),
-  getAvailableTools: async () => [], getAllToolStatus: async () => ({}),
+  getAvailableTools: async () => state.tools || [], getAllToolDefinitions: async () => state.tools || [], getAllToolStatus: async () => ({}),
   getLoadedToolNames: async () => [], getAutoToolNames: async () => [], getToolUsage: async () => ({}),
-  getToolSwitch: async () => "0", getToolSearchMode: async () => "dynamic",
+  getToolSwitch: async () => state.tools ? "1" : "0", getToolSearchMode: async () => "dynamic",
   getCAPIContextLimit: async () => 100000,
   acquireAIToolLoop: async () => true, drainAIGuidanceMessages: async () => [],
   sanitizeChatMessages: (messages) => messages, isAIProxyEnabled: () => false,
@@ -44,6 +58,10 @@ const { default: ignored, ...realOpenAI } = await import("openai");
 mock.module("openai", { namedExports: realOpenAI, defaultExport: class {
   constructor() { this.chat = { completions: { create: async (request) => {
     state.requests.push(request);
+    if (state.nextTool) {
+      const tool = state.nextTool; state.nextTool = null;
+      return { choices: [{ message: { role: "assistant", content: null, tool_calls: [tool] } }] };
+    }
     return { choices: [{ message: { role: "assistant", content: "小咸鱼:已收到附件" } }] };
   } } }; }
 } });
@@ -56,6 +74,10 @@ const { buildUserMessage } = await import(moduleUrl("response/zreply/getChatConf
 const { convertCapiMessagesToRapiInput } = await import(moduleUrl("response/zreply/rapi"));
 const { default: handleMessage } = await import(moduleUrl("response/ai-chat/res"));
 const { buildToolMessageContent } = await import(moduleUrl("api/tool-message-content"));
+const { readChatFile, parseChatFileBuffer } = await import(moduleUrl("api/chat-file"));
+const { availableTools, tools } = await import(moduleUrl("api/aitools"));
+const { bindOwnerPrivateToolCall } = await import(moduleUrl("api/owner-private"));
+const { saveAttachment } = await import(moduleUrl("api/attachment-store"));
 
 const url = "https://attachment.example";
 mock.method(globalThis, "fetch", async (source) => {
@@ -141,4 +163,91 @@ test("框架媒体与原始消息段去重，引用附件和第三方工具复�
   const result = await buildToolMessageContent(input);
   assert.equal(result.files.length, 2);
   assert.match(result.text, /引用.txt/);
+});
+
+test("收到附件后提供 ID，断网仍可分页读取完整文本，工具权限绑定真实会话", async () => {
+  const input = event([document]);
+  const file = await resolveFileContent(document, input);
+  assert.match(formatFileBlock(file), /附件 ID: [a-f0-9]{32}.*ReadChatFile/s);
+  const args = { action: "read", attachmentId: file.attachmentId, offset: 2, maxChars: 4, attachmentEvent: { Platform: "forged" } };
+  await bindOwnerPrivateToolCall(input, "ReadChatFile", args);
+  const result = await availableTools.ReadChatFile(args);
+  assert.equal(result.content, "正文：测");
+  assert.equal(result.truncated, true);
+  const listed = await readChatFile({ action: "list", attachmentEvent: input });
+  assert.ok(listed.attachments.some((item) => item.attachmentId === file.attachmentId));
+  await assert.rejects(readChatFile({ ...args, attachmentEvent: event([], { guid: "another-user" }) }), /找不到/);
+  await assert.rejects(readChatFile({ ...args, attachmentId: "../../escape" }), /ID 无效/);
+});
+
+test("本地缓存的图片工具返回真实图片，纯文本主模型使用配置的识图 AI", async () => {
+  const input = event([]);
+  const id = await saveAttachment(input, { Type: "file", FileName: "截图.png" }, Buffer.from([137,80,78,71,13,10,26,10]));
+  const args = { action: "read", attachmentId: id, attachmentEvent: input };
+  const result = await availableTools.ReadChatFile(args);
+  assert.match(result[0].image_url.url, /^data:image\/png;base64,/);
+  state.model = "gpt-3.5-turbo";
+  try {
+    const missing = await availableTools.ReadChatFile(args);
+    assert.equal(missing.ok, false);
+    assert.match(missing.error, /未配置识图/);
+    state.ocr = { name: "看图", host: "http://ocr", key: "k", model: "gpt-4o" };
+    const ocr = await availableTools.ReadChatFile(args);
+    assert.equal(ocr.ok, true);
+    assert.match(ocr.description, /收到附件/);
+    assert.equal(state.requests.at(-1).messages[0].content[0].type, "image_url");
+  } finally { state.model = undefined; state.ocr = undefined; }
+});
+
+test("未知二进制不冒充文本，文本可按字符分页", () => {
+  const result = parseChatFileBuffer(Buffer.from("0123456789"), "a.js", { action: "read", offset: 4, maxChars: 3 });
+  assert.equal(result.content, "456");
+  assert.equal(parseChatFileBuffer(Buffer.from([0, 255, 1]), "a.bin", {}).ok, false);
+});
+
+test("跨容器 get_file 本地路径不可用时，使用私聊文件 URL 接口", async () => {
+  state.actions = [];
+  state.api = { get_file: { file: "/missing-onebot-container/file.txt" }, get_private_file_url: { url: `${url}/text` } };
+  const file = await resolveFileContent({ Type: "file", FileName: "容器.txt", FileId: "remote-file" }, event([]));
+  assert.equal(file.kind, "text");
+  assert.ok(state.actions.some((item) => item.action === "get_private_file_url"));
+});
+
+test("压缩包缓存后，无 Shell、无外网即可列目录和分页读取源码，不执行脚本", async () => {
+  const input = event([]);
+  const code = Buffer.from("console.log('this must never run');\nexport const answer = 42;");
+  const tar = gzipSync(makeTar([{ name: "sss-tools/src/index.js", data: code }]));
+  for (const [name, buffer, entryPath] of [
+    ["sss-tools.tar(1).gz", tar, "sss-tools/src/index.js"],
+    ["sss-tools.zip", makeZip("src/index.js", code), "src/index.js"],
+  ]) {
+    const id = await saveAttachment(input, { Type: "file", FileName: name }, buffer);
+    const listed = await availableTools.ReadChatFile({ action: "inspect", attachmentId: id, attachmentEvent: input });
+    assert.equal(listed.kind, "archive");
+    assert.equal(listed.entries[0].path, entryPath);
+    const read = await availableTools.ReadChatFile({ action: "read", attachmentId: id, entryPath, attachmentEvent: input });
+    assert.equal(read.content, code.toString());
+    const failed = await availableTools.ReadChatFile({ action: "read", attachmentId: id, entryPath: "absent", attachmentEvent: input });
+    assert.equal(failed.ok, false);
+  }
+});
+
+test("真实 CAPI 工具循环向模型提供附件解析结果，并覆盖伪造会话字段", async () => {
+  const input = event([], { msg: "请查看刚才发的压缩包" });
+  const id = await saveAttachment(input, { FileName: "sss-tools.tar(1).gz" },
+    gzipSync(makeTar([{ name: "sss-tools/index.js", data: Buffer.from("export const answer = 42;") }])));
+  state.tools = tools.filter((tool) => tool.function.name === "ReadChatFile");
+  state.nextTool = { id: "read-chat-file", type: "function", function: {
+    name: "ReadChatFile", arguments: JSON.stringify({ action: "inspect", attachmentId: id, attachmentEvent: { guid: "forged" } }),
+  } };
+  const before = state.requests.length;
+  try {
+    await handleMessage(input, () => {});
+    assert.equal(state.requests.length, before + 2);
+    assert.ok(state.requests[before].tools.some((tool) => tool.function.name === "ReadChatFile"));
+    const output = state.requests.at(-1).messages.findLast((message) => message.role === "tool");
+    const parsed = JSON.parse(output.content);
+    assert.equal(parsed.ok, true);
+    assert.equal(parsed.entries[0].path, "sss-tools/index.js");
+  } finally { state.tools = undefined; state.nextTool = null; }
 });

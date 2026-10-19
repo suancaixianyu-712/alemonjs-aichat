@@ -67,6 +67,25 @@ export const tools: ChatCompletionTool[] = [
   {
     type: "function",
     function: {
+      name: "ReadChatFile",
+      description: "读取当前会话收到的附件，无需下载链接、Shell、子 agent 或安装解压程序。list 列出附件 ID；inspect 解析文本、图片或 ZIP/TAR/tar.gz 的目录（含 .tar(1).gz）；read 配合 entryPath 读取包内指定普通文件，offset/maxChars 分页。图片返回真实图像供主模型看图，纯文本主模型改用已配置的识图 AI。只读取，不执行包内程序。文件记录不是内容，拿到 ID 后应实际调用解析再回答。",
+      parameters: {
+        type: "object",
+        properties: {
+          action: { type: "string", enum: ["list", "inspect", "read"] },
+          attachmentId: { type: "string", description: "消息中的附件 ID；不知道时先 list" },
+          entryPath: { type: "string", description: "inspect 返回的压缩包内完整路径" },
+          offset: { type: "number", description: "文本字符偏移或目录项偏移，默认 0" },
+          maxChars: { type: "number", description: "文本最多 30000 字符；目录每页最多 200 项" },
+          question: { type: "string", description: "图片希望关注的问题" },
+        },
+        required: ["action"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "ManageCredentials",
       description: "仅框架主人私聊可用。主人要求保存账号、密码、Token、SSH 信息等敏感内容时，使用 save 加密保存到专用凭据文件，不要写入普通记忆、公共知识库、源码或聊天回复。list 只返回名称和字段名；delete 删除指定凭据。save 会替换同名凭据的全部字段。后续通过 RunServerCommand.credentialEnv 按名称使用，无需取出或复述原文。",
       parameters: {
@@ -3596,6 +3615,20 @@ const normalizeMiniMaxTone = (tone: unknown): string[] => {
 };
 
 export const availableTools = {
+  ReadChatFile: async (args: import("./chat-file").ChatFileArgs): Promise<any> => {
+    try {
+      const { readChatFile } = await import("./chat-file");
+      const result = await readChatFile(args);
+      if (Array.isArray(result) && result[0]?.type === "image_url") {
+        const guid = String(args.attachmentEvent?.guid || args.attachmentEvent?.ChannelId || args.attachmentEvent?.UserId || "");
+        const current = await redisClient.getAIConfig(guid);
+        if (isNonVisionModel(current?.model)) {
+          return await availableTools.DescribeImage({ image_url: result[0].image_url.url, guid, question: args.question });
+        }
+      }
+      return result;
+    } catch (error) { return { ok: false, ...toToolError(error) }; }
+  },
   ManageCredentials: async ({ action, name, fields, isMaster, ownerPrivate, credentialOwner }: {
     action: "save" | "list" | "delete";
     name?: string;
