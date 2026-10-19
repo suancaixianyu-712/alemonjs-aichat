@@ -49,7 +49,7 @@ mock.module("@alemonjs/onebot", { namedExports: { API: class {} } });
 const realAlemon = await import("alemonjs");
 mock.module("alemonjs", { namedExports: { ...realAlemon,
   useMessage: () => [{ send: async () => [] }],
-  useClient: () => [{ send: async (request) => {
+  useClient: () => [{ sendFileMessage: async (options) => { state.sentFile = options; return [{ code: 2000, data: { code: 200, data: { id: 987 } } }]; }, getFile: async (id) => { state.actions.push({ action: "scbbs.getFile", id }); return state.api["scbbs.getFile"] ?? null; }, send: async (request) => {
     state.actions.push(request);
     return state.api[request.action] ?? null;
   } }],
@@ -102,6 +102,50 @@ test("私聊离线文件无文字也进入 AI，内容保存在历史中，下�
   await handleMessage(event([], { msg: "刚发的文件里有什么？" }), () => {});
   assert.equal(state.requests.length, 2);
   assert.match(JSON.stringify(state.requests[1].messages), /文件正文：测试内容/);
+});
+
+test("scbbs 纯文件消息进入主 AI，社区 ID 换取内容并缓存供下一轮查看", async () => {
+  state.history = []; state.requests = []; state.actions = [];
+  state.api = { "scbbs.getFile": [{ code: 2000, data: { url: `${url}/text`, file_name: "社区.txt", mime_type: "text/plain" } }] };
+  const input = event([{ Type: "file", FileId: "77" }], { Platform: "scbbs" });
+  await handleMessage(input, () => {});
+  assert.equal(state.requests.length, 1);
+  assert.match(JSON.stringify(state.history), /社区.txt/);
+  assert.match(JSON.stringify(state.history), /文件正文：测试内容/);
+  assert.equal(state.actions.at(-1).action, "scbbs.getFile");
+  const listed = await readChatFile({ action: "list", attachmentEvent: input });
+  const file = listed.attachments.find((item) => item.fileName === "社区.txt");
+  assert.ok(file);
+  const read = await readChatFile({ action: "read", attachmentId: file.attachmentId, attachmentEvent: input });
+  assert.match(read.content, /文件正文：测试内容/);
+});
+
+test("scbbs 失效直链按 ID 刷新，业务失败不会被当作成功", async () => {
+  state.api = { "scbbs.getFile": [{ code: 2000, data: { url: `${url}/text` } }] };
+  const input = event([], { Platform: "scbbs" });
+  assert.ok(await fetchFileBuffer({ FileId: "77", Url: `${url}/missing` }, input));
+  for (const code of [403, 3000, 4000]) {
+    state.api = { "scbbs.getFile": [{ code, data: { url: `${url}/text` } }] };
+    assert.equal(await fetchFileBuffer({ FileId: "77" }, input), null);
+  }
+});
+
+test("主 AI 工具循环实际发送文件，模型伪造的会话和目标不能覆盖真实事件", async () => {
+  state.tools = tools.filter((tool) => tool.function.name === "SendChatFile");
+  state.nextTool = { id: "send-file", type: "function", function: {
+    name: "SendChatFile", arguments: JSON.stringify({ content: "AI 生成的文件正文", name: "结果.txt",
+      attachmentEvent: { Platform: "scbbs", UserId: "forged" }, targetId: "forged" }),
+  } };
+  const before = state.requests.length;
+  try {
+    await handleMessage(event([], { Platform: "scbbs", msg: "把结果作为文件发给我" }), () => {});
+    assert.equal(state.requests.length, before + 2);
+    assert.equal(state.sentFile.targetId, "123");
+    assert.equal(state.sentFile.scope, "private");
+    assert.equal(Buffer.from(state.sentFile.source.slice(9), "base64").toString(), "AI 生成的文件正文");
+    const output = state.requests.at(-1).messages.findLast((message) => message.role === "tool");
+    assert.equal(JSON.parse(output.content).messageId, "987");
+  } finally { state.tools = undefined; state.nextTool = null; }
 });
 
 test("文件开关关闭时，纯文件不触发 AI，带文字不注入文件", async () => {

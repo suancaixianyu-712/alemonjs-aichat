@@ -67,8 +67,23 @@ export const tools: ChatCompletionTool[] = [
   {
     type: "function",
     function: {
+      name: "SendChatFile",
+      description: "将文件作为附件发送到当前 scbbs 群聊或私聊。url 发送已有 HTTP(S) 链接；filePath 上传当前会话 public/{guid}/ 内的文件（相对路径）；content 将文字保存成文件（必须提供 name）；attachmentId 转发当前会话已收到的附件。四种来源仅选一个，最大 50 MB。发送成功后不要重复发送或再输出下载链接。",
+      parameters: { type: "object", properties: {
+        url: { type: "string", description: "文件 HTTP(S) 下载地址" },
+        filePath: { type: "string", description: "当前会话工作目录中的相对文件路径" },
+        content: { type: "string", description: "要保存为文件的完整文字" },
+        attachmentId: { type: "string", description: "ReadChatFile list 返回的附件 ID" },
+        name: { type: "string", description: "收件人看到的文件名，包含扩展名" },
+        mimeType: { type: "string" }, text: { type: "string", description: "附带的说明文字" },
+      } },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "ReadChatFile",
-      description: "读取当前会话收到的附件，无需下载链接、Shell、子 agent 或安装解压程序。list 列出附件 ID；inspect 解析文本、图片或 ZIP/TAR/tar.gz 的目录（含 .tar(1).gz）；read 配合 entryPath 读取包内指定普通文件，offset/maxChars 分页。图片返回真实图像供主模型看图，纯文本主模型改用已配置的识图 AI。只读取，不执行包内程序。文件记录不是内容，拿到 ID 后应实际调用解析再回答。",
+      description: "读取当前会话收到的附件，无需下载链接、Shell、子 agent 或安装解压程序。list 列出附件 ID；inspect 解析文本、图片、PDF/DOCX/XLSX 正文或 ZIP/TAR/tar.gz 的目录（含 .tar(1).gz）；read 配合 entryPath 读取包内指定普通文件，offset/maxChars 分页。图片返回真实图像供主模型看图，纯文本主模型改用已配置的识图 AI。扫描 PDF 需改发页面图片，DOC/XLS 需转为 DOCX/XLSX。只读取，不执行包内程序。文件记录不是内容，拿到 ID 后应实际调用解析再回答。",
       parameters: {
         type: "object",
         properties: {
@@ -3615,6 +3630,16 @@ const normalizeMiniMaxTone = (tone: unknown): string[] => {
 };
 
 export const availableTools = {
+  SendChatFile: async (args: import("./send-chat-file").SendChatFileArgs) => {
+    try {
+      const { sendChatFile } = await import("./send-chat-file");
+      return await sendChatFile(args, (filePath) => {
+        const guid = String(args.attachmentEvent?.guid || "");
+        if (!guid) throw new Error("当前会话没有工作目录标识");
+        return resolveAgentPath(guid, filePath, false).target;
+      });
+    } catch (error) { return { ok: false, ...toToolError(error) }; }
+  },
   ReadChatFile: async (args: import("./chat-file").ChatFileArgs): Promise<any> => {
     try {
       const { readChatFile } = await import("./chat-file");

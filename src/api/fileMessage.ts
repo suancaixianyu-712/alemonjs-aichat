@@ -63,7 +63,7 @@ const normalizeMedia = (item: any): FileMediaItem => ({
   FileName: textField(item.FileName, item.file_name, item.name, item.file),
   Url: textField(item.Url, item.url, item.download_url),
   FileSize: Number(item.FileSize ?? item.file_size ?? item.size) || undefined,
-  MimeType: textField(item.MimeType, item.mime_type),
+  MimeType: textField(item.MimeType, item.mime_type, item.mimeType),
 });
 
 /** 框架媒体为准；保留原始文件 ID，框架字段不完整时从原始事件补齐。 */
@@ -73,6 +73,7 @@ export const collectFileMedia = (event: any): FileMediaItem[] => {
     ...(Array.isArray(event.MessageMedia) ? event.MessageMedia : []).map(normalizeMedia),
     ...(raw && typeof raw === "object" ? [normalizeMedia(raw)] : []),
     ...extractFilesFromReplySegments(event.value?.message),
+    ...extractFilesFromReplySegments(event.value?.content),
     ...extractFilesFromReplySegments(event.reply?.message),
   ].filter((item) => item && ["file", "audio", "record", "video"].includes(String(item.Type).toLowerCase()));
   const files: FileMediaItem[] = [];
@@ -240,8 +241,35 @@ export const fetchFileBuffer = async (
       note("NapCat", "若 NapCat 在 Docker 中，请开启 OneBot 配置 enableLocalFile2Url，使 get_file 返回 base64，或正确共享文件目录");
     }
   }
+  if (!buffer && e.Platform === "scbbs" && item.FileId) {
+    try {
+      const [client] = useClient<{ getFile: (id: string) => Promise<unknown> }>(e);
+      const raw = await client.getFile(item.FileId);
+      const source = normalizeFileResponse(raw);
+      let metadata: any = raw;
+      for (let i = 0; i < 8; i++) {
+        if (Array.isArray(metadata)) { metadata = metadata[0]; continue; }
+        if (metadata && typeof metadata === "object" && "code" in metadata) {
+          if (![200, 2000].includes(Number(metadata.code))) { metadata = null; break; }
+          metadata = metadata.data; continue;
+        }
+        break;
+      }
+      if (source?.url && metadata && typeof metadata === "object") {
+        item.FileName ||= textField(metadata.file_name, metadata.filename);
+        item.MimeType ||= textField(metadata.mime_type, metadata.mimeType);
+        item.FileSize ||= Number(metadata.file_size ?? metadata.size) || undefined;
+      }
+      // 社区文件接口仅返回下载 URL；不接受远端消息提供的本地路径。
+      if (source?.url && metadata && /^https?:\/\//i.test(source.url)) {
+        if (item.FileSize && item.FileSize > MAX_FILE_SIZE) { note("scbbs.getFile", "文件超过 50 MB"); return null; }
+        buffer = await readSource({ url: source.url });
+        note("scbbs.getFile", buffer ? "已下载文件" : "下载失败");
+      } else note("scbbs.getFile", "无有效下载链接／接口返回失败");
+    } catch { note("scbbs.getFile", "文件接口调用失败或文件未通过审核"); }
+  }
   if (!buffer && !item.Url && !item.FileId) note("source", "事件没有下载链接或文件 ID");
-  if (!buffer && e.Platform !== "onebot" && item.FileId) note("source", "当前平台尚未提供按 ID 下载接口");
+  if (!buffer && !["onebot", "scbbs"].includes(e.Platform) && item.FileId) note("source", "当前平台尚未提供按 ID 下载接口");
   console.log(`[fileMessage] ${buffer ? "downloaded" : "failed"} bytes=${buffer?.length || 0} elapsedMs=${Date.now() - started}${buffer ? "" : ` stages=${diagnostics.join("; ")}`}`);
   return buffer;
 };
@@ -268,7 +296,7 @@ export const resolveFileContent = async (
   item: FileMediaItem,
   e: any,
 ): Promise<ResolvedFile | null> => {
-  const fileName = item.FileName || "未命名文件";
+  let fileName = item.FileName || "未命名文件";
   const fileSize = item.FileSize;
   const baseInfo: ResolvedFile = {
     fileName,
@@ -277,12 +305,15 @@ export const resolveFileContent = async (
   };
 
   try {
-    baseInfo.attachmentId = await saveAttachment(e, item);
     if (fileSize && fileSize > MAX_FILE_SIZE) {
+      baseInfo.attachmentId = await saveAttachment(e, item);
       return { ...baseInfo, error: "文件超过 50 MB 处理上限" };
     }
     const diagnostics: string[] = [];
     const buffer = await fetchFileBuffer(item, e, diagnostics);
+    fileName = item.FileName || fileName;
+    baseInfo.fileName = fileName;
+    baseInfo.attachmentId = await saveAttachment(e, item);
     if (buffer) {
       await cacheAttachmentBuffer(attachmentScope(e), baseInfo.attachmentId, buffer);
       baseInfo.fileSize = buffer.length;
@@ -316,6 +347,12 @@ export const resolveFileContent = async (
         textContent: extracted.content, truncated: extracted.truncated,
       };
     }
+    const { extractDocumentText, isDocumentFile } = await import("./document-reader");
+    if (isDocumentFile(fileName)) {
+      const document = await extractDocumentText(buffer, fileName);
+      return { ...baseInfo, kind: "text", textContent: document.text.slice(0, MAX_TEXT_CHARS),
+        truncated: document.truncated || document.text.length > MAX_TEXT_CHARS };
+    }
     return { ...baseInfo, kind: "media", url: item.Url || undefined };
   } catch (error: any) {
     console.error(`[fileMessage] 处理文件失败: ${fileName}`, error);
@@ -334,14 +371,15 @@ export const extractFilesFromReplySegments = (segments: any[]): FileMediaItem[] 
   const files: FileMediaItem[] = [];
   for (const segment of segments) {
     if (!segment || typeof segment !== "object") continue;
-    if (["file", "record", "video"].includes(segment.type)) {
+    if (["file", "scfile", "record", "video"].includes(segment.type)) {
       const data = segment.data || {};
       files.push({
-        Type: segment.type === "file" ? "file" : segment.type,
+        Type: ["file", "scfile"].includes(segment.type) ? "file" : segment.type,
         Url: textField(data.url, data.download_url),
         FileId: textField(data.file_id, data.fileId, data.fid, data.id),
-        FileName: data.file_name || data.file,
-        FileSize: data.file_size ? Number(data.file_size) : undefined,
+        FileName: data.file_name || data.name || data.filename || data.file,
+        FileSize: Number(data.file_size ?? data.size) || undefined,
+        MimeType: textField(data.mime_type, data.mimeType),
       });
     }
   }

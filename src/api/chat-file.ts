@@ -2,6 +2,7 @@ import mime from "mime-types";
 import { readArchive } from "./archive-reader";
 import { attachmentScope, listAttachments, loadAttachment, cacheAttachmentBuffer } from "./attachment-store";
 import { fetchFileBuffer, isImageFile, isTextLikeFile } from "./fileMessage";
+import { extractDocumentText, isDocumentFile } from "./document-reader";
 
 export type ChatFileArgs = {
   action?: "list" | "inspect" | "read";
@@ -59,5 +60,24 @@ export const readChatFile = async (args: ChatFileArgs) => {
   const buffer = cached || await fetchFileBuffer(record.source, args.attachmentEvent, diagnostics);
   if (!buffer) throw new Error(`附件内容尚未下载，无法解压。具体阶段：${diagnostics.join("；") || "未取得有效文件来源"}。先修复下载／NapCat 配置，不要反复让用户重新上传。`);
   if (!cached) await cacheAttachmentBuffer(scope, record.id, buffer);
-  return parseChatFileBuffer(buffer, record.fileName, args, record.source.MimeType);
+  return parseChatFileContent(buffer, record.fileName, args, record.source.MimeType);
+};
+
+/** Office 文档先提取正文，避免被 ZIP 魔数识别为普通压缩包。 */
+export const parseChatFileContent = async (buffer: Buffer, name: string, args: ChatFileArgs, mimeType?: string): Promise<any> => {
+  if (isDocumentFile(name) && !args.entryPath) {
+    const result = await extractDocumentText(buffer, name);
+    const parsed = parseChatFileBuffer(Buffer.from(result.text), `${name}.txt`, args, "text/plain");
+    return { ...parsed, fileName: name, fileSize: buffer.length, kind: "document",
+      truncated: parsed.truncated || result.truncated,
+      ...(result.truncated ? { extractionLimit: "文档最多提取前 200 页 PDF／200 万字符，其余内容未解析" } : {}) };
+  }
+  if (args.entryPath && args.action === "read") {
+    const entries = readArchive(buffer, name);
+    if (!entries) throw new Error("该附件不是受支持的压缩包，不能指定 entryPath");
+    const entry = entries.find((entry) => entry.path === args.entryPath);
+    if (!entry) throw new Error("包内没有该路径，请先 inspect 查看目录");
+    return parseChatFileContent(entry.read(), entry.path, { ...args, entryPath: undefined });
+  }
+  return parseChatFileBuffer(buffer, name, args, mimeType);
 };

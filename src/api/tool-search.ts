@@ -37,6 +37,7 @@ export const searchToolDefinition = {
 
 /** 每个工具的中文别名与 20 字以内简介（手写，不要截断 description） */
 export const TOOL_META: Record<string, { summary: string; aliases: string[] }> = {
+  SendChatFile: { summary: "发送文件到当前 scbbs 会话", aliases: ["发送文件", "发文件", "附件", "导出", "下载", "发送附件"] },
   ManageCredentials: { summary: "主人私聊加密保存和管理凭据", aliases: ["凭据", "密码", "账号", "token", "密钥", "私钥", "保存密码", "credentials", "secret"] },
   MiniMaxVoice: { summary: "MiniMax 语音合成", aliases: ["语音", "配音", "说话", "音色", "朗读", "tts"] },
   GenerateSpeech: { summary: "OpenAI TTS 合成语音", aliases: ["语音", "说话", "朗读", "配音", "tts", "openai语音", "gpt语音", "自然语音", "gpt-4o-mini-tts"] },
@@ -66,7 +67,7 @@ export const TOOL_META: Record<string, { summary: string; aliases: string[] }> =
   AgentSearchFiles: { summary: "按名称和内容搜文件", aliases: ["搜索文件", "查找", "grep", "代码搜索"] },
   AgentUploadFileToR2: { summary: "上传文件到 R2 拿链接", aliases: ["上传", "r2", "外链", "分享文件", "发布文件"] },
   ReadRemoteFile: { summary: "按 URL 读取远程文件", aliases: ["读取文件", "下载", "附件", "远程文件", "url"] },
-  ReadChatFile: { summary: "解析聊天附件、图片、代码与压缩包", aliases: ["文件", "附件", "图片", "压缩包", "解压", "zip", "tar", "gz", "目录", "读取文件"] },
+  ReadChatFile: { summary: "解析附件、文档、图片与压缩包", aliases: ["文件", "附件", "图片", "文档", "PDF", "Word", "Excel", "docx", "xlsx", "压缩包", "解压", "zip", "tar", "gz", "目录", "读取文件"] },
   GetCommand: { summary: "获取框架指令列表", aliases: ["指令列表", "帮助", "命令列表", "菜单"] },
   LocalBrowser: { summary: "本机浏览器搜索/访问网页", aliases: ["搜索", "联网", "上网", "网页", "浏览器", "百度", "谷歌", "新闻"] },
   ExecuteAlemonCommand: { summary: "执行 AlemonJS 指令", aliases: ["执行指令", "指令", "配置", "切换"] },
