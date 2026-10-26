@@ -243,3 +243,8 @@ CLI 的多轮执行依据 [OpenAI 官方的会话续接说明](https://learn.cha
 ```
 #添加ai deepseek https://api.deepseek.com/v1 sk-kfcvme50 deepseek-v4-flash
 ```
+
+## 内置 NapCat 技能
+
+插件自带 `skills/napcat/`（OneBot HTTP）。加载技能详情时会把 `{{NAPCAT_BASE_URL}}` / `{{NAPCAT_TOKEN}}` 替换为运行时值：Token 读 `onebot.token`；Base 读 `aiChat.napcatHttpBase` 或环境变量 `NAPCAT_BASE_URL`，默认 `http://127.0.0.1:3005`。不要把公网 IP 或密钥写进技能文件。
+
