@@ -73,6 +73,7 @@ export const TOOL_META: Record<string, { summary: string; aliases: string[] }> =
   ExecuteAlemonCommand: { summary: "执行 AlemonJS 指令", aliases: ["执行指令", "指令", "配置", "切换"] },
   SubscribeNextUserMessage: { summary: "订阅用户下一条发言", aliases: ["等待", "下一条", "稍后", "订阅"] },
   ScheduleAITask: { summary: "设置/查看定时 AI 任务", aliases: ["定时", "提醒", "闹钟", "计划任务", "稍后提醒"] },
+  ConfigureRandomHeartbeat: { summary: "查看/调整随机心跳区间", aliases: ["随机心跳", "心跳区间", "心跳", "主动消息间隔"] },
   MemoryOperation: { summary: "读写长期记忆与归档", aliases: ["记忆", "记住", "回忆", "历史", "归档"] },
   ping: { summary: "检测主机是否可达", aliases: ["ping", "连通", "网络检测", "延迟"] },
   http_request: { summary: "发送 HTTP 请求", aliases: ["http", "接口", "api", "请求", "网页"] },

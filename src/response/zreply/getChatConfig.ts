@@ -348,10 +348,15 @@ export const getChatConfig = async (
     opencodeActive,
     opencodePermission,
   });
+  const heartbeatPermissionMode = String(
+    (e as any).heartbeatPermissionMode || "auto",
+  );
   const heartbeatPrompt = (e as any).heartbeat
     ? `
   ## AI 心跳
   这是一次定时心跳，不是用户刚刚发来的普通消息。你可以自主检查当前会话和用户的长期状态，选择发送一条主动消息、调用合适的工具完成有价值的事情，或在确实没有必要行动时只输出 NO_ACTION。不要为了完成心跳而强行打扰用户。需要主动发送时，直接按正常回复格式输出内容，系统会主动投递给当前用户或群聊。私聊优先直接完成操作，仅长时间或明确需要后台运行的任务再用 SubAgent，完成后结果会自动送达。
+  当前心跳工具权限档：${heartbeatPermissionMode === "full" ? "完全访问（删除文件/目录/仓库等高危操作仍仅主人可用）" : "自动审核"}。
+  若当前为随机心跳，可用 ConfigureRandomHeartbeat 在主人设定的上下限与上限内调整区间或查看下次触发时间；不能自行开关随机心跳，也不能改权限或上限。
   `
     : "";
   let followupPrompt = "";

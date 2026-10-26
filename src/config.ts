@@ -42,10 +42,24 @@ export type HeartbeatTask = {
   platform: string;
   spaceId: string;
   isPrivate: boolean;
-  mode: "daily" | "interval";
+  mode: "daily" | "interval" | "random";
   value: string;
   nextRunAt: number;
   createdAt: number;
+  /** random 模式：区间下限（毫秒） */
+  minMs?: number;
+  /** random 模式：区间上限（毫秒） */
+  maxMs?: number;
+  /** random 模式：单次间隔天花板（毫秒），AI 不可突破 */
+  ceilingMs?: number;
+  /** random 模式开关；false 时不触发但可保留区间 */
+  enabled?: boolean;
+  /** 心跳触发时工具权限档：auto | full */
+  permissionMode?: "auto" | "full";
+  /** 主人设定的原始下限；AI 调整时不得突破 */
+  ownerMinMs?: number;
+  /** 主人设定的原始上限；AI 调整时不得突破 */
+  ownerMaxMs?: number;
 };
 
 type ArchivedChatRecord = {

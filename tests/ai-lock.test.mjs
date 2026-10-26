@@ -64,3 +64,32 @@ test("AI列表显示别名但仍按内部名称判断锁定状态", () => {
     ["1. other/中转站A（gpt-5）", "2. 🔒 other/中转站B（gpt-5）"],
   );
 });
+
+test("删除AI按#ai列表序号/范围解析为配置名（delete-by-index）", () => {
+  assert.deepEqual(resolveAISelection("1", aiList), {
+    ok: true,
+    names: ["deepseek/deepseek-chat"],
+  });
+  assert.deepEqual(resolveAISelection("1 3", aiList), {
+    ok: true,
+    names: ["deepseek/deepseek-chat", "other/local model"],
+  });
+  assert.deepEqual(resolveAISelection("1-3", aiList), {
+    ok: true,
+    names: [
+      "deepseek/deepseek-chat",
+      "openai/gpt-5",
+      "other/local model",
+    ],
+  });
+  // 名称删除能力保留
+  assert.deepEqual(resolveAISelection("openai/gpt-5", aiList), {
+    ok: true,
+    names: ["openai/gpt-5"],
+  });
+  // 任一无效序号整体失败，避免只删一部分
+  assert.deepEqual(resolveAISelection("2 99", aiList), {
+    ok: false,
+    invalid: ["99"],
+  });
+});

@@ -1183,6 +1183,33 @@ export const tools: ChatCompletionTool[] = [
   {
     type: "function",
     function: {
+      name: "ConfigureRandomHeartbeat",
+      description:
+        "查看或调整当前会话的随机心跳区间。仅当主人已开启随机心跳时可用。set 时 min/max 必须夹在主人设定的上下限内，且不超过随机心跳上限；不能开关随机心跳、不能改权限或上限。时间可用 15m/2h 或毫秒数。",
+      parameters: {
+        type: "object",
+        properties: {
+          action: {
+            type: "string",
+            description: "操作类型：get 查看；set 在主人上下限内调整区间",
+            enum: ["get", "set"],
+          },
+          min: {
+            type: "string",
+            description: "action=set 时可选，新下限，如 20m 或毫秒数字符串",
+          },
+          max: {
+            type: "string",
+            description: "action=set 时可选，新上限，如 1h 或毫秒数字符串",
+          },
+        },
+        required: ["action"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "MemoryOperation",
       description:
         "读写用户长期记忆、检索历史聊天归档。用户透露以后有用的信息时主动记录，不必等“记住”。日常记录用 operation=append、dataType=user（服务端自动加时间并追加，不覆盖）。记录要保留昵称或ID、谁说了什么、涉及对象和原话关键细节，不要压缩成标签；第三方评价记为说话者的主观看法。set 仅用于确需整体替换。不要记录密码、令牌等秘密、一次性指令或未经表达的推测。不要记录或修改机器人的真实名字，用户对机器人的称呼只记为当时的称呼。延续旧话题可获取或搜索 chatHistory。",
@@ -3419,7 +3446,9 @@ const extractArchiveWithinWorkspace = async ({
 };
 
 export const assertGroupFullToolAccess = async (event: any, functionName: string, args: any) => {
-  const mode = await redisClient.redis.get(`ai:third_party_tool:permission:${event.guid}`);
+  const mode = event?.heartbeat
+    ? String(event.heartbeatPermissionMode || "auto")
+    : await redisClient.redis.get(`ai:third_party_tool:permission:${event.guid}`);
   const full = hasGroupFullAccess(event, String(mode || ""));
   if (!full || event.IsMaster === true) return full;
   if (functionName === "AgentDeleteFile") {
@@ -3843,6 +3872,96 @@ export const availableTools = {
       success: true,
       task,
       message: `定时任务已创建，将在 ${new Date(runAtTimestamp).toLocaleString("zh-CN")} 触发`,
+    };
+  },
+
+  ConfigureRandomHeartbeat: async ({
+    action,
+    min,
+    max,
+    guid,
+  }: {
+    action: "get" | "set";
+    min?: string | number;
+    max?: string | number;
+    guid: string;
+  }) => {
+    const {
+      clampRandomRangeForAI,
+      computeRandomNextRunAt,
+      formatDurationMs,
+      formatHeartbeatStatus,
+      resolveDurationInput,
+    } = await import("./random-heartbeat");
+
+    if (!guid) {
+      return { success: false, error: "缺少当前会话标识" };
+    }
+    const task = await redisClient.getHeartbeatTask(guid);
+    if (action === "get") {
+      return {
+        success: true,
+        status: formatHeartbeatStatus(task),
+        task: task?.mode === "random" ? task : null,
+      };
+    }
+    if (action !== "set") {
+      return { success: false, error: "action 只能是 get 或 set" };
+    }
+    if (!task || task.mode !== "random" || task.enabled === false) {
+      return {
+        success: false,
+        error: "当前没有已开启的随机心跳；请主人先 #设置随机心跳 / #开启随机心跳",
+      };
+    }
+    const boundMin = Number(task.ownerMinMs ?? task.minMs);
+    const boundMax = Number(task.ownerMaxMs ?? task.maxMs);
+    if (!Number.isFinite(boundMin) || !Number.isFinite(boundMax)) {
+      return { success: false, error: "随机心跳区间配置损坏，请主人重新设置" };
+    }
+    const currentMin = Number(task.minMs) || boundMin;
+    const currentMax = Number(task.maxMs) || boundMax;
+    const nextMin =
+      min == null || min === "" ? currentMin : resolveDurationInput(min);
+    const nextMax =
+      max == null || max === "" ? currentMax : resolveDurationInput(max);
+    if (nextMin == null || nextMax == null) {
+      return { success: false, error: "min/max 格式无效，请使用如 15m、2h 或毫秒数" };
+    }
+    const clamped = clampRandomRangeForAI({
+      requestedMinMs: nextMin,
+      requestedMaxMs: nextMax,
+      ownerMinMs: boundMin,
+      ownerMaxMs: boundMax,
+      ceilingMs: task.ceilingMs,
+    });
+    if (!clamped.ok) {
+      return { success: false, error: clamped.error };
+    }
+    const nextRunAt = computeRandomNextRunAt(
+      Date.now(),
+      clamped.minMs,
+      clamped.maxMs,
+      task.ceilingMs,
+    );
+    const updated = {
+      ...task,
+      minMs: clamped.minMs,
+      maxMs: clamped.maxMs,
+      value: `${clamped.minMs}-${clamped.maxMs}`,
+      ownerMinMs: boundMin,
+      ownerMaxMs: boundMax,
+      nextRunAt,
+      enabled: true,
+    };
+    await redisClient.setHeartbeatTask(updated);
+    return {
+      success: true,
+      min: formatDurationMs(clamped.minMs),
+      max: formatDurationMs(clamped.maxMs),
+      nextRunAt,
+      nextRunAtText: new Date(nextRunAt).toLocaleString("zh-CN"),
+      message: `已将随机心跳区间调整为 ${formatDurationMs(clamped.minMs)}-${formatDurationMs(clamped.maxMs)}，下次 ${new Date(nextRunAt).toLocaleString("zh-CN")}`,
     };
   },
 

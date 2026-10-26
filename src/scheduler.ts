@@ -7,13 +7,17 @@ import type {
 } from "./config";
 import { CApiReply } from "./response/zreply/capi";
 import { formatRestartDuration } from "./api/restart-recovery";
+import {
+  computeNextHeartbeatRunAt,
+  shouldRunHeartbeat,
+} from "./api/random-heartbeat";
 
 const SCHEDULER_INTERVAL_MS = 30_000;
 const runningTasks = new Set<string>();
 
 type TriggerTask =
   | ScheduledAITask
-  | (HeartbeatTask & { heartbeat: true })
+  | (HeartbeatTask & { heartbeat: true; heartbeatPermissionMode?: string })
   | RestartRecoveryTask;
 
 const getSyntheticPrompt = (task: TriggerTask) =>
@@ -29,6 +33,8 @@ const createSyntheticEvent = (task: TriggerTask) => {
     "restartRecovery" in task && task.restartRecovery
       ? prompt
       : `定时任务：${prompt}`;
+  const heartbeat =
+    "heartbeat" in task && task.heartbeat === true;
   return {
     name: task.isPrivate ? "private.message.create" : "message.create",
     guid: task.guid,
@@ -42,7 +48,10 @@ const createSyntheticEvent = (task: TriggerTask) => {
     at: false,
     atBot: false,
     regexTriggered: true,
-    heartbeat: "heartbeat" in task && task.heartbeat,
+    heartbeat,
+    heartbeatPermissionMode: heartbeat
+      ? ("permissionMode" in task && task.permissionMode) || "auto"
+      : undefined,
     restartRecovery: "restartRecovery" in task && task.restartRecovery,
     msg: messageText,
     MessageText: messageText,
@@ -124,14 +133,32 @@ const runScheduledAITasks = async () => {
   const heartbeats = await redisClient.getAllHeartbeatTasks();
   for (const heartbeat of heartbeats) {
     const taskKey = `heartbeat:${heartbeat.guid}`;
-    if (heartbeat.nextRunAt > now || runningTasks.has(taskKey)) continue;
+    if (!shouldRunHeartbeat(heartbeat, now) || runningTasks.has(taskKey)) {
+      continue;
+    }
 
-    const nextRunAt =
-      heartbeat.mode === "daily"
-        ? heartbeat.nextRunAt + 24 * 60 * 60 * 1000
-        : heartbeat.nextRunAt + Number(heartbeat.value);
+    const nextRunAt = computeNextHeartbeatRunAt(heartbeat, now);
+    if (
+      heartbeat.mode === "random" &&
+      heartbeat.ceilingMs != null &&
+      heartbeat.ceilingMs < (heartbeat.minMs ?? 0)
+    ) {
+      logger.warn?.({
+        message: "随机心跳 ceiling 小于 min，已按 ceiling 夹紧",
+        guid: heartbeat.guid,
+        ceilingMs: heartbeat.ceilingMs,
+        minMs: heartbeat.minMs,
+      });
+    }
     await redisClient.setHeartbeatTask({ ...heartbeat, nextRunAt });
-    void triggerTask({ ...heartbeat, heartbeat: true }, taskKey);
+    void triggerTask(
+      {
+        ...heartbeat,
+        heartbeat: true,
+        heartbeatPermissionMode: heartbeat.permissionMode || "auto",
+      },
+      taskKey,
+    );
   }
 };
 
