@@ -2,9 +2,33 @@
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import { getConfigValue } from "alemonjs";
 import { getAiChatConfigValue } from "../config/app";
 const value = getAiChatConfigValue();
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
+
+const DEFAULT_NAPCAT_HTTP_BASE = "http://127.0.0.1:3005";
+
+/** NapCat HTTP 技能占位符：Token←onebot.token；Base←配置/环境/默认 loopback。 */
+export const resolveNapcatSkillPlaceholders = () => {
+  const root = (getConfigValue() as Record<string, any>) || {};
+  const onebot = root.onebot && typeof root.onebot === "object" ? root.onebot : {};
+  const aiChat = getAiChatConfigValue();
+  const fromConfig = String(aiChat.napcatHttpBase || "").trim();
+  const fromEnv = String(process.env.NAPCAT_BASE_URL || "").trim();
+  const baseUrl = fromConfig || fromEnv || DEFAULT_NAPCAT_HTTP_BASE;
+  const token =
+    String(process.env.NAPCAT_TOKEN || "").trim() ||
+    String(onebot.token || "").trim();
+  return { baseUrl, token };
+};
+
+const injectSkillPlaceholders = (content: string) => {
+  const { baseUrl, token } = resolveNapcatSkillPlaceholders();
+  return content
+    .replaceAll("{{NAPCAT_BASE_URL}}", baseUrl)
+    .replaceAll("{{NAPCAT_TOKEN}}", token || "{{NAPCAT_TOKEN}}");
+};
 
 // 通用函数: 根据路径获取技能列表
 export const loadSkillsFromPath = (skillsDir: string) => {
@@ -96,7 +120,15 @@ export const loadSkillDetail = (skillName: string) => {
     }
   }
 
-  return result;
+  if (!result) return null;
+
+  return {
+    ...result,
+    details: result.details.map((item) => ({
+      ...item,
+      content: injectSkillPlaceholders(item.content),
+    })),
+  };
 };
 
 // 从指定路径加载技能详情
