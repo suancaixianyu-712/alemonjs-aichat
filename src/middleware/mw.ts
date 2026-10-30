@@ -416,6 +416,29 @@ export default onMiddleware(selects, async (event, next) => {
     }
   }
 
+  // 记录最近几条群消息作为上下文，供 AI 接话时理解语境。私聊内容不写入。
+  if (
+    event.name !== "private.message.create" &&
+    String(event.UserId || "") !== String(event.bot?.user_id || "")
+  ) {
+    const contextImageMark =
+      Array.isArray(event.img) && event.img.length > 0 ? " [图片]" : "";
+    const contextText = `${String(event.msg || "")}${contextImageMark}`.trim();
+    // 指令不进入聊天记录，避免 /设置聊天记录 之类的命令污染上下文
+    if (contextText && !/^[/#]/.test(contextText)) {
+      try {
+        await redisClient.appendChatContext(event.guid, event.Platform, {
+          userID: String(event.UserId || ""),
+          name: String(event.UserName || event.UserId || ""),
+          text: contextText,
+          mid: String((event as any).MessageId || ""),
+        });
+      } catch (err) {
+        console.log("记录会话上下文失败", err);
+      }
+    }
+  }
+
   // 在进入具体响应路由前记录群消息，避免非 AI 路由消费消息时漏记。
   if (
     event.name !== "private.message.create" &&

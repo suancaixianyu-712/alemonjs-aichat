@@ -98,6 +98,17 @@ export type FollowupMessageRecord = {
   text: string;
   at: number;
 };
+export type ChatContextRecord = {
+  userID: string;
+  name: string;
+  text: string;
+  at: number;
+  /** 平台消息 ID，用来在提示词里排除当前这条消息 */
+  mid?: string;
+};
+/** 默认携带的聊天记录条数 */
+export const DEFAULT_CHAT_CONTEXT_COUNT = 3;
+const CHAT_CONTEXT_TTL_SECONDS = 86400;
 export const DEFAULT_CAPI_CONTEXT_LIMIT = 512000;
 const ARCHIVED_CHAT_SUMMARY_MAX_LENGTH = 240;
 const ARCHIVED_CHAT_DETAIL_MAX_LENGTH = 4000;
@@ -1734,6 +1745,7 @@ class db {
         "ai:followup:active:",
         "ai:followup:watch:",
         "ai:followup:log:",
+        "ai:followup:context:",
         "ai:session:",
       ];
       for (const prefix of transientPrefixes) {
@@ -1756,6 +1768,8 @@ class db {
       `ai:followup:watch:${guid}:*`,
       `ai:followup:log:${guid}`,
       `ai:followup:log:${guid}:*`,
+      `ai:followup:context:${guid}`,
+      `ai:followup:context:${guid}:*`,
       `ai:session:${guid}`,
     ];
     const keys = (
@@ -1827,6 +1841,105 @@ class db {
     return `ai:followup:log:${guid}:${platform || "default"}`;
   }
 
+  private getFollowupContextKey(guid: string, platform?: string) {
+    return `ai:followup:context:${guid}:${platform || "default"}`;
+  }
+
+  /** 发给模型的聊天记录条数（0 表示关闭） */
+  async getChatContextCount(guid: string): Promise<number> {
+    const raw = await this.redis.get(`ai:chat_context_count:${guid}`);
+    // redis 未设置时返回 null；Number(null) === 0，会被误当成「关闭」
+    if (!raw) return DEFAULT_CHAT_CONTEXT_COUNT;
+    const stored = Number(raw);
+    return Number.isInteger(stored) && stored >= 0
+      ? Math.min(20, stored)
+      : DEFAULT_CHAT_CONTEXT_COUNT;
+  }
+
+  /** 设置聊天记录条数，0 表示关闭，最大 20 */
+  async setChatContextCount(guid: string, count: number): Promise<number> {
+    const value = Math.min(20, Math.max(0, Math.floor(Number(count) || 0)));
+    await this.redis.set(`ai:chat_context_count:${guid}`, String(value));
+    return value;
+  }
+
+  /**
+   * 记录一条群聊上下文，不走一分钟跟进窗口。
+   * 私聊内容永远不写入，避免串到群聊里。
+   */
+  async appendChatContext(
+    guid: string,
+    platform: string | undefined,
+    entry: {
+      userID: string;
+      name: string;
+      text: string;
+      mid?: string;
+      isPrivate?: boolean;
+    },
+  ): Promise<void> {
+    if (!guid) return;
+    if (!entry || entry.isPrivate === true) return;
+    const limit = await this.getChatContextCount(guid);
+    if (limit <= 0) return;
+    const text = String(entry.text || "")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (!text) return;
+    const record: ChatContextRecord = {
+      userID: String(entry.userID || ""),
+      name: String(entry.name || entry.userID || "未知").slice(0, 80),
+      text: text.slice(0, 300),
+      at: Date.now(),
+      mid: String(entry.mid || "") || undefined,
+    };
+    const keep = Math.max(limit * 3, 20);
+    const key = this.getFollowupContextKey(guid, platform);
+    await this.redis
+      .pipeline()
+      .rpush(key, JSON.stringify(record))
+      .ltrim(key, -keep, -1)
+      .expire(key, CHAT_CONTEXT_TTL_SECONDS)
+      .exec();
+  }
+
+  /**
+   * 取最近几条群聊上下文。
+   * 当前消息在进入路由前已经记过一条，读取时用 mid 排除，避免模型看到重复内容。
+   */
+  async getChatContext(
+    guid: string,
+    platform?: string,
+    count?: number,
+    excludeMessageId?: string,
+  ): Promise<ChatContextRecord[]> {
+    if (!guid) return [];
+    let limit = Number.isInteger(count)
+      ? Number(count)
+      : await this.getChatContextCount(guid);
+    if (limit <= 0) return [];
+    limit = Math.min(20, limit);
+    const excludeMid = String(excludeMessageId || "");
+    const fetchCount = excludeMid ? limit + 1 : limit;
+    const rows = await this.redis.lrange(
+      this.getFollowupContextKey(guid, platform),
+      -fetchCount,
+      -1,
+    );
+    const list: ChatContextRecord[] = [];
+    for (const row of rows) {
+      try {
+        const item = JSON.parse(row) as ChatContextRecord;
+        if (!item || typeof item.at !== "number" || !item.text) continue;
+        if (excludeMid && item.mid === excludeMid) continue;
+        list.push(item);
+      } catch {
+        continue;
+      }
+    }
+    return list.slice(-limit);
+  }
+
   /**
    * AI 实际回复后，或一分钟窗口内有人新触发时，记下这个用户。
    * 同一群共用一份一分钟消息记录，不按人各开一份。
@@ -1873,7 +1986,11 @@ class db {
   async appendFollowupMessage(
     guid: string,
     platform: string | undefined,
-    entry: { userID: string; name: string; text: string },
+    entry: {
+      userID: string;
+      name: string;
+      text: string;
+    },
   ): Promise<void> {
     if (!guid) return;
     if (!(await this.isFollowupWindowActive(guid, platform))) return;

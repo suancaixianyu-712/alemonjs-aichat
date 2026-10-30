@@ -490,6 +490,48 @@ export default onResponse(selects, async (e, next) => {
     return;
   }
 
+  // 设置携带的聊天记录条数
+  if (/^(\/|#)设置聊天记录\s*(\d+)?$/i.test(e.msg)) {
+    if (!e.IsMaster) {
+      message.send(format(Text("仅管理员可设置聊天记录条数。")));
+      return;
+    }
+    if (
+      e.name === "private.message.create" ||
+      (e as any).Name === "private.message.create"
+    ) {
+      message.send(
+        format(Text("聊天记录条数只对群聊生效，请在群里发送：#设置聊天记录 <0-20>")),
+      );
+      return;
+    }
+    const match = e.msg.match(/^(\/|#)设置聊天记录\s*(\d+)?$/i);
+    // 不带数字时只提示格式，不能把「空」当成 0 直接关掉
+    if (!match || match[2] === undefined) {
+      message.send(
+        format(Text("格式：#设置聊天记录 <0-20>\n0 表示不携带，默认 3 条。")),
+      );
+      return;
+    }
+    const num = Math.floor(Number(match[2]));
+    if (!Number.isFinite(num) || num < 0 || num > 20) {
+      message.send(
+        format(Text("格式：#设置聊天记录 <0-20>\n0 表示不携带，默认 3 条。")),
+      );
+      return;
+    }
+    const saved = await redisClient.setChatContextCount(e.guid, num);
+    message.send(
+      format(
+        Text(
+          saved === 0
+            ? "已关闭聊天记录携带，AI 只看到当前这条消息"
+            : `已设置为携带最近 ${saved} 条聊天记录（不含当前这条和私聊内容）`,
+        ),
+      ),
+    );
+    return;
+  }
   // 设置图床
   if (/(\/|#)切换图床(.*)$/i.test(e.msg)) {
     const match = e.msg.match(/(\/|#)切换图床(.*)$/i);

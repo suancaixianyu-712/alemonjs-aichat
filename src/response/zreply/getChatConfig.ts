@@ -359,6 +359,41 @@ export const getChatConfig = async (
   若当前为随机心跳，可用 ConfigureRandomHeartbeat 在主人设定的上下限与上限内调整区间或查看下次触发时间；不能自行开关随机心跳，也不能改权限或上限。
   `
     : "";
+  // 最近几条群聊消息作为上下文，仅群聊生效
+  let contextPrompt = "";
+  if (
+    e.name !== "private.message.create" &&
+    (e as any).Name !== "private.message.create"
+  ) {
+    try {
+      const ctxList =
+        (await redisClient.getChatContext(
+          e.guid,
+          e.Platform,
+          undefined,
+          String((e as any).MessageId || ""),
+        )) || [];
+      if (ctxList.length > 0) {
+        const ctxLines = ctxList
+          .map((item) => {
+            const time = new Date(item.at);
+            const clock = `${String(time.getHours()).padStart(2, "0")}:${String(time.getMinutes()).padStart(2, "0")}`;
+            return `- [${clock}] ${item.name}(${item.userID}): ${item.text}`;
+          })
+          .join("\n");
+        contextPrompt = `
+  ## 最近聊天记录（上下文）
+  下面是这个群最近的 ${ctxList.length} 条聊天记录（不含当前这条），按时间从早到晚排列，只用来理解语境。
+  - 不要把这些消息当成刚发给你的新消息，也不要逐条回答
+  - 只回复当前用户这一条发言；若对方是在跟别人说话、与你无关，可以只输出 ${botName}:[]
+  - 不要主动提起或复述别人的私聊内容
+  ${ctxLines}
+  `;
+      }
+    } catch (err) {
+      console.log("读取会话上下文失败", err);
+    }
+  }
   let followupPrompt = "";
   if ((e as any).followupJudgement) {
     const records = await redisClient.getFollowupMessages(e.guid, e.Platform);
@@ -412,6 +447,7 @@ export const getChatConfig = async (
       : "- 搜索网页/访问网址用 LocalBrowser（search/visit）；仅能访问公网 HTTP/HTTPS 页面"
   }
   ${heartbeatPrompt}
+  ${contextPrompt}
   ${followupPrompt}
   - 读取会话现有项目：Agentxxxxx...（只读操作无需开启agent）；创建/修改/执行等写操作需主人先 #开启agent，或当前群已开启完全访问；删除权限只看下方「当前用户权限」
   - 下方「当前用户权限」是本轮实际权限。没有列出的能力不要调用；审核或权限被拒绝后，不要改命令、换工具或拆步骤再试

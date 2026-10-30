@@ -15,6 +15,7 @@
     "test:xianyu-game": "npm run build && node tests/xianyu-game-tool.test.mjs",
     "test:tool-search": "npm run build && node --experimental-test-module-mocks --test --test-force-exit tests/tool-search.test.mjs",
     "test:codex": "npm run build && node --experimental-test-module-mocks --test tests/codex.test.mjs tests/codex-sessions.test.mjs",
+    "test:context": "npm run build && node --experimental-test-module-mocks --test tests/chat-context.test.mjs",
     "review": "npx alemonc start",
     "view": "npx lvy dev --view",
     "img": "tsx watch --import lvyjs/register app.ts --jsxp",
