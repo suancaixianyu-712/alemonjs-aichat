@@ -60,6 +60,8 @@ export type HeartbeatTask = {
   ownerMinMs?: number;
   /** 主人设定的原始上限；AI 调整时不得突破 */
   ownerMaxMs?: number;
+  /** 心跳触发时使用的 AI 列表配置名；未设则用群当前 AI，不改 currentAI */
+  aiName?: string;
 };
 
 type ArchivedChatRecord = {

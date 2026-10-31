@@ -167,9 +167,45 @@ export const parsePermissionMode = (
 export const formatPermissionMode = (mode?: string): string =>
   mode === "full" ? "完全访问" : "自动审核";
 
+export type HeartbeatAIConfigLike = {
+  host?: string;
+  key?: string;
+  model?: string;
+};
+
+/** host/key/model 均非空才算可用。 */
+export const isUsableAIConfig = (
+  config: HeartbeatAIConfigLike | null | undefined,
+): boolean =>
+  Boolean(
+    config?.host?.trim() && config?.key?.trim() && config?.model?.trim(),
+  );
+
+/**
+ * 心跳触发时可选覆盖本次 AI 配置；不改群 currentAI。
+ * listConfig 无效或未绑定时回退 baseConfig。
+ */
+export const pickHeartbeatAIConfig = <T extends HeartbeatAIConfigLike>(
+  baseConfig: T,
+  heartbeatAiName: string | undefined | null,
+  listConfig: T | null | undefined,
+): { config: T; applied: boolean; aiName?: string } => {
+  const name = String(heartbeatAiName || "").trim();
+  if (!name || !isUsableAIConfig(listConfig)) {
+    return { config: baseConfig, applied: false, aiName: name || undefined };
+  }
+  return { config: listConfig as T, applied: true, aiName: name };
+};
+
+export const formatHeartbeatAILine = (aiName?: string | null): string =>
+  aiName?.trim()
+    ? `心跳模型：${aiName.trim()}`
+    : "心跳模型：未绑定（使用群当前 AI）";
+
 export const formatHeartbeatStatus = (task: HeartbeatTask | null): string => {
   if (!task) return "当前会话没有心跳任务。";
   const next = new Date(task.nextRunAt).toLocaleString("zh-CN");
+  const aiLine = formatHeartbeatAILine(task.aiName);
   if (task.mode === "random") {
     const min = formatDurationMs(Number(task.minMs) || 0);
     const max = formatDurationMs(Number(task.maxMs) || 0);
@@ -184,17 +220,18 @@ export const formatHeartbeatStatus = (task: HeartbeatTask | null): string => {
       `区间：${min}-${max}`,
       `上限：${ceiling}`,
       `权限：${formatPermissionMode(task.permissionMode)}`,
+      aiLine,
       `下次：${next}`,
     ].join("\n");
   }
   if (task.mode === "daily") {
-    return `心跳状态：固定每天 ${task.value}\n下次：${next}`;
+    return `心跳状态：固定每天 ${task.value}\n${aiLine}\n下次：${next}`;
   }
   const minutes = Number(task.value) / 60000;
-  return `心跳状态：固定间隔每 ${minutes} 分钟\n下次：${next}`;
+  return `心跳状态：固定间隔每 ${minutes} 分钟\n${aiLine}\n下次：${next}`;
 };
 
-/** 去掉 random 专用字段，供固定心跳覆盖写入。 */
+/** 去掉 random 专用字段，供固定心跳覆盖写入；保留 aiName（心跳模型绑定）。 */
 export const stripRandomHeartbeatFields = <T extends Record<string, unknown>>(
   task: T,
 ): T => {

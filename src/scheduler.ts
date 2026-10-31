@@ -17,7 +17,11 @@ const runningTasks = new Set<string>();
 
 type TriggerTask =
   | ScheduledAITask
-  | (HeartbeatTask & { heartbeat: true; heartbeatPermissionMode?: string })
+  | (HeartbeatTask & {
+      heartbeat: true;
+      heartbeatPermissionMode?: string;
+      heartbeatAiName?: string;
+    })
   | RestartRecoveryTask;
 
 const getSyntheticPrompt = (task: TriggerTask) =>
@@ -51,6 +55,9 @@ const createSyntheticEvent = (task: TriggerTask) => {
     heartbeat,
     heartbeatPermissionMode: heartbeat
       ? ("permissionMode" in task && task.permissionMode) || "auto"
+      : undefined,
+    heartbeatAiName: heartbeat
+      ? ("aiName" in task && task.aiName) || undefined
       : undefined,
     restartRecovery: "restartRecovery" in task && task.restartRecovery,
     msg: messageText,
@@ -156,6 +163,7 @@ const runScheduledAITasks = async () => {
         ...heartbeat,
         heartbeat: true,
         heartbeatPermissionMode: heartbeat.permissionMode || "auto",
+        heartbeatAiName: heartbeat.aiName || undefined,
       },
       taskKey,
     );

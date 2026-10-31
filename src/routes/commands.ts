@@ -187,6 +187,7 @@ export const commandChildren = [
       /(\/|#)随机心跳下次\s+(.+)$/i,
       /(\/|#)心跳状态$/i,
       /(\/|#)随机心跳权限\s+(.+)$/i,
+      /(\/|#)随机心跳模型(?:\s+(.*))?$/i,
     ),
     handler: lazy(() => import("../response/setting/res")),
   },

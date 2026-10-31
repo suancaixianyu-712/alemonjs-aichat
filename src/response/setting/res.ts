@@ -18,7 +18,9 @@ import {
 import {
   computeRandomNextRunAt,
   formatDurationMs,
+  formatHeartbeatAILine,
   formatHeartbeatStatus,
+  isUsableAIConfig,
   parseDurationMs,
   parsePermissionMode,
   parseRandomRange,
@@ -918,6 +920,7 @@ export default onResponse(selects, async (e, next) => {
       await message.send(format(Text("当前消息缺少用户、平台或群聊信息，无法设置心跳")));
       return;
     }
+    const existingFixed = await redisClient.getHeartbeatTask(e.guid);
     await redisClient.setHeartbeatTask(
       stripRandomHeartbeatFields({
         guid: e.guid,
@@ -929,6 +932,7 @@ export default onResponse(selects, async (e, next) => {
         value: parsed.value,
         nextRunAt: parsed.nextRunAt,
         createdAt: Date.now(),
+        ...(existingFixed?.aiName ? { aiName: existingFixed.aiName } : {}),
       }),
     );
     await message.send(
@@ -1045,6 +1049,7 @@ export default onResponse(selects, async (e, next) => {
           : "auto",
       nextRunAt,
       createdAt: existing?.createdAt ?? Date.now(),
+      ...(existing?.aiName ? { aiName: existing.aiName } : {}),
     });
     await message.send(
       format(
@@ -1145,6 +1150,115 @@ export default onResponse(selects, async (e, next) => {
       format(
         Text(
           `已设置随机心跳权限：${mode === "full" ? "完全访问" : "自动审核"}`,
+        ),
+      ),
+    );
+    return;
+  }
+
+  // 心跳模型：绑定 #ai列表 中的配置，仅心跳触发时使用，不改群当前 AI
+  if (/(\/|#)随机心跳模型(?:\s+(.*))?$/i.test(e.msg)) {
+    if (!e.IsMaster) {
+      await message.send(format(Text("该指令仅主人可用")));
+      return;
+    }
+    const match = e.msg.match(/(\/|#)随机心跳模型(?:\s+(.*))?$/i);
+    const rawArg = String((match && match[2]) || "").trim();
+    const task = await redisClient.getHeartbeatTask(e.guid);
+    if (!task) {
+      await message.send(
+        format(
+          Text("请先设置心跳：#设置随机心跳 15m-2h 或 #设置心跳 30m"),
+        ),
+      );
+      return;
+    }
+
+    // 无参 / 查看
+    if (!rawArg || /^(查看|状态|status)$/i.test(rawArg)) {
+      const bound = task.aiName?.trim() || "";
+      if (!bound) {
+        await message.send(
+          format(
+            Text(
+              [
+                formatHeartbeatAILine(undefined),
+                "用法：#随机心跳模型 <名称|序号>",
+                "清除：#随机心跳模型 关闭",
+                "序号以 #ai列表 为准；仅心跳触发时使用，不切换群当前 AI。",
+              ].join("\n"),
+            ),
+          ),
+        );
+        return;
+      }
+      const boundConfig = await redisClient.getAIListConfig(bound);
+      await message.send(
+        format(
+          Text(
+            [
+              formatHeartbeatAILine(bound),
+              isUsableAIConfig(boundConfig)
+                ? `模型：${boundConfig!.model}\n主机：${boundConfig!.host}`
+                : "警告：该名称在 AI 列表中不存在或配置不完整，心跳将回退群当前 AI。",
+              "清除：#随机心跳模型 关闭",
+            ].join("\n"),
+          ),
+        ),
+      );
+      return;
+    }
+
+    // 关闭/清除
+    if (/^(关闭|清空|清除|无|off|none|null)$/i.test(rawArg)) {
+      const { aiName: _cleared, ...rest } = task;
+      await redisClient.setHeartbeatTask(rest);
+      await message.send(
+        format(Text("已清除心跳模型绑定，心跳将使用群当前 AI。")),
+      );
+      return;
+    }
+
+    const aiList = await redisClient.getAIList();
+    const selection = resolveAISelection(rawArg, aiList);
+    if (!selection.ok) {
+      await message.send(
+        format(
+          Text(
+            `无效序号或名称：${selection.invalid.join("、")}（序号以 #ai列表 为准）`,
+          ),
+        ),
+      );
+      return;
+    }
+    if (selection.names.length !== 1) {
+      await message.send(
+        format(Text("心跳模型一次只能绑定一套 AI 配置，请指定单个名称或序号。")),
+      );
+      return;
+    }
+    const aiName = selection.names[0];
+    const aiConfig = await redisClient.getAIListConfig(aiName);
+    if (!isUsableAIConfig(aiConfig)) {
+      await message.send(
+        format(
+          Text(
+            `AI「${aiName}」不存在或 host/key/model 不完整，无法设为心跳模型。`,
+          ),
+        ),
+      );
+      return;
+    }
+    await redisClient.setHeartbeatTask({ ...task, aiName });
+    await message.send(
+      format(
+        Text(
+          [
+            `已设置心跳模型：${aiName}`,
+            `模型：${aiConfig!.model}`,
+            `主机：${aiConfig!.host}`,
+            "仅心跳触发时使用该配置，不会切换群当前 AI。",
+          ].join("\n"),
         ),
       ),
     );

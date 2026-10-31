@@ -7,10 +7,13 @@ import {
   computeRandomNextDeltaMs,
   computeRandomNextRunAt,
   formatDurationMs,
+  formatHeartbeatAILine,
   formatHeartbeatStatus,
+  isUsableAIConfig,
   parseDurationMs,
   parsePermissionMode,
   parseRandomRange,
+  pickHeartbeatAIConfig,
   shouldRunHeartbeat,
   stripRandomHeartbeatFields,
 } from "../lib/api/random-heartbeat.js";
@@ -201,9 +204,10 @@ test("权限档解析与状态文案", () => {
   assert.match(status, /随机/);
   assert.match(status, /15m-2h/);
   assert.match(status, /开启/);
+  assert.match(status, /心跳模型：未绑定/);
 });
 
-test("固定心跳写入时剥离 random 字段", () => {
+test("固定心跳写入时剥离 random 字段，保留 aiName", () => {
   const stripped = stripRandomHeartbeatFields({
     guid: "g",
     mode: "interval",
@@ -215,10 +219,12 @@ test("固定心跳写入时剥离 random 字段", () => {
     permissionMode: "full",
     ownerMinMs: 1,
     ownerMaxMs: 2,
+    aiName: "openai/gpt",
   });
   assert.equal("minMs" in stripped, false);
   assert.equal("enabled" in stripped, false);
   assert.equal(stripped.mode, "interval");
+  assert.equal(stripped.aiName, "openai/gpt");
 });
 
 test("formatDurationMs 与 computeRandomNextRunAt", () => {
@@ -229,4 +235,52 @@ test("formatDurationMs 与 computeRandomNextRunAt", () => {
     computeRandomNextRunAt(now, 10 * 60 * 1000, 10 * 60 * 1000, undefined, () => 0),
     now + 10 * 60 * 1000,
   );
+});
+
+test("心跳模型文案与可用性校验", () => {
+  assert.equal(formatHeartbeatAILine(undefined), "心跳模型：未绑定（使用群当前 AI）");
+  assert.equal(formatHeartbeatAILine("  "), "心跳模型：未绑定（使用群当前 AI）");
+  assert.equal(formatHeartbeatAILine("openai/gpt"), "心跳模型：openai/gpt");
+  assert.equal(isUsableAIConfig(null), false);
+  assert.equal(isUsableAIConfig({ host: "h", key: "k", model: "" }), false);
+  assert.equal(isUsableAIConfig({ host: "h", key: "k", model: "m" }), true);
+});
+
+test("pickHeartbeatAIConfig：绑定有效则覆盖，否则回退群当前", () => {
+  const base = { host: "base", key: "bk", model: "bm" };
+  const list = { host: "hb", key: "hk", model: "hm" };
+  const applied = pickHeartbeatAIConfig(base, "openai/gpt", list);
+  assert.equal(applied.applied, true);
+  assert.equal(applied.config.model, "hm");
+  assert.equal(applied.aiName, "openai/gpt");
+
+  const fallbackEmpty = pickHeartbeatAIConfig(base, "", list);
+  assert.equal(fallbackEmpty.applied, false);
+  assert.equal(fallbackEmpty.config.model, "bm");
+
+  const fallbackBad = pickHeartbeatAIConfig(base, "openai/gpt", {
+    host: "h",
+    key: "",
+    model: "m",
+  });
+  assert.equal(fallbackBad.applied, false);
+  assert.equal(fallbackBad.config.model, "bm");
+  assert.equal(fallbackBad.aiName, "openai/gpt");
+});
+
+test("formatHeartbeatStatus 展示绑定的心跳模型", () => {
+  const status = formatHeartbeatStatus({
+    guid: "g",
+    userID: "u",
+    platform: "p",
+    spaceId: "s",
+    isPrivate: false,
+    mode: "interval",
+    value: String(30 * 60 * 1000),
+    aiName: "deepseek/v4",
+    nextRunAt: Date.parse("2026-10-26T12:00:00+08:00"),
+    createdAt: 0,
+  });
+  assert.match(status, /固定间隔/);
+  assert.match(status, /心跳模型：deepseek\/v4/);
 });
