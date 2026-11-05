@@ -708,9 +708,21 @@ export const buildUserMessage = async (
   }
 
   // =========================
-  // 上传图片
+  // 上传图片（单张失败不阻断整条消息）
   // =========================
-  const imageurls = await Promise.all(imgs.map((url) => uploadImageToR2(url)));
+  const imageurls = await Promise.all(
+    imgs
+      .map((url) => String(url || "").trim())
+      .filter(Boolean)
+      .map(async (url) => {
+        try {
+          return await uploadImageToR2(url);
+        } catch (error) {
+          console.error("上传图片失败:", url, error);
+          return null;
+        }
+      }),
+  );
   const validImageUrls = imageurls.filter(Boolean) as string[];
 
   // =========================

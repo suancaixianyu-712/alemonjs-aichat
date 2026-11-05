@@ -5,7 +5,13 @@ import mime from "mime-types";
 import sharp from "sharp"; // 需要安装: npm install sharp
 import { getAiChatConfigValue } from "./config/app";
 import { getOpenAIProxyFetch } from "./api/openaiProxy";
-import { isLikelyLocalImagePath } from "./api/image-source";
+import {
+  buildRemoteImageFetchHeaders,
+  formatImageDownloadError,
+  isLikelyLocalImagePath,
+  normalizeRemoteImageUrl,
+  qqMultimediaHttpFallbackUrl,
+} from "./api/image-source";
 import redisClient from "./config";
 const value = getAiChatConfigValue();
 
@@ -223,8 +229,8 @@ export const getImageBuffer = async (
   const looksLikeLocalPath = isLikelyLocalImagePath(source);
 
   if (source.startsWith("http://") || source.startsWith("https://")) {
-    // 远程 URL
-    let url = source.replace("!/fwfh/368x238", "");
+    // 远程 URL（QQ 图床等需要浏览器 UA，裸 node UA 常直接 400）
+    let url = normalizeRemoteImageUrl(source);
 
     const isXAIImage = url.startsWith("https://imgen.x.ai");
     if (isXAIImage && value.xaiImgProxy) {
@@ -241,16 +247,32 @@ export const getImageBuffer = async (
             await redisClient.isToolProxyEnabled(grokConfig),
           ) || fetch
         : fetch;
-    let response = await requestFetch(url);
+
+    const fetchImage = (target: string) =>
+      requestFetch(target, { headers: buildRemoteImageFetchHeaders(target) });
+
+    let response = await fetchImage(url);
     if (!response.ok) {
       if (url.startsWith("https://img.suancaixianyu.cn")) {
         url = url.replace(
           "https://img.suancaixianyu.cn",
           "https://r2.scbbs.top",
         );
-        response = await fetch(url);
+        response = await fetchImage(url);
       }
-      if (!response.ok) throw new Error(`下载图片失败: ${response.statusText}`);
+    }
+    if (!response.ok) {
+      const httpFallback = qqMultimediaHttpFallbackUrl(url);
+      if (httpFallback && httpFallback !== url) {
+        const fallbackResponse = await fetchImage(httpFallback);
+        if (fallbackResponse.ok) {
+          response = fallbackResponse;
+          url = httpFallback;
+        }
+      }
+    }
+    if (!response.ok) {
+      throw new Error(formatImageDownloadError(response, url));
     }
 
     buffer = Buffer.from(await response.arrayBuffer());
@@ -259,7 +281,7 @@ export const getImageBuffer = async (
       mime.lookup(source) ||
       "image/jpeg";
     fileName =
-      path.basename(new URL(source).pathname) || `image-${Date.now()}.jpg`;
+      path.basename(new URL(url).pathname) || `image-${Date.now()}.jpg`;
   } else if (source.startsWith("data:")) {
     // data URI base64
     const matches = source.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
@@ -370,9 +392,31 @@ export const uploadMediaToR2 = async (
   let originalFileName: string;
 
   if (filePath.startsWith("http://") || filePath.startsWith("https://")) {
-    // 远程 URL
-    const response = await fetch(filePath);
-    if (!response.ok) throw new Error(`下载文件失败: ${response.statusText}`);
+    // 远程 URL（与图片下载一致，避免 QQ CDN 拒 node UA）
+    let url = normalizeRemoteImageUrl(filePath);
+    let response = await fetch(url, {
+      headers: buildRemoteImageFetchHeaders(url),
+    });
+    if (!response.ok) {
+      const httpFallback = qqMultimediaHttpFallbackUrl(url);
+      if (httpFallback && httpFallback !== url) {
+        const fallbackResponse = await fetch(httpFallback, {
+          headers: buildRemoteImageFetchHeaders(httpFallback),
+        });
+        if (fallbackResponse.ok) {
+          response = fallbackResponse;
+          url = httpFallback;
+        }
+      }
+    }
+    if (!response.ok) {
+      throw new Error(
+        formatImageDownloadError(response, url).replace(
+          "下载图片失败",
+          "下载文件失败",
+        ),
+      );
+    }
 
     buffer = Buffer.from(await response.arrayBuffer());
     contentType =
@@ -380,7 +424,7 @@ export const uploadMediaToR2 = async (
       mime.lookup(filePath) ||
       "application/octet-stream";
     originalFileName =
-      path.basename(new URL(filePath).pathname) || `media-${Date.now()}`;
+      path.basename(new URL(url).pathname) || `media-${Date.now()}`;
   } else {
     // 本地路径
     buffer = await fs.readFile(filePath);
