@@ -1,3 +1,8 @@
+import {
+  extractTextToolCalls,
+  recoverCompletionTextToolCalls,
+  stripTextToolCallMarkup,
+} from "./text-tool-calls";
 import { emojiMap } from "@src/emoji";
 import { uploadImageToR2 } from "@src/s3";
 import {
@@ -501,6 +506,17 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
           },
         }));
 
+    // 模型把工具调用写进正文（DSML/XML）时，解析成 tool_calls 并剥离标记
+    const initialRecovered = extractTextToolCalls(fullContent);
+    fullContent = initialRecovered.content;
+    if (
+      initialRecovered.toolCalls.length &&
+      !normalizeToolCalls(toolCalls).length &&
+      Array.isArray(createParams["tools"]) &&
+      createParams["tools"].length
+    ) {
+      toolCalls = initialRecovered.toolCalls;
+    }
     const normalizedInitialToolCalls = normalizeToolCalls(toolCalls);
 
     let res: any = {
@@ -751,6 +767,8 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
         log("AI未返回内容");
         return;
       }
+      // 达到上限时 finishResponse 会再清掉 tool_calls，这里只负责解析/剥离文本标记
+      recoverCompletionTextToolCalls(res, { allowToolCalls: true });
       if (turnTools.rounds.finishResponse(res)) {
         log(`工具调用已达 ${MAX_TOOL_ROUNDS} 轮上限，强制收尾回复`);
         break;
@@ -758,7 +776,9 @@ ${e.ClientError ? `当前错误信息:${e.ClientError}` : ""}
     }
 
     // 如果没有工具调用，处理最终回复
-    let reply = res.choices?.[0]?.message?.content?.trim() || `${botName}:[]`;
+    let reply =
+      stripTextToolCallMarkup(String(res.choices?.[0]?.message?.content || "")).trim() ||
+      `${botName}:[]`;
     reply = removePublicIpFromOutput(reply, e.IsMaster === true);
     if (reply === `${botName}:[]`) {
       log("AI选择不回复");

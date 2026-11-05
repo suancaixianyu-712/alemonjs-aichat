@@ -39,6 +39,12 @@ import { executeAlemonCommand } from "@src/routes/commands";
 import { parseAIReply, removeThinkContent, sendAIReplyToOutput } from "./tools";
 import { shouldSuppressFollowupReply } from "./followup-reply";
 import { requestRapiCompletion } from "./rapi";
+import {
+  createToolMarkupStreamFilter,
+  recoverCompletionTextToolCalls,
+  stripTextToolCallMarkup,
+  TEXT_TOOL_CALL_RETRY_PROMPT,
+} from "./text-tool-calls";
 import { getProviderBuiltinToolParams } from "./provider-tools";
 import { createScbbsProgress } from "./scbbs-progress";
 import { buildXianyuGameSession } from "@src/api/xianyu-game";
@@ -506,20 +512,47 @@ export const CApiReply = async (
     const shouldStreamToOutput =
       typeof outputMessage?.streamTextDelta === "function";
 
+    // 最近一次回复是否含无法解析成工具调用的文本标记（DSML/XML）
+    let lastResponseHadUnusableToolMarkup = false;
     const requestChatCompletion = async (
+      params: any,
+      requestMessages: any[],
+    ) => {
+      const completion = await requestChatCompletionRaw(params, requestMessages);
+      const allowToolCalls = Array.isArray(params?.tools) && params.tools.length > 0;
+      const { recovered, hadMarkup } = recoverCompletionTextToolCalls(completion, {
+        allowToolCalls,
+      });
+      lastResponseHadUnusableToolMarkup = hadMarkup && recovered === 0 &&
+        !completion?.choices?.[0]?.message?.tool_calls?.length;
+      if (recovered > 0) {
+        log(`模型把工具调用写进了正文，已解析为 ${recovered} 个 tool_calls 继续执行`);
+      } else if (hadMarkup) {
+        log("模型回复含工具调用文本标记，已从可见内容中剥离");
+      }
+      return completion;
+    };
+
+    const requestChatCompletionRaw = async (
       params: any,
       requestMessages: any[],
     ) => {
       throwIfAITurnAborted(aiTurn.signal);
       if (cfg.config.apiMode === "rapi") {
+        const rapiStreamFilter = shouldStreamToOutput
+          ? createToolMarkupStreamFilter((text) =>
+              outputMessage.streamTextDelta(text),
+            )
+          : null;
         const completion = await requestRapiCompletion({
           client: openai,
           params,
           signal: aiTurn.signal,
-          onTextDelta: shouldStreamToOutput
-            ? (text) => outputMessage.streamTextDelta(text)
+          onTextDelta: rapiStreamFilter
+            ? (text) => rapiStreamFilter.push(text)
             : undefined,
         });
+        await rapiStreamFilter?.flush();
         throwIfAITurnAborted(aiTurn.signal);
         await recordCapiContextStats(
           e.guid,
@@ -558,6 +591,9 @@ export const CApiReply = async (
       let content = "";
       let reasoningContent = "";
       const toolCalls: any[] = [];
+      const streamFilter = createToolMarkupStreamFilter((text) =>
+        outputMessage.streamTextDelta(text),
+      );
 
       const ensureToolCall = (index: number) => {
         if (!toolCalls[index]) {
@@ -579,7 +615,7 @@ export const CApiReply = async (
         const text = extractTextValue(delta.content ?? "");
         if (text) {
           content += text;
-          await outputMessage.streamTextDelta(text);
+          await streamFilter.push(text);
         }
 
         const reasoningDelta = extractTextValue(
@@ -606,6 +642,7 @@ export const CApiReply = async (
         }
       }
 
+      await streamFilter.flush();
       const normalizedToolCalls = normalizeAssistantToolCalls(toolCalls);
 
       return {
@@ -693,10 +730,42 @@ export const CApiReply = async (
 
     // 检查是否有工具调用需要处理
     const toolRounds = turnTools.rounds;
+    let textToolMarkupRetried = false;
     try {
       while (true) {
         throwIfAITurnAborted(aiTurn.signal);
         if (!res.choices[0].message?.tool_calls?.length) {
+          if (lastResponseHadUnusableToolMarkup && !textToolMarkupRetried) {
+            // 模型把工具调用写成了无法解析的文本标记：不发给用户，提示它用标准调用重试一次
+            textToolMarkupRetried = true;
+            lastResponseHadUnusableToolMarkup = false;
+            log("工具调用文本标记无法解析，提示模型改用标准 tool_calls 重试");
+            const priorText = String(res.choices[0].message?.content || "").trim();
+            if (priorText) {
+              messages.push({ role: "assistant", content: priorText });
+            }
+            messages.push({ role: "system", content: TEXT_TOOL_CALL_RETRY_PROMPT });
+            const retryParams: any = {
+              model: cfg.config.model,
+              messages,
+            };
+            if (cfg.toolConfig.toolSwitch === "1") {
+              retryParams.tools = getTurnTools();
+              retryParams.tool_choice = "auto";
+            }
+            Object.assign(retryParams, getDeepThoughtReasoning(cfg));
+            applyProviderBuiltinTools(retryParams, cfg);
+            res = await requestChatCompletion(
+              toolRounds.prepareParams(retryParams),
+              messages,
+            );
+            if (!res.choices || res.choices.length === 0) {
+              log("AI未返回内容");
+              return;
+            }
+            if (toolRounds.finishResponse(res)) break;
+            continue;
+          }
           const pendingGuidanceMessages = await appendPendingGuidanceMessages(
             e.guid,
             e.Platform,
@@ -1135,7 +1204,9 @@ export const CApiReply = async (
 
     // 如果没有工具调用，处理最终回复
     let reply =
-      res.choices?.[0]?.message?.content?.trim() || `${cfg.botName}:[]`;
+      stripTextToolCallMarkup(
+        String(res.choices?.[0]?.message?.content || ""),
+      ).trim() || `${cfg.botName}:[]`;
     reply = removePublicIpFromOutput(reply, e.IsMaster === true);
     if (
       e["followupJudgement"] &&
